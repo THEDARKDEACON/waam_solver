@@ -1,0 +1,43 @@
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+venv/
+.env
+.env.*
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ── Simulation & validation outputs (regenerated locally / by tools) ───────────
+*.vtk
+*.vts
+*.vtp
+*.pvd
+validation/baselines/matrix_latest.json
+validation/baselines/v2.0_matrix.json
+validation/baselines/calibration_fit_latest.json
+validation/baselines/performance_latest.json
+
+# ── Logs & local runtime ──────────────────────────────────────────────────────
+*.log
+imgui.ini
+
+# ── User-local material overrides ───────────────────────────────────────────────
+materials/user/*
+!materials/user/.gitkeep
+
+# ── IDE / OS ─────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+Thumbs.db

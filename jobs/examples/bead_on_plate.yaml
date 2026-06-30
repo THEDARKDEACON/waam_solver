@@ -1,0 +1,36 @@
+simulation:
+  preset: minimal
+  backend: auto
+  enable_vof: true
+
+material: materials/validated/ER70S-6.v1.yaml
+calibration: materials/calibration/ER70S-6.bead_on_plate.yaml
+
+process:
+  current_A: 140
+  voltage_V: 20
+  arc_efficiency: 0.72
+  travel_speed_mm_s: 5
+  wire_feed_m_min: 8
+  droplet_length_mm: 3.0
+  T_ambient_K: 300
+
+heat_source: gaussian2d
+heat_loss:
+  convection: true
+  radiation: false
+  h_conv: 35.0
+
+reference:
+  pool_width_mm: 7.0
+  pool_depth_mm: 2.8
+  source: macrograph_ER70S-6_bead_on_plate
+
+# Achievable pool envelope on 88×44×44 @ dx=0.3 mm (Gaussian2D, no heat loss).
+# Macro reference above is experimental; use model_reference for CI calibration checks.
+model_reference:
+  grid: [88, 44, 44]
+  dx_mm: 0.3
+  n_steps: 2000
+  pool_width_mm: 4.2
+  pool_depth_mm: 5.4

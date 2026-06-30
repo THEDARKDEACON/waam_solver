@@ -1,0 +1,45 @@
+name: verify
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  validate-cpu:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt jsonschema
+
+      - name: Run core validation suite
+        run: |
+          PARENT="$(dirname "$GITHUB_WORKSPACE")"
+          ln -sfn "$GITHUB_WORKSPACE" "$PARENT/waam_twin"
+          PYTHONPATH="$PARENT" WAAM_BACKEND=cpu WAAM_PRESET=minimal \
+            python3 -m waam_twin.validation.run_all
+
+  validate-full:
+    runs-on: ubuntu-latest
+    needs: validate-cpu
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt jsonschema
+
+      - name: Run full validation (process + soak)
+        run: |
+          PARENT="$(dirname "$GITHUB_WORKSPACE")"
+          ln -sfn "$GITHUB_WORKSPACE" "$PARENT/waam_twin"
+          PYTHONPATH="$PARENT" WAAM_BACKEND=cpu WAAM_PRESET=minimal WAAM_FULL_VALIDATION=1 \
+            python3 -m waam_twin.validation.run_all

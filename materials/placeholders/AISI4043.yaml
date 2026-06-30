@@ -1,0 +1,17 @@
+name: AISI4043
+status: placeholder
+source: "Internal estimate for development only"
+
+constants:
+  k: 160.0
+  rho: 2380.0
+  cp: 900.0
+  alpha: 74.0e-6
+  T_solidus: 846.0
+  T_liquidus: 904.0
+  L_fusion: 397000.0
+  gamma_0: 0.87
+  dgamma_dT: -1.55e-4
+  T_ref_gamma: 904.0
+  mu: 0.0013
+  beta_T: 2.5e-4

@@ -1,0 +1,32 @@
+simulation:
+  preset: minimal
+  backend: auto
+  enable_vof: false
+
+material: materials/validated/SS316L.v1.yaml
+
+process:
+  current_A: 140
+  voltage_V: 20
+  arc_efficiency: 0.72
+  travel_speed_mm_s: 5
+  wire_feed_m_min: 8
+  T_ambient_K: 300
+
+heat_source: gaussian2d
+heat_loss:
+  convection: true
+  h_conv: 35.0
+
+reference:
+  pool_width_mm: 6.5
+  pool_depth_mm: 2.5
+  source: literature_SS316L_bead_on_plate
+
+model_reference:
+  grid: [88, 44, 44]
+  dx_mm: 0.3
+  n_steps: 800
+  pool_width_mm: 3.5
+  pool_depth_mm: 4.8
+  notes: Smoke envelope only — material status is placeholder until calibration YAML exists.

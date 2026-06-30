@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://waam-twin.local/schemas/telemetry-v1.json",
+  "title": "WAAMTwinTelemetry",
+  "type": "object",
+  "required": [
+    "step",
+    "sim_time_ms",
+    "peak_temp_K",
+    "pool_width_mm",
+    "pool_depth_mm",
+    "material_status",
+    "material_name"
+  ],
+  "properties": {
+    "step": { "type": "integer", "minimum": 0 },
+    "sim_time_ms": { "type": "number", "minimum": 0 },
+    "peak_temp_K": { "type": "number" },
+    "peak_temp_C": { "type": "number" },
+    "peak_cooling_rate_Ks": { "type": "number" },
+    "pool_width_mm": { "type": "number", "minimum": 0 },
+    "pool_depth_mm": { "type": "number", "minimum": 0 },
+    "n_liquid_cells": { "type": "integer", "minimum": 0 },
+    "marangoni_vel_ms": { "type": "number", "minimum": 0 },
+    "material_status": { "type": "string", "enum": ["placeholder", "calibrated"] },
+    "material_name": { "type": "string" },
+    "heat_source": { "type": "string" },
+    "material_tables": { "type": "boolean" },
+    "vof_enabled": { "type": "boolean" },
+    "travel_speed_mm_s": { "type": "number", "minimum": 0 },
+    "variable_tau": { "type": "boolean" },
+    "porosity_pct": { "type": "number", "minimum": 0, "maximum": 100 },
+    "n_trapped_tracers": { "type": "integer", "minimum": 0 },
+    "window_offset_x_mm": { "type": "number", "minimum": 0 }
+  },
+  "additionalProperties": false
+}

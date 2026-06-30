@@ -1,0 +1,18 @@
+# Placeholder thermophysical data — NOT validated for accuracy claims.
+name: ER70S-6
+status: placeholder
+source: "Internal estimate for development only — replace with validated file before publishing results"
+
+constants:
+  k: 30.0
+  rho: 7000.0
+  cp: 680.0
+  alpha: 6.3e-6
+  T_solidus: 1748.0
+  T_liquidus: 1793.0
+  L_fusion: 272000.0
+  gamma_0: 1.8
+  dgamma_dT: -4.3e-4
+  T_ref_gamma: 1793.0
+  mu: 0.0065
+  beta_T: 1.2e-4

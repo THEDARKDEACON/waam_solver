@@ -1,0 +1,36 @@
+# Calibrated ER70S-6 — bead-on-plate reference (v1)
+# Fit targets: pool width/depth vs macrograph; η from energy balance.
+name: ER70S-6
+status: calibrated
+source: "Bead-on-plate calibration v1 — illustrative fit for development CI"
+
+constants:
+  k: 30.0
+  rho: 7000.0
+  cp: 680.0
+  alpha: 6.3e-6
+  T_solidus: 1748.0
+  T_liquidus: 1793.0
+  L_fusion: 272000.0
+  gamma_0: 1.8
+  dgamma_dT: -4.3e-4
+  T_ref_gamma: 1793.0
+  mu: 0.0065
+  beta_T: 1.2e-4
+
+tables:
+  cp:
+    - [300, 650]
+    - [1000, 680]
+    - [1793, 720]
+  k:
+    - [300, 28]
+    - [1000, 30]
+    - [1793, 34]
+  dgamma_dT:
+    - [1793, -4.3e-4]
+    - [2000, -3.8e-4]
+  mu:
+    - [300, 0.0075]
+    - [1793, 0.0065]
+    - [2000, 0.0055]

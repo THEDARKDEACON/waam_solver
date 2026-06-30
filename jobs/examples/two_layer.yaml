@@ -1,0 +1,33 @@
+simulation:
+  preset: minimal
+  enable_substrate_growth: true
+
+material: materials/validated/ER70S-6.v1.yaml
+calibration: materials/calibration/ER70S-6.bead_on_plate.yaml
+
+process:
+  current_A: 140
+  voltage_V: 20
+  arc_efficiency: 0.72
+  travel_speed_mm_s: 5
+  wire_feed_m_min: 8
+  T_ambient_K: 300
+
+heat_source: gaussian2d
+heat_loss:
+  convection: true
+  h_conv: 35.0
+
+interpass:
+  cooling_steps: 80
+
+torch_path:
+  - {x_mm: 5, y_mm: 10, z_mm: 0}
+  - {x_mm: 25, y_mm: 10, z_mm: 0}
+  - {x_mm: 5, y_mm: 10, z_mm: 1.2}
+
+layer_height_mm: 1.2
+
+reference:
+  haz_T_peak_min_K: 600
+  haz_T_peak_max_K: 3200

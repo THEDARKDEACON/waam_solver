@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "WAAM material file",
+  "type": "object",
+  "required": ["name", "status", "constants"],
+  "properties": {
+    "name": { "type": "string" },
+    "status": { "enum": ["placeholder", "calibrated"] },
+    "source": { "type": "string" },
+    "constants": {
+      "type": "object",
+      "required": [
+        "rho", "cp", "k", "alpha", "T_solidus", "T_liquidus",
+        "L_fusion", "gamma_0", "dgamma_dT", "mu", "beta_T"
+      ]
+    },
+    "tables": {
+      "type": "object",
+      "properties": {
+        "cp": { "type": "array", "items": { "type": "array", "minItems": 2, "maxItems": 2 } },
+        "k": { "type": "array" },
+        "mu": { "type": "array" },
+        "dgamma_dT": { "type": "array" }
+      }
+    }
+  }
+}

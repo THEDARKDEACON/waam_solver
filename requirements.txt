@@ -1,0 +1,7 @@
+# waam_twin v2 — simulation engine only (CI, headless, viewer)
+taichi>=1.7.0
+numpy>=1.24.0
+pyyaml>=6.0
+sympy>=1.12
+pyvista>=0.43.0
+jsonschema>=4.0.0

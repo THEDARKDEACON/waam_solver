@@ -1,0 +1,35 @@
+simulation:
+  preset: minimal
+  backend: auto
+  enable_vof: true
+
+material: materials/validated/ER70S-6.v1.yaml
+calibration: materials/calibration/ER70S-6.bead_on_plate.yaml
+
+process:
+  current_A: 140
+  voltage_V: 20
+  arc_efficiency: 0.72
+  travel_speed_mm_s: 5
+  wire_feed_m_min: 8
+  droplet_length_mm: 3.0
+  T_ambient_K: 300
+
+heat_source: gaussian2d
+heat_loss:
+  convection: true
+  radiation: false
+  h_conv: 35.0
+
+# Robot-agnostic torch path (mm). Interpolate between waypoints in your driver.
+torch_path:
+  - {x_mm: 5, y_mm: 10, z_mm: 0}
+  - {x_mm: 35, y_mm: 10, z_mm: 0}
+
+reference:
+  pool_width_mm: 7.0
+  pool_depth_mm: 2.8
+
+model_reference:
+  pool_width_mm: 2.5
+  pool_depth_mm: 2.0

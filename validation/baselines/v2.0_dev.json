@@ -1,0 +1,12 @@
+{
+  "version": "2.0.0",
+  "description": "Reference telemetry bands for CI smoke tests (minimal preset, CPU)",
+  "tests": {
+    "thermal_diffusion": {"metric": "L2_pct", "max": 12.0},
+    "mass_conservation": {"metric": "rho_drift_pct", "max": 2.0},
+    "stefan_solidification": {"metric": "slope_err_pct", "max": 15.0},
+    "soak_10k": {"metric": "rho_drift_pct", "max": 2.0},
+    "pool_geometry": {"metric": "max_err_pct", "max": 70.0},
+    "pool_geometry_standard": {"metric": "max_err_pct", "max": 75.0}
+  }
+}

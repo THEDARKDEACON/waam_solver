@@ -1,0 +1,18 @@
+material: materials/validated/ER70S-6.v1.yaml
+process: bead_on_plate_reference
+arc_efficiency: 0.65
+heat_loss_factor: 1.0
+marangoni_scale: 1.0
+arc_sigma_scale: 0.8
+fit_metrics:
+  grid:
+  - 88
+  - 44
+  - 44
+  dx_mm: 0.3
+  n_steps: 2000
+  pool_width_mm: 4.2
+  pool_depth_mm: 5.4
+  error_pct_model: 0.0
+notes: "Auto-fitted by waam_twin.tools.fit_calibration on 88\xD744\xD744 @ dx=0.3\
+  \ mm. error_pct_model is vs jobs/examples/bead_on_plate.yaml model_reference."

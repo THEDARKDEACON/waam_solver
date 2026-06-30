@@ -1,0 +1,17 @@
+name: SS316L
+status: placeholder
+source: "Internal estimate for development only"
+
+constants:
+  k: 16.3
+  rho: 6900.0
+  cp: 750.0
+  alpha: 3.1e-6
+  T_solidus: 1648.0
+  T_liquidus: 1723.0
+  L_fusion: 285000.0
+  gamma_0: 1.6
+  dgamma_dT: -3.5e-4
+  T_ref_gamma: 1723.0
+  mu: 0.0055
+  beta_T: 1.2e-4

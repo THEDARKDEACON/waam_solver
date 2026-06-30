@@ -1,0 +1,40 @@
+# SS316L — literature thermophysical properties (v1)
+# Process calibration pending; use status placeholder until bead-on-plate fit exists.
+name: SS316L
+status: placeholder
+source: "ASM Handbook / welding handbook order-of-magnitude; not process-calibrated"
+
+constants:
+  k: 16.3
+  rho: 6900.0
+  cp: 750.0
+  alpha: 3.1e-6
+  T_solidus: 1648.0
+  T_liquidus: 1723.0
+  L_fusion: 285000.0
+  gamma_0: 1.6
+  dgamma_dT: -3.5e-4
+  T_ref_gamma: 1723.0
+  mu: 0.0055
+  beta_T: 1.2e-4
+
+tables:
+  cp:
+    - [300, 500]
+    - [1000, 650]
+    - [1723, 720]
+  k:
+    - [300, 14]
+    - [1000, 16]
+    - [1723, 22]
+  dgamma_dT:
+    - [1723, -3.5e-4]
+    - [1900, -3.0e-4]
+  mu:
+    - [300, 0.0065]
+    - [1723, 0.0055]
+    - [1900, 0.0048]
+
+notes: >
+  Promoted from materials/placeholders/SS316L.yaml for matrix smoke tests.
+  Set status to calibrated only after materials/calibration/SS316L.*.yaml exists.
