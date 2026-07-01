@@ -4,6 +4,7 @@ twin.py — WAAMTwin v2 orchestrator
 
 from __future__ import annotations
 
+import math
 import pathlib
 from typing import Any
 
@@ -46,9 +47,34 @@ class WAAMTwin:
         enable_recoil: bool = False,
         enable_csf_tension: bool = False,
         enable_deposition_momentum: bool = True,
+        enable_lorentz: bool = False,
+        enable_gas_shear: bool = False,
+        enable_droplet_impact_pressure: bool = True,
+        use_recoil_clausius_clapeyron: bool = True,
         enable_substrate_growth: bool = False,
         enable_moving_window: bool = False,
+        enable_wetting: bool = False,
+        enable_hydrostatic_gravity: bool = False,
+        enable_bead_freeze: bool = False,
+        enable_ctwd: bool = False,
+        contact_angle_deg: float | None = None,
+        deposition_superheat_K: float = 500.0,
+        deposition_footprint_sigma_scale: float = 1.0,
+        stickout_mm: float = 12.0,
+        ctwd_mm: float = 15.0,
+        layer_height_mm: float = 1.2,
         recoil_pressure_pa: float = 5000.0,
+        welding_current_A: float = 140.0,
+        sigma_liquid_Sm: float = 1.0e6,
+        sigma_solid_Sm: float = 1.0e5,
+        lorentz_jacobi_iters: int = 40,
+        lorentz_jacobi_omega: float = 0.85,
+        gas_jet_velocity_m_s: float = 12.0,
+        gas_shear_coeff: float = 1.0,
+        T_boiling_K: float = 3100.0,
+        P_vapor_ref_Pa: float = 101325.0,
+        L_vapor_J_kg: float = 6.0e6,
+        R_spec_vapor_J_kgK: float = 450.0,
         travel_speed_m_s: float = 0.0,
         use_variable_tau: bool = True,
         enable_enthalpy_cap: bool = True,
@@ -84,9 +110,40 @@ class WAAMTwin:
         self.enable_recoil = enable_recoil
         self.enable_csf_tension = enable_csf_tension
         self.enable_deposition_momentum = enable_deposition_momentum
+        self.enable_lorentz = enable_lorentz
+        self.enable_gas_shear = enable_gas_shear
+        self.enable_droplet_impact_pressure = enable_droplet_impact_pressure
+        self.use_recoil_clausius_clapeyron = use_recoil_clausius_clapeyron
         self.enable_substrate_growth = enable_substrate_growth
         self.enable_moving_window = enable_moving_window
+        self.enable_wetting = enable_wetting
+        self.enable_hydrostatic_gravity = enable_hydrostatic_gravity
+        self.enable_bead_freeze = enable_bead_freeze
+        self.enable_ctwd = enable_ctwd
+        self.contact_angle_deg = (
+            contact_angle_deg if contact_angle_deg is not None else self.mat.contact_angle_deg
+        )
+        self.theta_rad = math.radians(self.contact_angle_deg)
+        self.deposition_superheat_K = deposition_superheat_K
+        self.deposition_footprint_sigma_scale = deposition_footprint_sigma_scale
+        self.stickout_m = stickout_mm * 1e-3
+        self.ctwd_nominal_m = ctwd_mm * 1e-3
+        self.ctwd_m = ctwd_mm * 1e-3
+        self.layer_height_m = layer_height_mm * 1e-3
+        self.rho_e_ohm_m = self.mat.rho_e_ohm_m
+        self.eta_stick = self.mat.eta_stick
         self.recoil_pressure_pa = recoil_pressure_pa
+        self.welding_current_A = welding_current_A
+        self.sigma_liquid_Sm = sigma_liquid_Sm
+        self.sigma_solid_Sm = sigma_solid_Sm
+        self.lorentz_jacobi_iters = lorentz_jacobi_iters
+        self.lorentz_jacobi_omega = lorentz_jacobi_omega
+        self.gas_jet_velocity_m_s = gas_jet_velocity_m_s
+        self.gas_shear_coeff = gas_shear_coeff
+        self.T_boiling_K = T_boiling_K
+        self.P_vapor_ref_Pa = P_vapor_ref_Pa
+        self.L_vapor_J_kg = L_vapor_J_kg
+        self.R_spec_vapor_J_kgK = R_spec_vapor_J_kgK
         self.travel_speed_m_s = travel_speed_m_s
         self.use_variable_tau = use_variable_tau
         self.enable_enthalpy_cap = enable_enthalpy_cap
@@ -97,6 +154,8 @@ class WAAMTwin:
         self.wire_feed_m_s = 0.0
         self._deposited_volume_m3 = 0.0
         self._n_droplets_fired = 0
+        self._deposition_overflow = 0
+        self._bead_height_m = 0.0
         self.nz_solid = max(1, nz // 5)
         self._step_n = 0
         self._last_droplet_time = 0.0
@@ -263,6 +322,8 @@ class WAAMTwin:
         self._last_droplet_time = 0.0
         self._deposited_volume_m3 = 0.0
         self._n_droplets_fired = 0
+        self._deposition_overflow = 0
+        self._bead_height_m = 0.0
         g.deposit_vol_buf[None] = 0.0
         print(f"[WAAMTwin] Grid reset. T_ambient={T0:.1f}K  test_fluid={test_fluid_domain}")
 
@@ -403,6 +464,12 @@ class WAAMTwin:
         exp_drop_mass = self._n_droplets_fired * m_drop
         mass_ratio = dep_mass / max(exp_drop_mass, 1e-12)
 
+        from .physics.bead_geometry import bead_reinforcement_height_mm, estimate_toe_angle_deg
+        from .physics.electrical_stickout import droplet_entry_temperature_K
+
+        bead_h = bead_reinforcement_height_mm(self, g)
+        toe_deg = estimate_toe_angle_deg(self, g) if self.enable_wetting else 0.0
+
         return {
             "step": self._step_n,
             "sim_time_ms": round(self._step_n * g.dt * 1000, 4),
@@ -433,6 +500,16 @@ class WAAMTwin:
             "T_vapor_cap_K": self.T_vapor_cap_K,
             "arc_surface_weighting": self.arc_surface_weighting,
             "enable_enthalpy_cap": self.enable_enthalpy_cap,
+            "enable_wetting": self.enable_wetting,
+            "enable_hydrostatic_gravity": self.enable_hydrostatic_gravity,
+            "enable_bead_freeze": self.enable_bead_freeze,
+            "enable_ctwd": self.enable_ctwd,
+            "contact_angle_deg": round(self.contact_angle_deg, 1),
+            "bead_height_mm": round(bead_h, 3),
+            "toe_angle_deg": round(toe_deg, 1),
+            "ctwd_mm": round(self.ctwd_m * 1000, 3),
+            "T_drop_K": round(droplet_entry_temperature_K(self), 1),
+            "deposition_overflow_count": self._deposition_overflow,
         }
 
     def export_vtk(self, path: str = "weld_pool.vti"):

@@ -90,11 +90,41 @@ def apply_job_to_twin(twin, job: dict[str, Any]) -> None:
     if travel_mm_s is not None:
         twin.travel_speed_m_s = float(travel_mm_s) / 1000.0
 
+    current_A = process.get("current_A")
+    if current_A is not None:
+        twin.welding_current_A = float(current_A)
+
+    adv = job.get("advanced_physics", {})
+    if "gas_jet_velocity_m_s" in adv:
+        twin.gas_jet_velocity_m_s = float(adv["gas_jet_velocity_m_s"])
+    if "gas_shear_coeff" in adv:
+        twin.gas_shear_coeff = float(adv["gas_shear_coeff"])
+    if "sigma_liquid_Sm" in adv:
+        twin.sigma_liquid_Sm = float(adv["sigma_liquid_Sm"])
+    if "sigma_solid_Sm" in adv:
+        twin.sigma_solid_Sm = float(adv["sigma_solid_Sm"])
+    if "lorentz_jacobi_iters" in adv:
+        twin.lorentz_jacobi_iters = int(adv["lorentz_jacobi_iters"])
+    if "T_boiling_K" in adv:
+        twin.T_boiling_K = float(adv["T_boiling_K"])
+    if "L_vapor_J_kg" in adv:
+        twin.L_vapor_J_kg = float(adv["L_vapor_J_kg"])
+    if "R_spec_vapor_J_kgK" in adv:
+        twin.R_spec_vapor_J_kgK = float(adv["R_spec_vapor_J_kgK"])
+
     sim = job.get("simulation", {})
     if "enable_recoil" in sim:
         twin.enable_recoil = bool(sim["enable_recoil"])
     if "enable_csf_tension" in sim:
         twin.enable_csf_tension = bool(sim["enable_csf_tension"])
+    if "enable_lorentz" in sim:
+        twin.enable_lorentz = bool(sim["enable_lorentz"])
+    if "enable_gas_shear" in sim:
+        twin.enable_gas_shear = bool(sim["enable_gas_shear"])
+    if "enable_droplet_impact_pressure" in sim:
+        twin.enable_droplet_impact_pressure = bool(sim["enable_droplet_impact_pressure"])
+    if "use_recoil_clausius_clapeyron" in sim:
+        twin.use_recoil_clausius_clapeyron = bool(sim["use_recoil_clausius_clapeyron"])
     if "enable_vof" in sim:
         twin.enable_vof = bool(sim["enable_vof"])
     if "enable_enthalpy_cap" in sim:
@@ -105,6 +135,39 @@ def apply_job_to_twin(twin, job: dict[str, Any]) -> None:
         twin.enable_substrate_growth = True
     if sim.get("enable_moving_window"):
         twin.enable_moving_window = True
+    if "enable_wetting" in sim:
+        twin.enable_wetting = bool(sim["enable_wetting"])
+    if "enable_hydrostatic_gravity" in sim:
+        twin.enable_hydrostatic_gravity = bool(sim["enable_hydrostatic_gravity"])
+    if "enable_bead_freeze" in sim:
+        twin.enable_bead_freeze = bool(sim["enable_bead_freeze"])
+    if "enable_ctwd" in sim:
+        twin.enable_ctwd = bool(sim["enable_ctwd"])
+
+    wet = job.get("surface_wetting", {})
+    if "contact_angle_deg" in wet:
+        twin.contact_angle_deg = float(wet["contact_angle_deg"])
+        twin.theta_rad = __import__("math").radians(twin.contact_angle_deg)
+
+    dep = job.get("deposition", {})
+    if "superheat_K" in dep:
+        twin.deposition_superheat_K = float(dep["superheat_K"])
+    if "footprint_sigma_scale" in dep:
+        twin.deposition_footprint_sigma_scale = float(dep["footprint_sigma_scale"])
+
+    if "layer_height_mm" in job:
+        twin.layer_height_m = float(job["layer_height_mm"]) / 1000.0
+
+    if "ctwd_mm" in process:
+        twin.ctwd_m = twin.ctwd_nominal_m = float(process["ctwd_mm"]) / 1000.0
+    if "stickout_mm" in process:
+        twin.stickout_m = float(process["stickout_mm"]) / 1000.0
+
+    elec = job.get("electrical", {})
+    if "rho_e_ohm_m" in elec:
+        twin.rho_e_ohm_m = float(elec["rho_e_ohm_m"])
+    if "eta_stick" in elec:
+        twin.eta_stick = float(elec["eta_stick"])
 
     arc_phys = job.get("arc_physics", {})
     if "penetration_mm" in arc_phys:

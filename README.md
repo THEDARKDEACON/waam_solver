@@ -53,7 +53,14 @@ waam_twin/                    ← git repository root (this folder)
 │   ├── arc.py
 │   ├── free_surface.py
 │   ├── deposition.py
+│   ├── bead_geometry.py
+│   ├── electrical_stickout.py
+│   ├── weld_forces.py
 │   └── lbm.py
+├── export/                   # VTK bundles, probes, ParaView PVD sequences
+│   ├── vtk_io.py
+│   ├── bundle.py
+│   └── meta.py
 ├── solvers/
 │   └── coupled_step.py       # Single-timestep physics order
 ├── validation/               # Regression tests + baselines
@@ -91,12 +98,14 @@ flowchart TB
 
   subgraph solver [coupled_step]
     ARC[arc.inject_heat]
-    DEP[deposition.feed_wire]
+    DEP[deposition.feed_wire_surface]
     TH[thermal.advect_diffuse]
     PC[phase_change.update]
-    VOF[free_surface.advect_phi]
-    FRC[forces: Marangoni buoyancy arc]
+    VOF[free_surface: φ advect + wetting BC]
+    FRC[forces: CSF Marangoni buoyancy gravity]
+    WELD[weld_forces: recoil Lorentz gas shear droplet]
     LBM[lbm.collide + stream]
+    FRZ[remelt + solidify bead_freeze]
   end
 
   subgraph outputs [Outputs]
@@ -122,17 +131,19 @@ flowchart TB
 
 Each `WAAMTwin.step(x, y, is_welding)` runs, in order:
 
-1. Clear body forces  
-2. Arc heat injection (Gaussian2D / Goldak)  
-3. Wire feed + droplet tracers (on schedule)  
+1. Clear body forces; optional CTWD update  
+2. Arc heat injection (Gaussian2D / Goldak) + enthalpy cap  
+3. Wire droplet schedule → `feed_wire_surface` + tracer inject + droplet impact  
 4. Thermal advection–diffusion + boundary losses  
-5. Enthalpy–porosity phase update  
-6. `T_max` / cooling rate  
-7. Substrate growth + remelt (optional)  
-8. VOF φ advection, reinit, flag update (optional)  
-9. CSF tension, Marangoni, buoyancy, arc pressure, recoil  
-10. LBM collide (SRT or MRT) + stream  
-11. Tracer advection; buffer swap  
+5. `T_max` / cooling rate; enthalpy–porosity phase update  
+6. VOF φ advection, reinit, **contact-angle wetting BC**, flag update (optional)  
+7. CSF tension, Marangoni, **hydrostatic gravity**, thermal buoyancy  
+8. Lorentz MHD, gas shear, arc pressure, recoil (optional flags)  
+9. LBM collide (SRT or MRT) + stream; tracer advection  
+10. **Remelt hot solid + solidify cooled metal** (bead freeze / substrate growth)  
+11. Buffer swap  
+
+See [docs/BEAD_GEOMETRY_PHYSICS_SPEC.md](docs/BEAD_GEOMETRY_PHYSICS_SPEC.md) and [docs/weld_pool_physics.md](docs/weld_pool_physics.md).
 
 ### Layer responsibilities
 
@@ -230,23 +241,23 @@ python3 -m waam_twin.viewer --preset minimal --material materials/validated/ER70
 
 | Key | Action |
 |-----|--------|
-| `M` | Cycle Temperature / HAZ / Velocity / Vorticity / Body force |
+| `M` | Cycle view: Temperature / HAZ / Velocity / Vorticity / Body force |
 | `V` | Cycle flow overlay: off / arrows / streamlines |
-| `B` | All metal ↔ liquid-only |
-| `H` | Solid-only (HAZ) filter |
-| `F` | Surface filter (φ band; requires VOF) |
-| `N` | Surface mesh (φ shell) vs particles |
-| `G` | Full research VTK bundle |
-| `P` | Add probe at torch (T(t) CSV on export) |
-| `C` / `Z` | Y / Z cross-section clip |
-| `T` / `O` | Tracers / torch marker |
+| `B` / `H` / `F` | Filter: all metal / solid-only / surface (φ band) |
+| `N` | Toggle surface mesh (φ shell) vs particles |
+| `C` / `Z` | Toggle Y / Z cross-section clip (Z clip hides bead crown) |
+| `T` / `O` | Toggle porosity tracers / torch marker |
+| `G` | Full research VTK bundle → `viewer_output/bundle_step_*/` |
+| `P` | Add probe at torch (CSV on bundle export) |
 | `R` | Reset simulation |
-| `+` / `-` | Steps per frame |
-| `S` | Screenshot → `viewer_output/` |
-| `V` | VTK dump → `viewer_output/` |
-| `SPACE` | Pause |
+| `+` / `-` | More / fewer physics steps per frame |
+| `S` | Screenshot PNG → `viewer_output/` |
+| `SPACE` | Pause / resume |
+| `ESC` | Exit |
 
-HUD shows live pool width/depth, peak temperature, and Marangoni speed from `get_telemetry()`.
+HUD shows pool W/D, peak T, Marangoni speed, **liquid cell count**, **bead height**, and **deposited mass** from `get_telemetry()`.
+
+Temperature view colors hot liquid, warm HAZ, substrate (dark), and frozen bead (bronze) — not flat grey on solids.
 
 #### Resolution tuning
 
@@ -278,30 +289,66 @@ simulation:
 
 **VRAM:** `standard` needs ~2 GB GPU budget; `high` ~8 GB. Your RTX-class laptop can usually run `standard` on CUDA.
 
-### VTK export
+### VTK export & ParaView
+
+**Single snapshot** (one time step — ParaView play will not animate):
 
 ```python
-twin.export_vtk("pool.vti")                    # Tier 0+3 volume (full research set)
-twin.export_vtk_full("pool.vti", tiers=(0,1,2,3))
-twin.export_surface_vtk("bead_surface.vtp")    # φ isosurface + κ
-twin.export_tracers_vtk("tracers.vtp")
-twin.export_research_bundle("run_out/")        # volume + surface + tracers + meta.json
+twin.export_vtk_full("pool.vti", tiers=(0, 1, 2, 3))
+twin.export_surface_vtk("bead_surface.vtp")
+twin.export_research_bundle("run_out/")   # volume + surface + tracers + meta + telemetry JSON
 ```
 
-**Viewer:** `G` = full research bundle; `V` = legacy quick volume (+ surface if VOF).
+Press **`G`** in the viewer for a full bundle under `viewer_output/bundle_step_*/`.
 
-**CLI sequence export:**
+**Time-series / build-up animation** — use the export CLI, then open the **`.pvd`** file:
 
 ```bash
-python3 -m waam_twin.export --job jobs/examples/bead_on_plate.yaml --steps 300 --every 50 --out viewer_output/seq
-# Open viewer_output/seq/sequence.pvd in ParaView
+python3 -m waam_twin.export \
+  --job jobs/examples/bead_on_plate.yaml \
+  --preset standard \
+  --steps 5000 \
+  --every 100 \
+  --max-frames 50 \
+  --out viewer_output/my_bead_run
+
+# ParaView: File → Open → viewer_output/my_bead_run/sequence.pvd → Apply → Play
 ```
 
-Legacy `.vts` paths are auto-rewritten to `.vti`. Press **`G`** in the viewer for a full bundle, or **`V`** for a quick volume dump.
+Each frame folder contains:
 
-Set `WAAM_HEADLESS=1` to skip VTK in batch runs.
+| File | Contents |
+|------|----------|
+| `volume_step_*.vti` | `Temperature_K`, `Liquid_Fraction`, `VOF_phi`, `Cell_Flags`, `T_max_K`, velocities, optional forces |
+| `surface_step_*.vtp` | φ / f_l = 0.5 isosurface (bead crown) |
+| `telemetry_step_*.json` | `bead_height_mm`, `deposited_mass_g`, pool W/D, … |
+| `meta_step_*.json` | Grid, material, physics flags, unit conversions |
 
-Full field inventory, research bundle layout, and diagnostic roadmap: [docs/DIAGNOSTICS_AND_VTK_SPEC.md](docs/DIAGNOSTICS_AND_VTK_SPEC.md).
+**ParaView tips**
+
+- Open **`sequence.pvd`**, not a lone `volume_step_*.vti`.
+- Turn **Z clip off** in the viewer (`Z`) before exporting if you need the full crown in screenshots.
+- Threshold `Cell_Flags` (0 = fluid, 1 = solid) and clip Z above substrate to isolate deposited bead.
+- Legacy `.vts` paths are rewritten to `.vti`. Set `WAAM_HEADLESS=1` to skip VTK in batch runs.
+
+Full field inventory: [docs/DIAGNOSTICS_AND_VTK_SPEC.md](docs/DIAGNOSTICS_AND_VTK_SPEC.md).
+
+### Bead geometry physics (job flags)
+
+Example [`jobs/examples/bead_on_plate.yaml`](jobs/examples/bead_on_plate.yaml):
+
+| Flag | Effect |
+|------|--------|
+| `enable_wetting` | Contact-angle CSF at substrate triple line |
+| `enable_hydrostatic_gravity` | ρg flattening of liquid crest |
+| `enable_bead_freeze` | Solidify cooled metal behind arc (bead crown) |
+| `enable_recoil` | Vapor recoil pressure on pool surface |
+| `enable_lorentz` | MHD body force (J×B) |
+| `enable_gas_shear` | Shielding-gas traction on free surface |
+| `enable_droplet_impact_pressure` | Droplet momentum pulse on impact |
+| `enable_ctwd` | Stick-out I²R wire preheat (open-loop CTWD) |
+
+Spec: [docs/BEAD_GEOMETRY_PHYSICS_SPEC.md](docs/BEAD_GEOMETRY_PHYSICS_SPEC.md).
 
 ---
 
@@ -392,12 +439,17 @@ Grid dimensions are computed by `auto_grid()` from `config/presets.yaml` and ava
 
 ## Telemetry schema
 
-`get_telemetry()` returns a stable JSON-friendly dict (pool W/D, peak T, material status, porosity, …). Schema: [validation/telemetry_schema.json](validation/telemetry_schema.json).
+`get_telemetry()` returns a stable JSON-friendly dict: pool W/D, peak T, `n_liquid_cells`, `bead_height_mm`, `deposited_mass_g`, `mass_balance_ratio`, porosity, CTWD, toe angle, …
+
+Schema: [validation/telemetry_schema.json](validation/telemetry_schema.json).
 
 ---
 
 ## Further reading
 
+- [Bead geometry physics spec](docs/BEAD_GEOMETRY_PHYSICS_SPEC.md) — wetting, deposition, freeze, CTWD  
+- [Weld pool forces](docs/weld_pool_physics.md) — Marangoni, Lorentz, recoil, droplets  
+- [VTK & diagnostics spec](docs/DIAGNOSTICS_AND_VTK_SPEC.md) — export tiers, ParaView workflow  
 - [Execution plan](docs/WAAM_TWIN_V2_EXECUTION_PLAN.md) — phases, task IDs, exit gates  
 - [Validation report](docs/validation/VALIDATION_REPORT.md)  
 - [ER70S-6 reference case](docs/validation/reference_case_ER70S6.md)  
@@ -414,3 +466,5 @@ Grid dimensions are computed by `auto_grid()` from `config/presets.yaml` and ava
 | `kuka_adapter.py` | `waam_physics.py`, `gcode_pipeline.py` |
 
 When nested under FYP22-01: `export PYTHONPATH=.` on the **parent**. Paths like `jobs/examples/…` resolve inside **`waam_twin/`** via `paths.resolve_project_path()`.
+
+See also [../README_WAAM_TWIN.md](../README_WAAM_TWIN.md) for a short FYP22-01 entry point.

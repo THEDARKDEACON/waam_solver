@@ -1,6 +1,9 @@
 simulation:
   preset: minimal
   enable_substrate_growth: true
+  enable_wetting: true
+  enable_bead_freeze: true
+  enable_ctwd: true
 
 material: materials/validated/ER70S-6.v1.yaml
 calibration: materials/calibration/ER70S-6.bead_on_plate.yaml

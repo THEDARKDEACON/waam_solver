@@ -1,9 +1,16 @@
 simulation:
-  preset: minimal
-  backend: auto
+  preset: standard
+  backend: cuda
   enable_vof: true
   enable_csf_tension: true
+  enable_wetting: true
+  enable_hydrostatic_gravity: true
+  enable_bead_freeze: true
   enable_recoil: true
+  use_recoil_clausius_clapeyron: true #true for CCCC, false for RR
+  enable_lorentz: true
+  enable_gas_shear: true
+  enable_droplet_impact_pressure: true
   enable_enthalpy_cap: true
   arc_surface_weighting: true
 
@@ -24,15 +31,34 @@ arc_physics:
   T_vapor_cap_K: 3200.0
   surface_weighting: true
 
+advanced_physics:
+  gas_jet_velocity_m_s: 12.0
+  gas_shear_coeff: 1.0
+  sigma_liquid_Sm: 1.0e6
+  sigma_solid_Sm: 1.0e5
+  lorentz_jacobi_iters: 40
+  T_boiling_K: 3100.0
+  L_vapor_J_kg: 6.0e6
+  R_spec_vapor_J_kgK: 450.0
+
 process:
   current_A: 140
   voltage_V: 20
   arc_efficiency: 0.80
-  travel_speed_mm_s: 8
+  travel_speed_mm_s: 15
   wire_feed_m_min: 8
   wire_diameter_mm: 1.2
   droplet_length_mm: 3.0
   T_ambient_K: 293
+  stickout_mm: 12.0
+  ctwd_mm: 15.0
+
+deposition:
+  superheat_K: 500.0
+  footprint_sigma_scale: 1.0
+
+surface_wetting:
+  contact_angle_deg: 80.0
 
 heat_loss:
   convection: true

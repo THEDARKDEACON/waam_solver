@@ -28,10 +28,11 @@ def run() -> None:
 
     reset_count(count)
     extract_melt_pool(
-        g.f_l, g.T, g.phi, g.flags,
+        g.f_l, g.T, g.T_max, g.phi, g.flags,
         pos, col, count,
         g.dx * 1000.0, 0.0,
         twin.mat.T_solidus, twin.mat.T_liquidus,
+        twin.nz_solid,
         g.FLAG_GAS, g.FLAG_FLUID, g.FLAG_SOLID,
         FILTER_ALL, 1, max_cells,
         0, 0, g.ny, g.nz,

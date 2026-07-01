@@ -39,6 +39,12 @@ def main() -> int:
         ("enthalpy_cap", "waam_twin.validation.test_enthalpy_cap"),
         ("mass_balance", "waam_twin.validation.test_mass_balance"),
         ("arc_surface_weight", "waam_twin.validation.test_arc_surface_weight"),
+        ("advanced_weld_forces", "waam_twin.validation.test_advanced_weld_forces"),
+        ("wetting_droplet", "waam_twin.validation.test_wetting_droplet"),
+        ("deposition_no_column", "waam_twin.validation.test_deposition_no_column"),
+        ("hydrostatic_gravity", "waam_twin.validation.test_hydrostatic_gravity"),
+        ("bead_freeze", "waam_twin.validation.test_bead_freeze"),
+        ("stickout_preheat", "waam_twin.validation.test_stickout_preheat"),
         ("backend_smoke", "waam_twin.validation.test_backend_smoke"),
     ]
 

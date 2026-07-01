@@ -45,10 +45,19 @@ def _cell_passes_filter(
     return result
 
 
+@ti.func
+def _temperature_color(T: ti.f32, T_solidus: ti.f32, T_liquidus: ti.f32) -> ti.types.vector(3, ti.f32):
+    temp_ratio = ti.max(0.0, ti.min(1.0,
+        (T - T_solidus) / (T_liquidus - T_solidus + 500.0)
+    ))
+    return ti.Vector([1.0, 0.35 + temp_ratio * 0.65, temp_ratio * 0.45])
+
+
 @ti.kernel
 def extract_melt_pool(
     f_l: ti.template(),
     T: ti.template(),
+    T_max: ti.template(),
     phi: ti.template(),
     flags: ti.template(),
     pos_arr: ti.template(),
@@ -58,6 +67,7 @@ def extract_melt_pool(
     offset_x_mm: ti.f32,
     T_solidus: ti.f32,
     T_liquidus: ti.f32,
+    nz_solid: ti.i32,
     FLAG_GAS: ti.i32,
     FLAG_FLUID: ti.i32,
     FLAG_SOLID: ti.i32,
@@ -69,7 +79,7 @@ def extract_melt_pool(
     ny: ti.i32,
     nz: ti.i32,
 ):
-    """Extract metal cells; color liquid by temperature."""
+    """Extract metal cells; color by T (liquid) or T/T_max (solid bead & HAZ)."""
     for i, j, k in f_l:
         if flags[i, j, k] == FLAG_GAS:
             continue
@@ -90,11 +100,25 @@ def extract_melt_pool(
                 ti.f32(j) * dx_mm,
                 ti.f32(k) * dx_mm,
             ])
-            if f_l[i, j, k] > 0.05:
-                temp_ratio = ti.max(0.0, ti.min(1.0,
-                    (T[i, j, k] - T_solidus) / (T_liquidus - T_solidus + 500.0)
-                ))
-                col_arr[idx] = ti.Vector([1.0, 0.4 + temp_ratio * 0.6, temp_ratio * 0.4])
+            Tc = T[i, j, k]
+            T_peak = T_max[i, j, k]
+            # Cold substrate plate (initial nz_solid layers)
+            if k < nz_solid:
+                col_arr[idx] = ti.Vector([0.22, 0.24, 0.30])
+            elif f_l[i, j, k] > 0.05:
+                col_arr[idx] = _temperature_color(Tc, T_solidus, T_liquidus)
+            elif flags[i, j, k] == FLAG_SOLID:
+                # Frozen bead / HAZ: show peak or current temperature
+                T_show = ti.max(Tc, T_peak)
+                if T_show > T_solidus + 80.0:
+                    col_arr[idx] = _temperature_color(T_show, T_solidus, T_liquidus)
+                elif T_show > T_solidus:
+                    col_arr[idx] = ti.Vector([0.85, 0.55, 0.25])
+                elif k >= nz_solid:
+                    # Deposited metal (bead crown), cooled
+                    col_arr[idx] = ti.Vector([0.55, 0.48, 0.40])
+                else:
+                    col_arr[idx] = ti.Vector([0.35, 0.35, 0.40])
             elif flags[i, j, k] == FLAG_FLUID:
                 col_arr[idx] = ti.Vector([0.45, 0.45, 0.50])
             else:

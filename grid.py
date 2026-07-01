@@ -131,6 +131,17 @@ class WAAMGrid:
         self.Fx_snap = ti.field(dtype=ti.f32, shape=shape3)
         self.Fy_snap = ti.field(dtype=ti.f32, shape=shape3)
         self.Fz_snap = ti.field(dtype=ti.f32, shape=shape3)
+        # Electromagnetic (Lorentz) fields
+        self.phi_elec = ti.field(dtype=ti.f32, shape=shape3)
+        self.phi_elec_tmp = ti.field(dtype=ti.f32, shape=shape3)
+        self.sigma_elec = ti.field(dtype=ti.f32, shape=shape3)
+        self.elec_source = ti.field(dtype=ti.f32, shape=shape3)
+        self.Jx = ti.field(dtype=ti.f32, shape=shape3)
+        self.Jy = ti.field(dtype=ti.f32, shape=shape3)
+        self.Jz = ti.field(dtype=ti.f32, shape=shape3)
+        self.Bx = ti.field(dtype=ti.f32, shape=shape3)
+        self.By = ti.field(dtype=ti.f32, shape=shape3)
+        self.Bz = ti.field(dtype=ti.f32, shape=shape3)
         self.surface_k_buf = ti.field(dtype=ti.f32, shape=())  # arc height query
         self.deposit_vol_buf = ti.field(dtype=ti.f32, shape=())  # last droplet volume [m³]
 
@@ -192,7 +203,7 @@ class WAAMGrid:
         """Rough VRAM estimate based on field shapes."""
         n = self.nx * self.ny * self.nz
         dist = 2 * Q * n * 4          # f_a, f_b
-        scalar = 22 * n * 4            # rho..tau_field + HAZ time + export buffers
+        scalar = 30 * n * 4            # rho..EM fields + HAZ time + export buffers
         vector = 6 * n * 4            # ux,uy,uz,Fx,Fy,Fz
         tracers = self.max_tracers * (3 * 4 + 4) # pos(vec3) + active(int)
         return (dist + scalar + vector + tracers) / (1024 ** 2)

@@ -142,6 +142,13 @@ def export_volume(
         grid_pv.cell_data["BodyForce_Z_ms2"] = fz.ravel(order="F")
         fmag = np.sqrt(fx ** 2 + fy ** 2 + fz ** 2)
         grid_pv.cell_data["BodyForce_mag_ms2"] = fmag.ravel(order="F")
+        if twin.enable_lorentz:
+            grid_pv.cell_data["CurrentDensity_X_Am2"] = g.Jx.to_numpy().ravel(order="F")
+            grid_pv.cell_data["CurrentDensity_Y_Am2"] = g.Jy.to_numpy().ravel(order="F")
+            grid_pv.cell_data["CurrentDensity_Z_Am2"] = g.Jz.to_numpy().ravel(order="F")
+            grid_pv.cell_data["MagneticField_X_T"] = g.Bx.to_numpy().ravel(order="F")
+            grid_pv.cell_data["MagneticField_Y_T"] = g.By.to_numpy().ravel(order="F")
+            grid_pv.cell_data["MagneticField_Z_T"] = g.Bz.to_numpy().ravel(order="F")
 
     if TIER_DERIVED in tiers:
         grid_pv.cell_data["Curvature_kappa"] = g.kappa_field.to_numpy().ravel(order="F")
@@ -192,7 +199,7 @@ def export_surface(
 
     point_grid = grid_pv.cell_data_to_point_data()
     surf = None
-    for scalar in ("phi", "Liquid_Fraction"):
+    for scalar in ("Liquid_Fraction", "phi"):
         try:
             candidate = point_grid.contour([0.5], scalars=scalar)
         except Exception:

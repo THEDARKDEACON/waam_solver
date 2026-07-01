@@ -6,7 +6,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ..physics import thermal, phase_change, forces, free_surface, lbm, deposition
+from ..physics import thermal, phase_change, forces, free_surface, lbm, deposition, weld_forces
+from ..physics.electrical_stickout import droplet_entry_temperature_K, update_ctwd
 from .. import kernels
 
 if TYPE_CHECKING:
@@ -43,6 +44,17 @@ def _resolve_arc_k(twin: "WAAMTwin", g, arc_i: float, arc_j: float) -> float:
     return k
 
 
+def _solidify_if_enabled(twin: "WAAMTwin", g) -> None:
+    if not twin.enable_substrate_growth and not twin.enable_bead_freeze:
+        return
+    free_surface.solidify_cooled_metal(
+        g.T, g.f_l, g.phi, g.flags, g.ux, g.uy, g.uz,
+        twin.mat.T_solidus,
+        twin.enable_bead_freeze or twin.enable_substrate_growth,
+        g.FLAG_SOLID, g.FLAG_FLUID, g.FLAG_GAS,
+    )
+
+
 def coupled_step(twin: "WAAMTwin", torch_x_m: float, torch_y_m: float, is_welding: bool) -> None:
     g = twin.grid
 
@@ -51,6 +63,9 @@ def coupled_step(twin: "WAAMTwin", torch_x_m: float, torch_y_m: float, is_weldin
     arc_k = _resolve_arc_k(twin, g, arc_i, arc_j)
 
     forces.clear_forces(g.Fx, g.Fy, g.Fz)
+
+    if twin.enable_ctwd:
+        update_ctwd(twin, g)
 
     current_pressure = twin.arc_pressure
 
@@ -62,10 +77,10 @@ def coupled_step(twin: "WAAMTwin", torch_x_m: float, torch_y_m: float, is_weldin
         if twin.droplet_freq > 0:
             period = 1.0 / twin.droplet_freq
             if sim_time - twin._last_droplet_time >= period:
-                current_pressure += 100_000.0
                 twin._last_droplet_time = sim_time
                 drop_r = deposition.droplet_radius_cells(twin)
                 drop_vol = deposition.droplet_mass_kg(twin) / twin.mat.rho
+                T_drop = droplet_entry_temperature_K(twin)
                 kernels.inject_tracers(
                     g.porosity_pos, g.porosity_active, g.tracer_head,
                     g.max_tracers,
@@ -73,31 +88,29 @@ def coupled_step(twin: "WAAMTwin", torch_x_m: float, torch_y_m: float, is_weldin
                     float(twin.sigma_cells * g.dx), 50,
                 )
                 g.deposit_vol_buf[None] = 0.0
-                r_try = drop_r
+                foot_r = deposition.deposition_footprint_cells(twin)
+                r_try = foot_r
                 for _ in range(8):
-                    deposition.feed_wire(
+                    deposition.feed_wire_surface(
                         g.f_src, g.flags, g.f_l, g.phi, g.H, g.T, g.rho,
                         arc_i, arc_j, arc_k,
-                        r_try,
+                        r_try, drop_r,
                         drop_vol,
-                        twin.mat.T_liquidus + 500.0,
+                        T_drop,
                         twin.cp_rho, twin.L_rho, twin.mat.rho,
                         g.deposit_vol_buf, g.dx ** 3,
-                        g.FLAG_GAS, g.FLAG_FLUID,
+                        g.FLAG_GAS, g.FLAG_FLUID, g.FLAG_SOLID,
                         g.nx, g.ny, g.nz,
                     )
                     if float(g.deposit_vol_buf[None]) >= drop_vol * 0.98:
                         break
                     r_try = min(r_try + 1.5, 14.0)
-                twin._deposited_volume_m3 += float(g.deposit_vol_buf[None])
+                placed = float(g.deposit_vol_buf[None])
+                if placed < drop_vol * 0.98:
+                    twin._deposition_overflow += 1
+                twin._deposited_volume_m3 += placed
                 twin._n_droplets_fired += 1
-                if twin.enable_deposition_momentum:
-                    deposition.feed_wire_momentum(
-                        g.ux, g.uy, g.uz, g.flags, g.f_l,
-                        arc_i, arc_j, arc_k, drop_r,
-                        twin.droplet_vz_lu,
-                        g.FLAG_GAS, g.nx, g.ny, g.nz,
-                    )
+                weld_forces.apply_droplet_impact(twin, g, arc_i, arc_j, arc_k, drop_r)
 
     if twin.use_material_tables:
         tbl = twin.gpu_tables
@@ -179,26 +192,6 @@ def coupled_step(twin: "WAAMTwin", torch_x_m: float, torch_y_m: float, is_weldin
         g.T, g.T_prev, g.dT_dt, g.flags, g.dt, g.FLAG_GAS,
     )
 
-    if twin.enable_substrate_growth:
-        free_surface.solidify_cooled_metal(
-            g.T, g.f_l, g.phi, g.flags,
-            twin.mat.T_solidus,
-            g.FLAG_SOLID, g.FLAG_FLUID, g.FLAG_GAS,
-        )
-        if twin.use_material_tables:
-            free_surface.remelt_hot_solid(
-                g.T, g.H, g.f_l, g.phi, g.flags, g.cp_rho_field,
-                twin.mat.T_solidus, twin.mat.T_liquidus, twin.L_rho,
-                g.FLAG_SOLID, g.FLAG_FLUID,
-            )
-        else:
-            free_surface.remelt_hot_solid_scalar(
-                g.T, g.H, g.f_l, g.phi, g.flags,
-                twin.cp_rho,
-                twin.mat.T_solidus, twin.mat.T_liquidus, twin.L_rho,
-                g.FLAG_SOLID, g.FLAG_FLUID,
-            )
-
     if twin.enable_vof:
         free_surface.advect_phi(
             g.phi_tmp, g.phi, g.ux, g.uy, g.uz, g.flags,
@@ -209,6 +202,12 @@ def coupled_step(twin: "WAAMTwin", torch_x_m: float, torch_y_m: float, is_weldin
         free_surface.reinitialize_phi(
             g.phi, g.flags, g.FLAG_SOLID, g.FLAG_GAS, g.FLAG_FLUID,
         )
+        if twin.enable_wetting:
+            free_surface.apply_contact_angle_phi_bc(
+                g.phi, g.flags, twin.theta_rad,
+                g.FLAG_SOLID, g.FLAG_GAS,
+                g.nx, g.ny, g.nz,
+            )
         free_surface.update_flags_from_phi(
             g.phi, g.f_l, g.flags, twin.nz_solid,
             g.FLAG_FLUID, g.FLAG_SOLID, g.FLAG_GAS, g.FLAG_IFACE,
@@ -239,6 +238,12 @@ def coupled_step(twin: "WAAMTwin", torch_x_m: float, torch_y_m: float, is_weldin
             g.nx, g.ny, g.nz,
         )
 
+    if twin.enable_hydrostatic_gravity:
+        forces.add_hydrostatic_gravity(
+            g.Fz, g.f_l, g.flags, g.mat.rho, twin.g_lu,
+            g.FLAG_SOLID, g.FLAG_GAS,
+        )
+
     forces.add_buoyancy(
         g.T, g.Fz, g.f_l, g.flags,
         twin.g_lu, twin.beta_T,
@@ -248,20 +253,19 @@ def coupled_step(twin: "WAAMTwin", torch_x_m: float, torch_y_m: float, is_weldin
     )
 
     if is_welding:
+        if twin.enable_lorentz:
+            weld_forces.solve_lorentz(twin, g, arc_i, arc_j, arc_k)
+        if twin.enable_gas_shear:
+            weld_forces.apply_gas_shear(twin, g, arc_i, arc_j, arc_k)
+
+    if is_welding:
         forces.apply_arc_pressure(
             g.Fz, g.flags, g.phi,
             arc_i, arc_j, arc_k, twin.sigma_cells,
             current_pressure, g.dt, g.dx, twin.mat.rho,
             g.FLAG_SOLID, g.FLAG_GAS,
         )
-        if twin.enable_recoil:
-            forces.apply_vapor_recoil(
-                g.Fz, g.T, g.phi, g.flags,
-                arc_i, arc_j, arc_k, twin.sigma_cells,
-                twin.recoil_pressure_pa, twin.mat.T_liquidus,
-                g.dt, g.dx, twin.mat.rho,
-                g.FLAG_SOLID, g.FLAG_GAS,
-            )
+        weld_forces.apply_recoil(twin, g, arc_i, arc_j, arc_k)
 
     if twin.use_material_tables and twin.use_variable_tau:
         lbm.collide_srt_variable_tau(
@@ -319,6 +323,23 @@ def coupled_step(twin: "WAAMTwin", torch_x_m: float, torch_y_m: float, is_weldin
         g.FLAG_GAS,
     )
     kernels.snapshot_forces(g.Fx, g.Fy, g.Fz, g.Fx_snap, g.Fy_snap, g.Fz_snap)
+
+    if twin.enable_substrate_growth or twin.enable_bead_freeze:
+        if twin.enable_substrate_growth or twin.enable_bead_freeze:
+            if twin.use_material_tables:
+                free_surface.remelt_hot_solid(
+                    g.T, g.H, g.f_l, g.phi, g.flags, g.cp_rho_field,
+                    twin.mat.T_solidus, twin.mat.T_liquidus, twin.L_rho,
+                    g.FLAG_SOLID, g.FLAG_FLUID,
+                )
+            else:
+                free_surface.remelt_hot_solid_scalar(
+                    g.T, g.H, g.f_l, g.phi, g.flags,
+                    twin.cp_rho,
+                    twin.mat.T_solidus, twin.mat.T_liquidus, twin.L_rho,
+                    g.FLAG_SOLID, g.FLAG_FLUID,
+                )
+        _solidify_if_enabled(twin, g)
 
     g.swap_buffers()
     twin._step_n += 1

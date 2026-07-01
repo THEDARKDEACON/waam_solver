@@ -16,23 +16,27 @@ build/
 .coverage
 htmlcov/
 
-# ── Simulation & validation outputs (regenerated locally / by tools) ───────────
+# ── Simulation, VTK & viewer outputs (regenerated locally / by tools) ─────────
 *.vtk
 *.vti
 *.vts
 *.vtp
 *.pvd
+*.png
+viewer_output/
+imgui.ini
+haz_map.vti
+weld_pool*.vti
+bead_surface.vtp
+tracers.vtp
+
+# Regenerated validation baselines (keep committed baselines; ignore local runs)
 validation/baselines/matrix_latest.json
 validation/baselines/v2.0_matrix.json
 validation/baselines/calibration_fit_latest.json
 validation/baselines/performance_latest.json
 
-# ── Logs & local runtime ──────────────────────────────────────────────────────
-*.log
-imgui.ini
-viewer_output/
-
-# ── User-local material overrides ───────────────────────────────────────────────
+# ── User-local material overrides ─────────────────────────────────────────────
 materials/user/*
 !materials/user/.gitkeep
 

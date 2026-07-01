@@ -34,3 +34,10 @@ tables:
     - [300, 0.0075]
     - [1793, 0.0065]
     - [2000, 0.0055]
+
+surface:
+  contact_angle_deg: 80.0
+
+electrical:
+  rho_e_ohm_m: 1.5e-7
+  eta_stick: 0.85

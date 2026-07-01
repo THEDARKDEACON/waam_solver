@@ -241,10 +241,11 @@ def run(argv: list[str] | None = None) -> None:
             )
         elif render_mode == MODE_TEMP:
             extract_melt_pool(
-                g.f_l, g.T, g.phi, g.flags,
+                g.f_l, g.T, g.T_max, g.phi, g.flags,
                 render_pos, render_col, count_field,
                 dx_mm, offset_x_mm,
                 twin.mat.T_solidus, twin.mat.T_liquidus,
+                twin.nz_solid,
                 g.FLAG_GAS, g.FLAG_FLUID, g.FLAG_SOLID,
                 filter_mode, use_phi, max_cells,
                 clip_y_i, clip_z_i, g.ny, g.nz,
@@ -413,6 +414,8 @@ def run(argv: list[str] | None = None) -> None:
         window.GUI.text(f"Filter : {filter_labels.get(filter_mode, '?')}  (B/H/F)")
         window.GUI.text(f"Surface: {'mesh' if show_surface_mesh else 'particles'}  (N)")
         window.GUI.text(f"Clip Y : {'ON' if clip_y else 'OFF'}  Z : {'ON' if clip_z else 'OFF'}")
+        if clip_z:
+            window.GUI.text("  (Z clip hides bead crown — press Z to show)")
         window.GUI.text(f"Sim t  : {telem['sim_time_ms']:.2f} ms  step {telem['step']}")
         window.GUI.text(
             f"Pool   : W {telem['pool_width_mm']:.2f} mm  "
@@ -422,7 +425,16 @@ def run(argv: list[str] | None = None) -> None:
             f"T_peak : {telem['peak_temp_C']:.0f} °C  "
             f"u_max {telem['marangoni_vel_ms']:.3f} m/s"
         )
-        window.GUI.text(f"Cells  : {num_cells}  Tracers: {num_tracers}")
+        window.GUI.text(
+            f"Metal  : {num_cells} rendered  |  "
+            f"liquid {telem.get('n_liquid_cells', 0)}"
+        )
+        bh = telem.get("bead_height_mm", 0.0)
+        dep = telem.get("deposited_mass_g", 0.0)
+        window.GUI.text(
+            f"Bead   : h {bh:.2f} mm  deposited {dep:.3f} g  "
+            f"tracers {num_tracers}"
+        )
         window.GUI.text(f"Mat    : {telem['material_name']} ({telem['material_status']})")
         if twin.probe_recorder and twin.probe_recorder.probes:
             window.GUI.text(f"Probes : {len(twin.probe_recorder.probes)}  (P=add at torch)")

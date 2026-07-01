@@ -224,6 +224,151 @@ def feed_wire(
                 f_src[q, i, j, k] = W[q] * rho0
 
 
+@ti.func
+def _has_metal_neighbor(
+    phi: ti.template(),
+    flags: ti.template(),
+    f_l: ti.template(),
+    i: ti.i32,
+    j: ti.i32,
+    k: ti.i32,
+    FLAG_FLUID: ti.i32,
+    FLAG_SOLID: ti.i32,
+    nx: ti.i32,
+    ny: ti.i32,
+    nz: ti.i32,
+) -> ti.i32:
+    """True if a 6-connected neighbour carries metal (fluid, solid, or φ > 0.35)."""
+    found = 0
+    for di, dj, dk in ti.static([
+        (-1, 0, 0), (1, 0, 0),
+        (0, -1, 0), (0, 1, 0),
+        (0, 0, -1), (0, 0, 1),
+    ]):
+        ii = i + di
+        jj = j + dj
+        kk = k + dk
+        in_bounds = ii >= 0 and jj >= 0 and kk >= 0 and ii < nx and jj < ny and kk < nz
+        if in_bounds:
+            if flags[ii, jj, kk] == FLAG_FLUID or flags[ii, jj, kk] == FLAG_SOLID:
+                found = 1
+            elif phi[ii, jj, kk] > 0.35 or f_l[ii, jj, kk] > 0.2:
+                found = 1
+    return found
+
+
+@ti.kernel
+def feed_wire_surface(
+    f_src: ti.template(),
+    flags: ti.template(),
+    f_l: ti.template(),
+    phi: ti.template(),
+    H: ti.template(),
+    T: ti.template(),
+    rho: ti.template(),
+    arc_i: ti.f32,
+    arc_j: ti.f32,
+    arc_k: ti.f32,
+    footprint_r: ti.f32,
+    droplet_radius: ti.f32,
+    target_vol: ti.f32,
+    T_drop: ti.f32,
+    cp_rho: ti.f32,
+    L_rho: ti.f32,
+    rho0: ti.f32,
+    vol_acc: ti.template(),
+    cell_vol: ti.f32,
+    FLAG_GAS: ti.i32,
+    FLAG_FLUID: ti.i32,
+    FLAG_SOLID: ti.i32,
+    nx: ti.i32,
+    ny: ti.i32,
+    nz: ti.i32,
+):
+    """
+    Deposit wire droplet on the pool footprint only (no vertical gas column).
+
+    Gas cells must be 6-connected to existing metal and lie within a horizontal
+    footprint around the arc; vertical extent is limited to ~footprint above arc_k.
+    """
+    search_r = ti.max(footprint_r, droplet_radius)
+    i_min = ti.max(0, ti.cast(arc_i - search_r, ti.i32))
+    i_max = ti.min(nx, ti.cast(arc_i + search_r, ti.i32) + 1)
+    j_min = ti.max(0, ti.cast(arc_j - search_r, ti.i32))
+    j_max = ti.min(ny, ti.cast(arc_j + search_r, ti.i32) + 1)
+    k_lo = ti.max(0, ti.cast(arc_k, ti.i32))
+    k_hi = ti.min(nz, ti.cast(arc_k + droplet_radius + 2.0, ti.i32) + 1)
+    drop_cz = arc_k + droplet_radius + 0.5
+    r_drop2 = droplet_radius * droplet_radius
+    foot2 = search_r * search_r
+
+    # Pass 1: gas cells adjacent to pool, near drop centre (preferred surface entry)
+    for i, j, k in ti.ndrange((i_min, i_max), (j_min, j_max), (k_lo, k_hi)):
+        if vol_acc[None] >= target_vol:
+            continue
+        if flags[i, j, k] != FLAG_GAS:
+            continue
+        if _has_metal_neighbor(phi, flags, f_l, i, j, k, FLAG_FLUID, FLAG_SOLID, nx, ny, nz) == 0:
+            continue
+        di = ti.f32(i) - arc_i
+        dj = ti.f32(j) - arc_j
+        dk = ti.f32(k) - drop_cz
+        r2 = di * di + dj * dj + dk * dk
+        r_ij2 = di * di + dj * dj
+        if r_ij2 > foot2 and r2 > r_drop2:
+            continue
+        flags[i, j, k] = FLAG_FLUID
+        f_l[i, j, k] = 1.0
+        phi[i, j, k] = 1.0
+        T[i, j, k] = T_drop
+        H[i, j, k] = cp_rho * T_drop + L_rho
+        rho[i, j, k] = rho0
+        ti.atomic_add(vol_acc[None], cell_vol)
+        for q in ti.static(range(19)):
+            f_src[q, i, j, k] = W[q] * rho0
+
+    # Pass 2: widen footprint if volume short (still no vertical column)
+    for i, j, k in ti.ndrange((i_min, i_max), (j_min, j_max), (k_lo, k_hi)):
+        if vol_acc[None] >= target_vol:
+            continue
+        if flags[i, j, k] != FLAG_GAS:
+            continue
+        if _has_metal_neighbor(phi, flags, f_l, i, j, k, FLAG_FLUID, FLAG_SOLID, nx, ny, nz) == 0:
+            continue
+        di = ti.f32(i) - arc_i
+        dj = ti.f32(j) - arc_j
+        r_ij2 = di * di + dj * dj
+        if r_ij2 > foot2 * 1.44:
+            continue
+        flags[i, j, k] = FLAG_FLUID
+        f_l[i, j, k] = 1.0
+        phi[i, j, k] = 1.0
+        T[i, j, k] = T_drop
+        H[i, j, k] = cp_rho * T_drop + L_rho
+        rho[i, j, k] = rho0
+        ti.atomic_add(vol_acc[None], cell_vol)
+        for q in ti.static(range(19)):
+            f_src[q, i, j, k] = W[q] * rho0
+
+    # Pass 3: top-up molten pool cells when the footprint is already liquid
+    for i, j, k in ti.ndrange((i_min, i_max), (j_min, j_max), (k_lo, k_hi)):
+        if vol_acc[None] >= target_vol:
+            continue
+        if flags[i, j, k] != FLAG_FLUID or f_l[i, j, k] < 0.45:
+            continue
+        di = ti.f32(i) - arc_i
+        dj = ti.f32(j) - arc_j
+        r_ij2 = di * di + dj * dj
+        if r_ij2 > foot2 * 1.44:
+            continue
+        T[i, j, k] = T_drop
+        H[i, j, k] = cp_rho * T_drop + L_rho
+        rho[i, j, k] = rho0
+        ti.atomic_add(vol_acc[None], cell_vol)
+        for q in ti.static(range(19)):
+            f_src[q, i, j, k] = W[q] * rho0
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 #  Arc deposition weight (surface / penetration attenuation — no RNG)
 # ──────────────────────────────────────────────────────────────────────────────
@@ -481,6 +626,60 @@ def compute_csf_tension(
 
 
 @ti.kernel
+def apply_contact_angle_phi_bc(
+    phi: ti.template(),
+    flags: ti.template(),
+    theta_rad: ti.f32,
+    FLAG_SOLID: ti.i32,
+    FLAG_GAS: ti.i32,
+    nx: ti.i32,
+    ny: ti.i32,
+    nz: ti.i32,
+):
+    """
+    Enforce static contact angle θ at solid walls (ghost-fluid style φ adjustment).
+
+    For a horizontal substrate, gas cells above solid/fluid contacts receive a
+  minimum φ set by cos(θ); horizontal neighbours of pool fluid get a precursor
+    film to promote lateral wetting/spread.
+    """
+    cos_t = ti.cos(theta_rad)
+    film = 0.5 * (1.0 - cos_t)
+    for i, j, k in phi:
+        if flags[i, j, k] == FLAG_SOLID:
+            continue
+        # Gas above solid substrate (sessile wetting layer)
+        if k > 0 and flags[i, j, k - 1] == FLAG_SOLID and flags[i, j, k] == FLAG_GAS:
+            if phi[i, j, k] < film:
+                phi[i, j, k] = film
+        # Gas directly above pool fluid
+        if k > 0 and phi[i, j, k - 1] > 0.55 and flags[i, j, k] == FLAG_GAS:
+            phi_target = 0.5 - 0.5 * cos_t
+            if phi[i, j, k] < phi_target:
+                phi[i, j, k] = phi_target
+        # Horizontal spread from pool at same k
+        if phi[i, j, k] < 0.45:
+            for dj in ti.static([-1, 1]):
+                jj = j + dj
+                if jj >= 0 and jj < ny:
+                    if phi[i, jj, k] > 0.55:
+                        spread = film * 0.85
+                        if phi[i, j, k] < spread:
+                            phi[i, j, k] = spread
+            for di in ti.static([-1, 1]):
+                ii = i + di
+                if ii >= 0 and ii < nx:
+                    if phi[ii, j, k] > 0.55:
+                        spread = film * 0.85
+                        if phi[i, j, k] < spread:
+                            phi[i, j, k] = spread
+        # Fluid on solid: keep φ pinned to full liquid at contact
+        if k > 0 and flags[i, j, k - 1] == FLAG_SOLID and phi[i, j, k] > 0.2:
+            if phi[i, j, k] < 0.65:
+                phi[i, j, k] = 0.65
+
+
+@ti.kernel
 def apply_vapor_recoil(
     Fz: ti.template(),
     T: ti.template(),
@@ -515,6 +714,392 @@ def apply_vapor_recoil(
         t_ratio = ti.min(T[i, j, k] / (T_ref + eps), 3.0)
         force = -F_peak_lu * t_ratio * ti.math.exp(-r2 * inv2s2)
         Fz[i, j, k] += force
+
+
+# ── Advanced weld forces (recoil CC, gas shear, Lorentz, droplet) ────────────
+@ti.func
+def _wf_pressure_to_Fz_lu(pressure_pa, dt, dx, rho_ref):
+    F_peak_phys = pressure_pa / (rho_ref * dx)
+    return F_peak_phys * dt * dt / dx
+
+
+@ti.func
+def _sigma_at(sigma, i, j, k, nx, ny, nz):
+    ii = ti.max(0, ti.min(nx - 1, i))
+    jj = ti.max(0, ti.min(ny - 1, j))
+    kk = ti.max(0, ti.min(nz - 1, k))
+    return sigma[ii, jj, kk]
+
+
+@ti.kernel
+def apply_vapor_recoil_clausius_clapeyron(
+    Fz: ti.template(),
+    T: ti.template(),
+    phi: ti.template(),
+    flags: ti.template(),
+    arc_i: ti.f32,
+    arc_j: ti.f32,
+    arc_k: ti.f32,
+    sigma: ti.f32,
+    P_ref_Pa: ti.f32,
+    T_boil_K: ti.f32,
+    L_vapor_J_kg: ti.f32,
+    R_spec_J_kgK: ti.f32,
+    dt: ti.f32,
+    dx: ti.f32,
+    rho_ref: ti.f32,
+    FLAG_SOLID: ti.i32,
+    FLAG_GAS: ti.i32,
+):
+    eps = 1e-6
+    inv2s2 = 1.0 / (2.0 * sigma * sigma + eps)
+    for i, j, k in Fz:
+        if flags[i, j, k] == FLAG_SOLID or flags[i, j, k] == FLAG_GAS:
+            continue
+        dphi_z = phi[i, j, ti.min(k + 1, Fz.shape[2] - 1)] - phi[i, j, ti.max(k - 1, 0)]
+        if ti.abs(dphi_z) < 0.05:
+            continue
+        Tc = T[i, j, k]
+        if Tc <= T_boil_K:
+            continue
+        exponent = (L_vapor_J_kg / (R_spec_J_kgK + eps)) * (1.0 / (T_boil_K + eps) - 1.0 / (Tc + eps))
+        exponent = ti.min(exponent, 12.0)
+        P_vap = P_ref_Pa * ti.math.exp(exponent)
+        F_peak_lu = _wf_pressure_to_Fz_lu(P_vap, dt, dx, rho_ref)
+        di = ti.f32(i) - arc_i
+        dj = ti.f32(j) - arc_j
+        r2 = di * di + dj * dj
+        Fz[i, j, k] += -F_peak_lu * ti.math.exp(-r2 * inv2s2)
+
+
+@ti.kernel
+def apply_gas_shear_stress(
+    Fx: ti.template(),
+    Fy: ti.template(),
+    phi: ti.template(),
+    flags: ti.template(),
+    arc_i: ti.f32,
+    arc_j: ti.f32,
+    arc_k: ti.f32,
+    sigma: ti.f32,
+    tau_peak_pa: ti.f32,
+    dt: ti.f32,
+    dx: ti.f32,
+    rho_ref: ti.f32,
+    FLAG_SOLID: ti.i32,
+    FLAG_GAS: ti.i32,
+):
+    eps = 1e-6
+    inv2s2 = 1.0 / (2.0 * sigma * sigma + eps)
+    F_scale = _wf_pressure_to_Fz_lu(1.0, dt, dx, rho_ref)
+    for i, j, k in Fx:
+        if flags[i, j, k] == FLAG_SOLID or flags[i, j, k] == FLAG_GAS:
+            continue
+        dpx = 0.5 * (phi[ti.min(i + 1, Fx.shape[0] - 1), j, k] - phi[ti.max(i - 1, 0), j, k])
+        dpy = 0.5 * (phi[i, ti.min(j + 1, Fx.shape[1] - 1), k] - phi[i, ti.max(j - 1, 0), k])
+        dpz = 0.5 * (phi[i, j, ti.min(k + 1, Fx.shape[2] - 1)] - phi[i, j, ti.max(k - 1, 0)])
+        gmag = ti.sqrt(dpx * dpx + dpy * dpy + dpz * dpz)
+        if gmag < 0.08:
+            continue
+        di = ti.f32(i) - arc_i
+        dj = ti.f32(j) - arc_j
+        r2 = di * di + dj * dj
+        r = ti.sqrt(r2 + eps)
+        rx = di / r
+        ry = dj / r
+        nx_n = dpx / gmag
+        ny_n = dpy / gmag
+        rdotn = rx * nx_n + ry * ny_n
+        tx = rx - rdotn * nx_n
+        ty = ry - rdotn * ny_n
+        tmag = ti.sqrt(tx * tx + ty * ty + eps)
+        tx /= tmag
+        ty /= tmag
+        tau = tau_peak_pa * ti.math.exp(-r2 * inv2s2)
+        Fmag = tau * F_scale
+        Fx[i, j, k] += Fmag * tx
+        Fy[i, j, k] += Fmag * ty
+
+
+@ti.kernel
+def apply_droplet_impact_pressure(
+    Fz: ti.template(),
+    flags: ti.template(),
+    phi: ti.template(),
+    f_l: ti.template(),
+    arc_i: ti.f32,
+    arc_j: ti.f32,
+    arc_k: ti.f32,
+    drop_radius: ti.f32,
+    impact_pa: ti.f32,
+    dt: ti.f32,
+    dx: ti.f32,
+    rho_ref: ti.f32,
+    FLAG_SOLID: ti.i32,
+    FLAG_GAS: ti.i32,
+):
+    eps = 1e-6
+    inv2s2 = 1.0 / (2.0 * drop_radius * drop_radius + eps)
+    F_peak_lu = _wf_pressure_to_Fz_lu(impact_pa, dt, dx, rho_ref)
+    for i, j, k in Fz:
+        if flags[i, j, k] == FLAG_GAS:
+            continue
+        if f_l[i, j, k] < 0.25 and phi[i, j, k] < 0.25:
+            continue
+        di = ti.f32(i) - arc_i
+        dj = ti.f32(j) - arc_j
+        dk = ti.f32(k) - arc_k
+        r2 = di * di + dj * dj + dk * dk
+        if r2 > drop_radius * drop_radius * 4.0:
+            continue
+        Fz[i, j, k] += -F_peak_lu * ti.math.exp(-r2 * inv2s2)
+
+
+@ti.kernel
+def feed_wire_momentum_impact(
+    ux: ti.template(),
+    uy: ti.template(),
+    uz: ti.template(),
+    flags: ti.template(),
+    f_l: ti.template(),
+    arc_i: ti.f32,
+    arc_j: ti.f32,
+    arc_k: ti.f32,
+    droplet_radius: ti.f32,
+    vx_lu: ti.f32,
+    vy_lu: ti.f32,
+    vz_lu: ti.f32,
+    FLAG_GAS: ti.i32,
+    nx: ti.i32,
+    ny: ti.i32,
+    nz: ti.i32,
+):
+    i_min = ti.max(0, ti.cast(arc_i - droplet_radius * 2.5, ti.i32))
+    i_max = ti.min(nx, ti.cast(arc_i + droplet_radius * 2.5, ti.i32) + 1)
+    j_min = ti.max(0, ti.cast(arc_j - droplet_radius * 2.5, ti.i32))
+    j_max = ti.min(ny, ti.cast(arc_j + droplet_radius * 2.5, ti.i32) + 1)
+    k_min = ti.max(0, ti.cast(arc_k, ti.i32))
+    k_max = ti.min(nz, ti.cast(arc_k + droplet_radius * 3.0, ti.i32) + 1)
+    drop_cz = arc_k + droplet_radius + 1.0
+    for i, j, k in ti.ndrange((i_min, i_max), (j_min, j_max), (k_min, k_max)):
+        if flags[i, j, k] == FLAG_GAS:
+            continue
+        if f_l[i, j, k] < 0.45:
+            continue
+        di = ti.f32(i) - arc_i
+        dj = ti.f32(j) - arc_j
+        dk = ti.f32(k) - drop_cz
+        r2 = di * di + dj * dj + dk * dk
+        r_ij2 = di * di + dj * dj
+        in_drop = r2 <= droplet_radius * droplet_radius or (
+            r_ij2 <= droplet_radius * droplet_radius and ti.f32(k) >= arc_k + 1.0
+        )
+        if in_drop:
+            ux[i, j, k] = vx_lu
+            uy[i, j, k] = vy_lu
+            uz[i, j, k] = vz_lu
+
+
+@ti.kernel
+def elec_build_sigma(
+    sigma: ti.template(),
+    f_l: ti.template(),
+    flags: ti.template(),
+    sigma_liquid: ti.f32,
+    sigma_solid: ti.f32,
+    FLAG_GAS: ti.i32,
+):
+    for i, j, k in sigma:
+        if flags[i, j, k] == FLAG_GAS:
+            sigma[i, j, k] = 1e-8
+        elif f_l[i, j, k] > 0.55:
+            sigma[i, j, k] = sigma_liquid
+        else:
+            sigma[i, j, k] = sigma_solid
+
+
+@ti.kernel
+def elec_clear_source(source: ti.template()):
+    for I in ti.grouped(source):
+        source[I] = 0.0
+
+
+@ti.kernel
+def elec_inject_arc_source(
+    source: ti.template(),
+    arc_i: ti.f32,
+    arc_j: ti.f32,
+    arc_k: ti.f32,
+    sigma_cells: ti.f32,
+    current_A: ti.f32,
+    dx: ti.f32,
+    nz: ti.i32,
+):
+    eps = 1e-6
+    inv2s2 = 1.0 / (2.0 * sigma_cells * sigma_cells + eps)
+    cell_vol = dx * dx * dx
+    k_max = ti.min(nz, ti.cast(arc_k + sigma_cells * 4.0, ti.i32) + 1)
+    k_min = ti.max(0, ti.cast(arc_k - sigma_cells, ti.i32))
+    for i, j, k in source:
+        if k < k_min or k > k_max:
+            continue
+        di = ti.f32(i) - arc_i
+        dj = ti.f32(j) - arc_j
+        dk = ti.f32(k) - arc_k
+        r2 = di * di + dj * dj + 0.25 * dk * dk
+        weight = ti.math.exp(-r2 * inv2s2)
+        source[i, j, k] = current_A * weight / (cell_vol + eps)
+
+
+@ti.kernel
+def elec_init_ground(
+    phi: ti.template(),
+    flags: ti.template(),
+    nz_solid: ti.i32,
+    FLAG_SOLID: ti.i32,
+):
+    for i, j, k in phi:
+        phi[i, j, k] = 0.0
+
+
+@ti.kernel
+def elec_jacobi_step(
+    phi_in: ti.template(),
+    phi_out: ti.template(),
+    sigma: ti.template(),
+    source: ti.template(),
+    flags: ti.template(),
+    dx: ti.f32,
+    omega_j: ti.f32,
+    FLAG_GAS: ti.i32,
+    FLAG_SOLID: ti.i32,
+    nz_solid: ti.i32,
+    nx: ti.i32,
+    ny: ti.i32,
+    nz: ti.i32,
+):
+    eps = 1e-12
+    for i, j, k in phi_out:
+        if flags[i, j, k] == FLAG_GAS:
+            phi_out[i, j, k] = 0.0
+            continue
+        if k <= nz_solid and flags[i, j, k] == FLAG_SOLID:
+            phi_out[i, j, k] = 0.0
+            continue
+        sp = _sigma_at(sigma, i + 1, j, k, nx, ny, nz)
+        sm = _sigma_at(sigma, i - 1, j, k, nx, ny, nz)
+        sn = _sigma_at(sigma, i, j + 1, k, nx, ny, nz)
+        ss = _sigma_at(sigma, i, j - 1, k, nx, ny, nz)
+        st = _sigma_at(sigma, i, j, k + 1, nx, ny, nz)
+        sb = _sigma_at(sigma, i, j, k - 1, nx, ny, nz)
+        denom = sp + sm + sn + ss + st + sb + eps
+        phi_neighbors = (
+            sp * phi_in[ti.min(i + 1, nx - 1), j, k]
+            + sm * phi_in[ti.max(i - 1, 0), j, k]
+            + sn * phi_in[i, ti.min(j + 1, ny - 1), k]
+            + ss * phi_in[i, ti.max(j - 1, 0), k]
+            + st * phi_in[i, j, ti.min(k + 1, nz - 1)]
+            + sb * phi_in[i, j, ti.max(k - 1, 0)]
+        )
+        phi_new = (phi_neighbors + source[i, j, k] * dx * dx) / denom
+        phi_out[i, j, k] = (1.0 - omega_j) * phi_in[i, j, k] + omega_j * phi_new
+
+
+@ti.kernel
+def elec_compute_J(
+    Jx: ti.template(),
+    Jy: ti.template(),
+    Jz: ti.template(),
+    phi: ti.template(),
+    sigma: ti.template(),
+    flags: ti.template(),
+    dx: ti.f32,
+    FLAG_GAS: ti.i32,
+    nx: ti.i32,
+    ny: ti.i32,
+    nz: ti.i32,
+):
+    for i, j, k in Jx:
+        if flags[i, j, k] == FLAG_GAS:
+            Jx[i, j, k] = 0.0
+            Jy[i, j, k] = 0.0
+            Jz[i, j, k] = 0.0
+            continue
+        sig = sigma[i, j, k]
+        dphidx = (phi[ti.min(i + 1, nx - 1), j, k] - phi[ti.max(i - 1, 0), j, k]) / (2.0 * dx)
+        dphidy = (phi[i, ti.min(j + 1, ny - 1), k] - phi[i, ti.max(j - 1, 0), k]) / (2.0 * dx)
+        dphidz = (phi[i, j, ti.min(k + 1, nz - 1)] - phi[i, j, ti.max(k - 1, 0)]) / (2.0 * dx)
+        Jx[i, j, k] = -sig * dphidx
+        Jy[i, j, k] = -sig * dphidy
+        Jz[i, j, k] = -sig * dphidz
+
+
+@ti.kernel
+def elec_compute_B_from_J(
+    Bx: ti.template(),
+    By: ti.template(),
+    Bz: ti.template(),
+    Jx: ti.template(),
+    Jy: ti.template(),
+    Jz: ti.template(),
+    dx: ti.f32,
+    mu0: ti.f32,
+    nx: ti.i32,
+    ny: ti.i32,
+    nz: ti.i32,
+):
+    for i, j, k in Bx:
+        im = ti.max(i - 1, 0)
+        ip = ti.min(i + 1, nx - 1)
+        jm = ti.max(j - 1, 0)
+        jp = ti.min(j + 1, ny - 1)
+        km = ti.max(k - 1, 0)
+        kp = ti.min(k + 1, nz - 1)
+        dJy_dz = (Jy[i, j, kp] - Jy[i, j, km]) / (2.0 * dx)
+        dJz_dy = (Jz[i, jp, k] - Jz[i, jm, k]) / (2.0 * dx)
+        dJz_dx = (Jz[ip, j, k] - Jz[im, j, k]) / (2.0 * dx)
+        dJx_dz = (Jx[i, j, kp] - Jx[i, j, km]) / (2.0 * dx)
+        dJx_dy = (Jx[i, jp, k] - Jx[i, jm, k]) / (2.0 * dx)
+        dJy_dx = (Jy[ip, j, k] - Jy[im, j, k]) / (2.0 * dx)
+        Bx[i, j, k] = mu0 * (dJy_dz - dJz_dy)
+        By[i, j, k] = mu0 * (dJz_dx - dJx_dz)
+        Bz[i, j, k] = mu0 * (dJx_dy - dJy_dx)
+
+
+@ti.kernel
+def apply_lorentz_JxB(
+    Fx: ti.template(),
+    Fy: ti.template(),
+    Fz: ti.template(),
+    Jx: ti.template(),
+    Jy: ti.template(),
+    Jz: ti.template(),
+    Bx: ti.template(),
+    By: ti.template(),
+    Bz: ti.template(),
+    f_l: ti.template(),
+    flags: ti.template(),
+    dt: ti.f32,
+    dx: ti.f32,
+    rho_ref: ti.f32,
+    FLAG_GAS: ti.i32,
+):
+    for i, j, k in Fx:
+        if flags[i, j, k] == FLAG_GAS or f_l[i, j, k] < 0.2:
+            continue
+        jx = Jx[i, j, k]
+        jy = Jy[i, j, k]
+        jz = Jz[i, j, k]
+        bx = Bx[i, j, k]
+        by = By[i, j, k]
+        bz = Bz[i, j, k]
+        fx_phys = jy * bz - jz * by
+        fy_phys = jz * bx - jx * bz
+        fz_phys = jx * by - jy * bx
+        scale = dt * dt / (rho_ref * dx)
+        Fx[i, j, k] += fx_phys * scale
+        Fy[i, j, k] += fy_phys * scale
+        Fz[i, j, k] += fz_phys * scale
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1263,7 +1848,9 @@ def update_flags_from_phi(
             continue
         p = phi[i, j, k]
         fl = f_l[i, j, k]
-        if p > 0.55 and fl > 0.1:
+        if p > 0.85 and fl < 0.05:
+            flags[i, j, k] = FLAG_SOLID
+        elif p > 0.55 and fl > 0.1:
             flags[i, j, k] = FLAG_FLUID
         elif p < 0.05:
             flags[i, j, k] = FLAG_GAS
@@ -1277,7 +1864,11 @@ def solidify_cooled_metal(
     f_l: ti.template(),
     phi: ti.template(),
     flags: ti.template(),
+    ux: ti.template(),
+    uy: ti.template(),
+    uz: ti.template(),
     T_solidus: ti.f32,
+    zero_velocity: ti.i32,
     FLAG_SOLID: ti.i32,
     FLAG_FLUID: ti.i32,
     FLAG_GAS: ti.i32,
@@ -1286,10 +1877,16 @@ def solidify_cooled_metal(
     for i, j, k in T:
         if flags[i, j, k] == FLAG_GAS:
             continue
+        if phi[i, j, k] < 0.85:
+            continue
         if f_l[i, j, k] < 0.02 and T[i, j, k] < T_solidus:
             flags[i, j, k] = FLAG_SOLID
             phi[i, j, k] = 1.0
             f_l[i, j, k] = 0.0
+            if zero_velocity == 1:
+                ux[i, j, k] = 0.0
+                uy[i, j, k] = 0.0
+                uz[i, j, k] = 0.0
 
 
 @ti.kernel
@@ -1489,6 +2086,25 @@ def add_buoyancy(
         fl = f_l[i, j, k]
         if fl > 0.0:
             Fz[i, j, k] += -rho_ref * g_lu * beta * (T[i, j, k] - T_ref) * fl
+
+
+@ti.kernel
+def add_hydrostatic_gravity(
+    Fz: ti.template(),
+    f_l: ti.template(),
+    flags: ti.template(),
+    rho_ref: ti.f32,
+    g_lu: ti.f32,
+    FLAG_SOLID: ti.i32,
+    FLAG_GAS: ti.i32,
+):
+    """Hydrostatic gravity on liquid: F_z = -ρ g f_l (+z up)."""
+    for i, j, k in Fz:
+        if flags[i, j, k] == FLAG_SOLID or flags[i, j, k] == FLAG_GAS:
+            continue
+        fl = f_l[i, j, k]
+        if fl > 0.0:
+            Fz[i, j, k] += -rho_ref * g_lu * fl
 
 
 # ──────────────────────────────────────────────────────────────────────────────
