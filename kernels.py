@@ -571,6 +571,91 @@ def feed_wire_momentum(
             uz[i, j, k] = ti.min(uz[i, j, k] + vz_lu, 0.15)
 
 
+@ti.func
+def _solid_wall_normal(
+    flags: ti.template(),
+    i: ti.i32,
+    j: ti.i32,
+    k: ti.i32,
+    FLAG_SOLID: ti.i32,
+    nx: ti.i32,
+    ny: ti.i32,
+    nz: ti.i32,
+):
+    """Unit normal pointing from solid into fluid (sum of outward directions from solid neighbours)."""
+    wx = 0.0
+    wy = 0.0
+    wz = 0.0
+    has_wall = 0
+    if i > 0 and flags[i - 1, j, k] == FLAG_SOLID:
+        wx += 1.0
+        has_wall = 1
+    if i < nx - 1 and flags[i + 1, j, k] == FLAG_SOLID:
+        wx -= 1.0
+        has_wall = 1
+    if j > 0 and flags[i, j - 1, k] == FLAG_SOLID:
+        wy += 1.0
+        has_wall = 1
+    if j < ny - 1 and flags[i, j + 1, k] == FLAG_SOLID:
+        wy -= 1.0
+        has_wall = 1
+    if k > 0 and flags[i, j, k - 1] == FLAG_SOLID:
+        wz += 1.0
+        has_wall = 1
+    if k < nz - 1 and flags[i, j, k + 1] == FLAG_SOLID:
+        wz -= 1.0
+        has_wall = 1
+    wmag = ti.sqrt(wx * wx + wy * wy + wz * wz)
+    if wmag > 1e-8:
+        wx /= wmag
+        wy /= wmag
+        wz /= wmag
+    return wx, wy, wz, has_wall
+
+
+@ti.func
+def _correct_normal_contact_angle(
+    nx_n: ti.f32,
+    ny_n: ti.f32,
+    nz_n: ti.f32,
+    wx: ti.f32,
+    wy: ti.f32,
+    wz: ti.f32,
+    theta_rad: ti.f32,
+):
+    """Brackbill-style normal so n̂·n_wall = cos(θ) (θ measured through the liquid)."""
+    cos_t = ti.cos(theta_rad)
+    sin_t = ti.sin(theta_rad)
+    dot = nx_n * wx + ny_n * wy + nz_n * wz
+    tx = nx_n - dot * wx
+    ty = ny_n - dot * wy
+    tz = nz_n - dot * wz
+    tmag = ti.sqrt(tx * tx + ty * ty + tz * tz)
+    if tmag > 1e-8:
+        nx_c = cos_t * wx + sin_t * tx / tmag
+        ny_c = cos_t * wy + sin_t * ty / tmag
+        nz_c = cos_t * wz + sin_t * tz / tmag
+    else:
+        if ti.abs(wz) > 0.5:
+            nx_c = sin_t
+            ny_c = 0.0
+            nz_c = cos_t
+        elif ti.abs(wx) > 0.5:
+            nx_c = cos_t
+            ny_c = sin_t
+            nz_c = 0.0
+        else:
+            nx_c = cos_t * wx + sin_t
+            ny_c = cos_t * wy
+            nz_c = cos_t * wz
+    cmag = ti.sqrt(nx_c * nx_c + ny_c * ny_c + nz_c * nz_c)
+    if cmag > 1e-8:
+        nx_c /= cmag
+        ny_c /= cmag
+        nz_c /= cmag
+    return nx_c, ny_c, nz_c
+
+
 @ti.kernel
 def compute_csf_tension(
     phi: ti.template(),
@@ -584,9 +669,15 @@ def compute_csf_tension(
     nx: ti.i32,
     ny: ti.i32,
     nz: ti.i32,
+    enable_wetting: ti.i32,
+    theta_rad: ti.f32,
 ):
     """
     Balanced-force CSF surface tension: F = γ κ ∇φ with κ = -∇·n̂.
+
+    When enable_wetting=1, wall-adjacent cells use contact-angle curvature
+    κ_wall = 2 cos(θ) (dx_cell = 1 lattice unit) plus lateral triple-line drive
+    on horizontal substrates (∝ sin θ).
     """
     eps = 1e-6
     for i, j, k in Fx:
@@ -597,6 +688,37 @@ def compute_csf_tension(
         dpy = 0.5 * (phi[i, ti.min(j + 1, ny - 1), k] - phi[i, ti.max(j - 1, 0), k])
         dpz = 0.5 * (phi[i, j, ti.min(k + 1, nz - 1)] - phi[i, j, ti.max(k - 1, 0)])
         gmag = ti.sqrt(dpx * dpx + dpy * dpy + dpz * dpz)
+
+        wx, wy, wz, has_wall = _solid_wall_normal(
+            flags, i, j, k, FLAG_SOLID, nx, ny, nz,
+        )
+
+        if enable_wetting != 0 and has_wall != 0 and phi[i, j, k] > 0.05:
+            cos_t = ti.cos(theta_rad)
+            sin_t = ti.sin(theta_rad)
+            if gmag < eps:
+                dpx = wx * 0.35
+                dpy = wy * 0.35
+                dpz = wz * 0.35
+                gmag = 0.35
+            kappa = 2.0 * cos_t
+            scale = gamma_lu * kappa * gmag
+            Fx[i, j, k] += scale * dpx
+            Fy[i, j, k] += scale * dpy
+            Fz[i, j, k] += scale * dpz
+            # Lateral triple-line drive on horizontal substrate (spread ∝ sin θ)
+            if wz > 0.7:
+                lat = gamma_lu * sin_t * ti.max(gmag, 0.12)
+                if i > 0 and phi[i - 1, j, k] < phi[i, j, k] - 0.05:
+                    Fx[i, j, k] -= lat
+                if i < nx - 1 and phi[i + 1, j, k] < phi[i, j, k] - 0.05:
+                    Fx[i, j, k] += lat
+                if j > 0 and phi[i, j - 1, k] < phi[i, j, k] - 0.05:
+                    Fy[i, j, k] -= lat
+                if j < ny - 1 and phi[i, j + 1, k] < phi[i, j, k] - 0.05:
+                    Fy[i, j, k] += lat
+            continue
+
         if gmag < eps:
             continue
 
@@ -625,6 +747,10 @@ def compute_csf_tension(
         Fz[i, j, k] += scale * dpz
 
 
+# Alias for BEAD_GEOMETRY_PHYSICS_SPEC (wall CSF is integrated in compute_csf_tension).
+compute_csf_wetting = compute_csf_tension
+
+
 @ti.kernel
 def apply_contact_angle_phi_bc(
     phi: ti.template(),
@@ -637,43 +763,50 @@ def apply_contact_angle_phi_bc(
     nz: ti.i32,
 ):
     """
-    Enforce static contact angle θ at solid walls (ghost-fluid style φ adjustment).
+    Ghost-fluid φ BC enforcing static contact angle θ at solid walls (Ding & Spelt style).
 
-    For a horizontal substrate, gas cells above solid/fluid contacts receive a
-  minimum φ set by cos(θ); horizontal neighbours of pool fluid get a precursor
-    film to promote lateral wetting/spread.
+    Sets gas-cell φ adjacent to the triple line so ∇φ is consistent with θ before CSF.
     """
     cos_t = ti.cos(theta_rad)
+    sin_t = ti.sin(theta_rad)
     film = 0.5 * (1.0 - cos_t)
     for i, j, k in phi:
         if flags[i, j, k] == FLAG_SOLID:
             continue
-        # Gas above solid substrate (sessile wetting layer)
+        # Gas above bare substrate — precursor film thickness ∝ (1 - cos θ)
         if k > 0 and flags[i, j, k - 1] == FLAG_SOLID and flags[i, j, k] == FLAG_GAS:
             if phi[i, j, k] < film:
                 phi[i, j, k] = film
-        # Gas directly above pool fluid
+        # Fluid on substrate: ghost gas above enforces interface slope at θ
+        if k > 0 and flags[i, j, k - 1] == FLAG_SOLID and phi[i, j, k] > 0.55:
+            if k + 1 < nz and flags[i, j, k + 1] == FLAG_GAS:
+                phi_ghost = phi[i, j, k] - sin_t
+                phi_ghost = ti.max(film, ti.min(phi_ghost, 0.98))
+                if phi[i, j, k + 1] < phi_ghost:
+                    phi[i, j, k + 1] = phi_ghost
+        # Gas directly above pool fluid (vertical interface segment)
         if k > 0 and phi[i, j, k - 1] > 0.55 and flags[i, j, k] == FLAG_GAS:
-            phi_target = 0.5 - 0.5 * cos_t
+            phi_target = phi[i, j, k - 1] - sin_t
+            phi_target = ti.max(film, ti.min(phi_target, 0.95))
             if phi[i, j, k] < phi_target:
                 phi[i, j, k] = phi_target
-        # Horizontal spread from pool at same k
+        # Horizontal spread from pool at same k (lateral wetting toe)
         if phi[i, j, k] < 0.45:
             for dj in ti.static([-1, 1]):
                 jj = j + dj
                 if jj >= 0 and jj < ny:
                     if phi[i, jj, k] > 0.55:
-                        spread = film * 0.85
+                        spread = film * (0.85 + 0.15 * sin_t)
                         if phi[i, j, k] < spread:
                             phi[i, j, k] = spread
             for di in ti.static([-1, 1]):
                 ii = i + di
                 if ii >= 0 and ii < nx:
                     if phi[ii, j, k] > 0.55:
-                        spread = film * 0.85
+                        spread = film * (0.85 + 0.15 * sin_t)
                         if phi[i, j, k] < spread:
                             phi[i, j, k] = spread
-        # Fluid on solid: keep φ pinned to full liquid at contact
+        # Fluid on solid: pin full liquid at contact
         if k > 0 and flags[i, j, k - 1] == FLAG_SOLID and phi[i, j, k] > 0.2:
             if phi[i, j, k] < 0.65:
                 phi[i, j, k] = 0.65
@@ -952,6 +1085,22 @@ def elec_inject_arc_source(
 
 
 @ti.kernel
+def elec_normalize_source(
+    source: ti.template(),
+    target_current_A: ti.f32,
+    dx: ti.f32,
+):
+    """Scale volume source [A/m³] so ∫ source dV = target_current_A."""
+    cell_vol = dx * dx * dx
+    total = 0.0
+    for i, j, k in source:
+        total += source[i, j, k] * cell_vol
+    scale = target_current_A / ti.max(total, 1e-12)
+    for i, j, k in source:
+        source[i, j, k] *= scale
+
+
+@ti.kernel
 def elec_init_ground(
     phi: ti.template(),
     flags: ti.template(),
@@ -1085,7 +1234,7 @@ def apply_lorentz_JxB(
     FLAG_GAS: ti.i32,
 ):
     for i, j, k in Fx:
-        if flags[i, j, k] == FLAG_GAS or f_l[i, j, k] < 0.2:
+        if flags[i, j, k] == FLAG_GAS or f_l[i, j, k] < 0.05:
             continue
         jx = Jx[i, j, k]
         jy = Jy[i, j, k]
@@ -1093,10 +1242,12 @@ def apply_lorentz_JxB(
         bx = Bx[i, j, k]
         by = By[i, j, k]
         bz = Bz[i, j, k]
+        # J [A/m²] × B [T] → N/m³; divide by ρ [kg/m³] → m/s²; Guo: a_lu = a_phys·dt²/dx
         fx_phys = jy * bz - jz * by
         fy_phys = jz * bx - jx * bz
         fz_phys = jx * by - jy * bx
-        scale = dt * dt / (rho_ref * dx)
+        fl_w = ti.min(1.0, f_l[i, j, k])
+        scale = fl_w * dt * dt / (rho_ref * dx)
         Fx[i, j, k] += fx_phys * scale
         Fy[i, j, k] += fy_phys * scale
         Fz[i, j, k] += fz_phys * scale
@@ -1262,6 +1413,7 @@ def refresh_thermal_properties(
     alpha_lu_ref: ti.f32,
     dgamma_lu_ref: ti.f32,
     tau_ref: ti.f32,
+    marangoni_scale: ti.f32,
     use_tables: ti.i32,
     flags: ti.template(),
     FLAG_SOLID: ti.i32,
@@ -1286,12 +1438,12 @@ def refresh_thermal_properties(
             nu_lu = nu_phys * dt / (dx * dx)
             cp_rho_field[i, j, k] = cp_r
             alpha_lu_field[i, j, k] = alpha_phys * dt / (dx * dx)
-            dgamma_lu_field[i, j, k] = dgamma * force_scale
+            dgamma_lu_field[i, j, k] = dgamma * force_scale * marangoni_scale
             tau_field[i, j, k] = 3.0 * nu_lu + 0.5
         else:
             cp_rho_field[i, j, k] = cp_rho_ref
             alpha_lu_field[i, j, k] = alpha_lu_ref
-            dgamma_lu_field[i, j, k] = dgamma_lu_ref
+            dgamma_lu_field[i, j, k] = dgamma_lu_ref * marangoni_scale
             tau_field[i, j, k] = tau_ref
 
 

@@ -39,6 +39,7 @@ class MaterialProps:
     contact_angle_deg: float = 80.0
     rho_e_ohm_m: float = 1.5e-7
     eta_stick: float = 0.85
+    sulphur_ppm: float = 30.0
     status: str = "placeholder"
     source: str = ""
     high_sulphur: bool = False
@@ -81,13 +82,15 @@ def _props_from_constants(name: str, status: str, source: str, c: dict) -> Mater
     )
 
 
-def _surface_from_yaml(data: dict) -> tuple[float, float, float]:
+def _surface_from_yaml(data: dict) -> tuple[float, float, float, float]:
     surface = data.get("surface", {}) or {}
     electrical = data.get("electrical", {}) or {}
+    surfactant = data.get("surfactant", {}) or {}
     theta = float(surface.get("contact_angle_deg", 80.0))
     rho_e = float(electrical.get("rho_e_ohm_m", 1.5e-7))
     eta_stick = float(electrical.get("eta_stick", 0.85))
-    return theta, rho_e, eta_stick
+    sulphur_ppm = float(surfactant.get("sulphur_ppm", 30.0))
+    return theta, rho_e, eta_stick, sulphur_ppm
 
 
 def validate_material_data(data: dict, path: pathlib.Path | None = None) -> None:
@@ -134,11 +137,17 @@ def _load_yaml_file(path: pathlib.Path) -> MaterialProps:
         data.get("source", ""),
         data["constants"],
     )
-    theta, rho_e, eta_stick = _surface_from_yaml(data)
+    theta, rho_e, eta_stick, sulphur_ppm = _surface_from_yaml(data)
     props.contact_angle_deg = theta
     props.rho_e_ohm_m = rho_e
     props.eta_stick = eta_stick
+    props.sulphur_ppm = sulphur_ppm
     props.tables = tables_from_yaml(data.get("tables"))
+    from .physics.surfactant import effective_dgamma_dT, scale_dgamma_table
+
+    props.dgamma_dT = effective_dgamma_dT(props.dgamma_dT, sulphur_ppm)
+    if props.tables.dgamma_dT:
+        props.tables.dgamma_dT = scale_dgamma_table(props.tables.dgamma_dT, sulphur_ppm)
     return props
 
 

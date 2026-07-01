@@ -41,12 +41,24 @@ def main() -> int:
         ("arc_surface_weight", "waam_twin.validation.test_arc_surface_weight"),
         ("advanced_weld_forces", "waam_twin.validation.test_advanced_weld_forces"),
         ("wetting_droplet", "waam_twin.validation.test_wetting_droplet"),
+        ("wetting_wall_csf", "waam_twin.validation.test_wetting_wall_csf"),
+        ("wetting_static_settle", "waam_twin.validation.test_wetting_static_settle"),
         ("deposition_no_column", "waam_twin.validation.test_deposition_no_column"),
         ("hydrostatic_gravity", "waam_twin.validation.test_hydrostatic_gravity"),
         ("bead_freeze", "waam_twin.validation.test_bead_freeze"),
         ("stickout_preheat", "waam_twin.validation.test_stickout_preheat"),
+        ("surfactant_dgamma", "waam_twin.validation.test_surfactant_dgamma"),
+        ("lorentz_physical_scale", "waam_twin.validation.test_lorentz_physical_scale"),
+        ("bead_height_telemetry", "waam_twin.validation.test_bead_height_telemetry"),
         ("backend_smoke", "waam_twin.validation.test_backend_smoke"),
     ]
+
+    if os.environ.get("WAAM_BEAD_VALIDATION") == "1":
+        tests.extend([
+            ("bead_aspect_speed", "waam_twin.validation.test_bead_aspect_speed"),
+            ("wetting_toe", "waam_twin.validation.test_wetting_toe"),
+            ("bead_macrograph_gate", "waam_twin.validation.test_bead_macrograph_gate"),
+        ])
 
     if os.environ.get("WAAM_FULL_VALIDATION") == "1":
         tests.extend([
@@ -85,6 +97,8 @@ def main() -> int:
         print("  (Full suite skipped — set WAAM_FULL_VALIDATION=1)")
     if os.environ.get("WAAM_STANDARD_VALIDATION") != "1":
         print("  (Standard preset pool test skipped — set WAAM_STANDARD_VALIDATION=1)")
+    if os.environ.get("WAAM_BEAD_VALIDATION") != "1":
+        print("  (Bead macrograph gate skipped — set WAAM_BEAD_VALIDATION=1)")
     return 0
 
 

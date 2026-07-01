@@ -145,6 +145,7 @@ class WAAMTwin:
         self.L_vapor_J_kg = L_vapor_J_kg
         self.R_spec_vapor_J_kgK = R_spec_vapor_J_kgK
         self.travel_speed_m_s = travel_speed_m_s
+        self.marangoni_scale = 1.0
         self.use_variable_tau = use_variable_tau
         self.enable_enthalpy_cap = enable_enthalpy_cap
         self.T_vapor_cap_K = T_vapor_cap_K

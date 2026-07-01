@@ -38,6 +38,9 @@ tables:
 surface:
   contact_angle_deg: 80.0
 
+surfactant:
+  sulphur_ppm: 28.0   # low-S ER70S-6 → outward Marangoni (Mills 1998)
+
 electrical:
   rho_e_ohm_m: 1.5e-7
   eta_stick: 0.85

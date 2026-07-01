@@ -124,6 +124,7 @@ def coupled_step(twin: "WAAMTwin", torch_x_m: float, torch_y_m: float, is_weldin
             tbl.cp_fallback, tbl.k_fallback, tbl.mu_fallback, tbl.dgamma_fallback,
             twin.force_scale,
             twin.cp_rho, twin.alpha_lu, twin.dgamma_dT_lu, g.tau,
+            twin.marangoni_scale,
             1, g.flags, g.FLAG_SOLID, g.FLAG_GAS,
         )
         thermal.advect_diffuse_variable(
@@ -219,6 +220,8 @@ def coupled_step(twin: "WAAMTwin", torch_x_m: float, torch_y_m: float, is_weldin
             twin.gamma_lu,
             g.FLAG_SOLID, g.FLAG_GAS,
             g.nx, g.ny, g.nz,
+            enable_wetting=twin.enable_wetting,
+            theta_rad=twin.theta_rad,
         )
 
     if twin.use_material_tables:

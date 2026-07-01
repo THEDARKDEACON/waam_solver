@@ -136,6 +136,7 @@ def solve_lorentz(twin: "WAAMTwin", g: "WAAMGrid", arc_i: float, arc_j: float, a
         g.elec_source, arc_i, arc_j, arc_k,
         twin.sigma_cells, twin.welding_current_A, g.dx, g.nz,
     )
+    kwf.elec_normalize_source(g.elec_source, twin.welding_current_A, g.dx)
     kwf.elec_init_ground(g.phi_elec, g.flags, twin.nz_solid, g.FLAG_SOLID)
     for _ in range(twin.lorentz_jacobi_iters):
         kwf.elec_jacobi_step(

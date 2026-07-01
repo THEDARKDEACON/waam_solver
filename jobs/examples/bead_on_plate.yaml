@@ -45,7 +45,7 @@ process:
   current_A: 140
   voltage_V: 20
   arc_efficiency: 0.80
-  travel_speed_mm_s: 15
+  travel_speed_mm_s: 15 
   wire_feed_m_min: 8
   wire_diameter_mm: 1.2
   droplet_length_mm: 3.0
