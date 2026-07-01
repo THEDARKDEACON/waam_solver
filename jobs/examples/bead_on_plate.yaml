@@ -2,23 +2,41 @@ simulation:
   preset: minimal
   backend: auto
   enable_vof: true
+  enable_csf_tension: true
+  enable_recoil: true
+  enable_enthalpy_cap: true
+  arc_surface_weighting: true
 
 material: materials/validated/ER70S-6.v1.yaml
 calibration: materials/calibration/ER70S-6.bead_on_plate.yaml
 
+# Goldak (1984) moving double-ellipsoid — asymmetric pool for travel along +x
+heat_source: goldak
+goldak:
+  ff: 0.6
+  fr: 0.4
+  depth_front_mm: 0.9
+  depth_rear_mm: 1.8
+
+# Arc penetration attenuation in solid (δ ≈ 2 mm); vaporization enthalpy ceiling
+arc_physics:
+  penetration_mm: 2.0
+  T_vapor_cap_K: 3200.0
+  surface_weighting: true
+
 process:
   current_A: 140
   voltage_V: 20
-  arc_efficiency: 0.72
-  travel_speed_mm_s: 5
+  arc_efficiency: 0.80
+  travel_speed_mm_s: 8
   wire_feed_m_min: 8
+  wire_diameter_mm: 1.2
   droplet_length_mm: 3.0
-  T_ambient_K: 300
+  T_ambient_K: 293
 
-heat_source: gaussian2d
 heat_loss:
   convection: true
-  radiation: false
+  radiation: true
   h_conv: 35.0
 
 reference:
@@ -26,7 +44,7 @@ reference:
   pool_depth_mm: 2.8
   source: macrograph_ER70S-6_bead_on_plate
 
-# Achievable pool envelope on 88×44×44 @ dx=0.3 mm (Gaussian2D, no heat loss).
+# Achievable pool envelope on 88×44×44 @ dx=0.3 mm (Goldak + surface-weighted arc).
 # Macro reference above is experimental; use model_reference for CI calibration checks.
 model_reference:
   grid: [88, 44, 44]
@@ -34,3 +52,9 @@ model_reference:
   n_steps: 2000
   pool_width_mm: 4.2
   pool_depth_mm: 5.4
+
+probes:
+  - name: substrate_behind_arc
+    x_mm: 8.0
+    y_mm: 20.0
+    z_mm: 1.5

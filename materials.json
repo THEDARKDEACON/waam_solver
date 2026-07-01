@@ -1,0 +1,16 @@
+[
+  {
+    "name": "AISI4043 0.9mm",
+    "current": 140.0,
+    "voltage": 20.0,
+    "wire": 4.0,
+    "travel": 4.0
+  },
+  {
+    "name": "ER50S-6",
+    "current": 170.0,
+    "voltage": 21.0,
+    "wire": 176.0,
+    "travel": 8.3
+  }
+]

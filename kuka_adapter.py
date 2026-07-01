@@ -25,12 +25,10 @@ def tcp_mm_to_sim_m(tcp_xyz_mm: list[float] | np.ndarray, origin_mm: tuple[float
 
 
 def default_job_path() -> pathlib.Path:
+    from .paths import resolve_project_path
+
     env = os.environ.get("WAAM_JOB", "jobs/examples/bead_on_plate.yaml")
-    p = pathlib.Path(env)
-    if not p.is_absolute():
-        from .paths import PROJECT_ROOT as root
-        p = root / p
-    return p
+    return resolve_project_path(env)
 
 
 def create_twin_from_env(**kwargs: Any):

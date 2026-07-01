@@ -23,8 +23,9 @@ def load_calibration(path: str | None) -> CalibrationProfile:
     except ImportError as exc:
         raise ImportError("PyYAML required for calibration files") from exc
     from pathlib import Path
+    from .paths import resolve_project_path
 
-    with open(Path(path)) as f:
+    with open(resolve_project_path(path)) as f:
         data = yaml.safe_load(f) or {}
     return CalibrationProfile(
         arc_efficiency=float(data.get("arc_efficiency", 1.0)),

@@ -36,7 +36,9 @@ def parse_torch_path(job: dict[str, Any]) -> list[tuple[float, float, float]]:
 
 
 def load_job_config(path: str | pathlib.Path) -> dict[str, Any]:
-    path = pathlib.Path(path)
+    from .paths import resolve_project_path
+
+    path = resolve_project_path(path)
     if not path.exists():
         raise FileNotFoundError(f"Job file not found: {path}")
     try:
@@ -58,12 +60,31 @@ def _wire_droplet_freq_hz(process: dict[str, Any]) -> float | None:
     return wire_m_s / drop_len_m
 
 
+def _apply_heat_source(twin, job: dict[str, Any]) -> None:
+    from .physics.arc import create_heat_source, goldak_from_job_mm
+
+    name = str(job.get("heat_source", twin.heat_source_name))
+    key = name.lower().replace("-", "").replace("_", "")
+    if key in ("goldak", "goldak3d", "doubleellipsoid"):
+        twin.arc_source = goldak_from_job_mm(twin, job.get("goldak", {}))
+    else:
+        twin.arc_source = create_heat_source(name)
+    twin.heat_source_name = name
+
+
 def apply_job_to_twin(twin, job: dict[str, Any]) -> None:
     """Apply heat-loss, process, and calibration sections to an existing twin."""
     process = job.get("process", {})
     freq = _wire_droplet_freq_hz(process)
     if freq is not None:
         twin.droplet_freq = freq
+
+    wfs = process.get("wire_feed_m_min")
+    if wfs is not None:
+        twin.wire_feed_m_s = float(wfs) / 60.0
+
+    if "wire_diameter_mm" in process:
+        twin.wire_diameter_m = float(process["wire_diameter_mm"]) / 1000.0
 
     travel_mm_s = process.get("travel_speed_mm_s")
     if travel_mm_s is not None:
@@ -76,10 +97,25 @@ def apply_job_to_twin(twin, job: dict[str, Any]) -> None:
         twin.enable_csf_tension = bool(sim["enable_csf_tension"])
     if "enable_vof" in sim:
         twin.enable_vof = bool(sim["enable_vof"])
+    if "enable_enthalpy_cap" in sim:
+        twin.enable_enthalpy_cap = bool(sim["enable_enthalpy_cap"])
+    if "arc_surface_weighting" in sim:
+        twin.arc_surface_weighting = bool(sim["arc_surface_weighting"])
     if sim.get("enable_substrate_growth"):
         twin.enable_substrate_growth = True
     if sim.get("enable_moving_window"):
         twin.enable_moving_window = True
+
+    arc_phys = job.get("arc_physics", {})
+    if "penetration_mm" in arc_phys:
+        twin.arc_penetration_m = float(arc_phys["penetration_mm"]) / 1000.0
+    if "T_vapor_cap_K" in arc_phys:
+        twin.T_vapor_cap_K = float(arc_phys["T_vapor_cap_K"])
+    if "surface_weighting" in arc_phys:
+        twin.arc_surface_weighting = bool(arc_phys["surface_weighting"])
+
+    if job.get("heat_source"):
+        _apply_heat_source(twin, job)
 
     interpass = job.get("interpass", {})
     if interpass:
@@ -121,6 +157,7 @@ def from_process_sheet(
             "arc_efficiency": kwargs.pop("arc_efficiency", 0.72),
             "T_ambient_K": kwargs.pop("T_ambient_K", 300.0),
             "droplet_length_mm": kwargs.pop("droplet_length_mm", 3.0),
+            "wire_diameter_mm": kwargs.pop("wire_diameter_mm", 1.2),
         },
         "heat_source": kwargs.pop("heat_source", "gaussian2d"),
         **kwargs,

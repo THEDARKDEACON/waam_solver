@@ -120,7 +120,19 @@ class WAAMGrid:
         self.phi_tmp = ti.field(dtype=ti.f32, shape=shape3)    # VOF advection buffer
         self.dT_dt = ti.field(dtype=ti.f32, shape=shape3)   # Cooling rate [K/s]
         self.T_prev = ti.field(dtype=ti.f32, shape=shape3)  # Previous-step T
+        # Time-at-temperature integrals [s] (HAZ research)
+        self.time_above_800_s = ti.field(dtype=ti.f32, shape=shape3)
+        self.time_above_1100_s = ti.field(dtype=ti.f32, shape=shape3)
+        self.time_above_solidus_s = ti.field(dtype=ti.f32, shape=shape3)
+        # Export / diagnostics buffers (filled on demand)
+        self.kappa_field = ti.field(dtype=ti.f32, shape=shape3)
+        self.vorticity_mag = ti.field(dtype=ti.f32, shape=shape3)
+        # End-of-step body-force snapshot for VTK [lu/ts²]
+        self.Fx_snap = ti.field(dtype=ti.f32, shape=shape3)
+        self.Fy_snap = ti.field(dtype=ti.f32, shape=shape3)
+        self.Fz_snap = ti.field(dtype=ti.f32, shape=shape3)
         self.surface_k_buf = ti.field(dtype=ti.f32, shape=())  # arc height query
+        self.deposit_vol_buf = ti.field(dtype=ti.f32, shape=())  # last droplet volume [m³]
 
         # Tracer particles for porosity tracking
         self.porosity_pos    = ti.Vector.field(3, dtype=ti.f32, shape=self.max_tracers)
@@ -180,7 +192,7 @@ class WAAMGrid:
         """Rough VRAM estimate based on field shapes."""
         n = self.nx * self.ny * self.nz
         dist = 2 * Q * n * 4          # f_a, f_b
-        scalar = 14 * n * 4            # rho..tau_field + buffers
+        scalar = 22 * n * 4            # rho..tau_field + HAZ time + export buffers
         vector = 6 * n * 4            # ux,uy,uz,Fx,Fy,Fz
         tracers = self.max_tracers * (3 * 4 + 4) # pos(vec3) + active(int)
         return (dist + scalar + vector + tracers) / (1024 ** 2)

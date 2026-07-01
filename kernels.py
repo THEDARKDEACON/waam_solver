@@ -114,6 +114,12 @@ def init_aux_fields(
     T_max: ti.template(),
     T_prev: ti.template(),
     dT_dt: ti.template(),
+    time_above_800: ti.template(),
+    time_above_1100: ti.template(),
+    time_above_solidus: ti.template(),
+    Fx_snap: ti.template(),
+    Fy_snap: ti.template(),
+    Fz_snap: ti.template(),
     Fx:    ti.template(),
     Fy:    ti.template(),
     Fz:    ti.template(),
@@ -130,9 +136,15 @@ def init_aux_fields(
         T_max[i, j, k] = T_ambient
         T_prev[i, j, k] = T_ambient
         dT_dt[i, j, k] = 0.0
+        time_above_800[i, j, k] = 0.0
+        time_above_1100[i, j, k] = 0.0
+        time_above_solidus[i, j, k] = 0.0
         Fx[i, j, k] = 0.0
         Fy[i, j, k] = 0.0
         Fz[i, j, k] = 0.0
+        Fx_snap[i, j, k] = 0.0
+        Fy_snap[i, j, k] = 0.0
+        Fz_snap[i, j, k] = 0.0
 
 
 @ti.kernel
@@ -163,10 +175,13 @@ def feed_wire(
     arc_j: ti.f32,
     arc_k: ti.f32,
     droplet_radius: ti.f32,
+    target_vol: ti.f32,
     T_drop: ti.f32,
     cp_rho: ti.f32,
     L_rho:  ti.f32,
     rho0:   ti.f32,
+    vol_acc: ti.template(),
+    cell_vol: ti.f32,
     FLAG_GAS:   ti.i32,
     FLAG_FLUID: ti.i32,
     nx: ti.i32,
@@ -174,37 +189,76 @@ def feed_wire(
     nz: ti.i32,
 ):
     """
-    Simulate wire deposition by converting gas cells above the melt pool 
-    into liquid metal (FLAG_FLUID). The LBM gravity will pull these newly 
-    created fluid cells downwards, creating a printed weld bead.
+    Deposit one wire droplet: convert gas cells to liquid until ``target_vol``
+    is reached (ṁ / f_drop / ρ). Search uses the nominal sphere plus a taller
+    column above the pool when the pool intersects the drop volume.
     """
-    i_min = ti.max(0, ti.cast(arc_i - droplet_radius, ti.i32))
-    i_max = ti.min(nx, ti.cast(arc_i + droplet_radius, ti.i32) + 1)
-    j_min = ti.max(0, ti.cast(arc_j - droplet_radius, ti.i32))
-    j_max = ti.min(ny, ti.cast(arc_j + droplet_radius, ti.i32) + 1)
-    
-    # Inject droplets starting slightly above the surface level
+    search_r = ti.max(droplet_radius * 2.5, droplet_radius + 2.0)
+    i_min = ti.max(0, ti.cast(arc_i - search_r, ti.i32))
+    i_max = ti.min(nx, ti.cast(arc_i + search_r, ti.i32) + 1)
+    j_min = ti.max(0, ti.cast(arc_j - search_r, ti.i32))
+    j_max = ti.min(ny, ti.cast(arc_j + search_r, ti.i32) + 1)
     k_min = ti.max(0, ti.cast(arc_k + 1.0, ti.i32))
-    k_max = ti.min(nz, ti.cast(arc_k + droplet_radius * 2.0, ti.i32) + 1)
+    k_max = ti.min(nz, ti.cast(arc_k + search_r * 3.0, ti.i32) + 1)
+    drop_cz = arc_k + droplet_radius + 1.0
 
     for i, j, k in ti.ndrange((i_min, i_max), (j_min, j_max), (k_min, k_max)):
+        if vol_acc[None] >= target_vol:
+            continue
         di = ti.f32(i) - arc_i
         dj = ti.f32(j) - arc_j
-        dk = ti.f32(k) - (arc_k + droplet_radius + 1.0)
-        r2 = di*di + dj*dj + dk*dk
-        
-        if r2 <= droplet_radius * droplet_radius:
-            if flags[i, j, k] == FLAG_GAS:
-                flags[i, j, k] = FLAG_FLUID
-                f_l[i, j, k] = 1.0
-                phi[i, j, k] = 1.0
-                T[i, j, k]   = T_drop
-                # H includes latent heat for liquid
-                H[i, j, k]   = cp_rho * T_drop + L_rho
-                rho[i, j, k] = rho0
-                # Initialize LBM f_src to equilibrium at rest
-                for q in ti.static(range(19)):
-                    f_src[q, i, j, k] = W[q] * rho0
+        dk = ti.f32(k) - drop_cz
+        r2 = di * di + dj * dj + dk * dk
+        r_ij2 = di * di + dj * dj
+        in_sphere = r2 <= droplet_radius * droplet_radius
+        in_column = r_ij2 <= search_r * search_r and ti.f32(k) >= arc_k + 1.0
+        if (in_sphere or in_column) and flags[i, j, k] == FLAG_GAS:
+            flags[i, j, k] = FLAG_FLUID
+            f_l[i, j, k] = 1.0
+            phi[i, j, k] = 1.0
+            T[i, j, k] = T_drop
+            H[i, j, k] = cp_rho * T_drop + L_rho
+            rho[i, j, k] = rho0
+            ti.atomic_add(vol_acc[None], cell_vol)
+            for q in ti.static(range(19)):
+                f_src[q, i, j, k] = W[q] * rho0
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  Arc deposition weight (surface / penetration attenuation — no RNG)
+# ──────────────────────────────────────────────────────────────────────────────
+@ti.func
+def arc_deposition_weight(
+    i: ti.i32,
+    j: ti.i32,
+    k: ti.i32,
+    arc_i: ti.f32,
+    arc_j: ti.f32,
+    arc_k: ti.f32,
+    f_l: ti.f32,
+    penetration_cells: ti.f32,
+    enable_surface_weight: ti.i32,
+) -> ti.f32:
+    """
+    Gaussian attenuation below the local pool surface (arc_k).
+
+    Liquid pool cells (f_l > 0.55) receive full power. Solid substrate is
+    heated with exp(-z/δ) falloff (δ ≈ penetration_cells · Δx), consistent
+    with limited arc penetration depth in Rosenthal / Goldak models.
+    """
+    w = 1.0
+    if enable_surface_weight == 1:
+        if f_l > 0.55:
+            w = 1.0
+        else:
+            dz = arc_k - ti.f32(k)
+            if dz < -0.5:
+                w = 0.0
+            else:
+                depth = ti.max(0.0, dz)
+                inv_pen = 1.0 / (penetration_cells + 1e-6)
+                w = ti.math.exp(-depth * inv_pen)
+    return w
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -215,6 +269,7 @@ def inject_arc_heat(
     H:     ti.template(),
     flags: ti.template(),
     phi:   ti.template(),
+    f_l:   ti.template(),
     # Arc parameters (all in lattice units)
     arc_i: ti.f32,   # torch x-position [cells]
     arc_j: ti.f32,   # torch y-position [cells]
@@ -224,6 +279,8 @@ def inject_arc_heat(
     dt:    ti.f32,   # Physical timestep [s]
     dx3:   ti.f32,   # Cell volume [m³]
     eta:   ti.f32,   # Arc thermal efficiency [-]
+    penetration_cells: ti.f32,
+    enable_surface_weight: ti.i32,
     FLAG_SOLID: ti.i32,
     FLAG_GAS:   ti.i32,
 ):
@@ -242,12 +299,17 @@ def inject_arc_heat(
     for i, j, k in H:
         if flags[i, j, k] == FLAG_GAS:
             continue
-        # Inject heat into solid substrate or existing fluid pool
+        w_dep = arc_deposition_weight(
+            i, j, k, arc_i, arc_j, arc_k,
+            f_l[i, j, k], penetration_cells, enable_surface_weight,
+        )
+        if w_dep < 1e-6:
+            continue
         di = ti.f32(i) - arc_i
         dj = ti.f32(j) - arc_j
         dk = ti.f32(k) - arc_k
-        r2 = di*di + dj*dj + dk*dk * 0.25   # shallow vertical weighting
-        flux = norm * ti.math.exp(-r2 * inv2s2)
+        r2 = di * di + dj * dj + dk * dk * 0.25
+        flux = norm * ti.math.exp(-r2 * inv2s2) * w_dep
         H[i, j, k] += flux * dt / dx3
 
 
@@ -256,6 +318,7 @@ def inject_goldak_heat(
     H: ti.template(),
     flags: ti.template(),
     phi: ti.template(),
+    f_l: ti.template(),
     arc_i: ti.f32,
     arc_j: ti.f32,
     arc_k: ti.f32,
@@ -269,6 +332,8 @@ def inject_goldak_heat(
     fr: ti.f32,
     depth_front: ti.f32,
     depth_rear: ti.f32,
+    penetration_cells: ti.f32,
+    enable_surface_weight: ti.i32,
     FLAG_SOLID: ti.i32,
     FLAG_GAS: ti.i32,
 ):
@@ -284,6 +349,12 @@ def inject_goldak_heat(
     for i, j, k in H:
         if flags[i, j, k] == FLAG_GAS:
             continue
+        w_dep = arc_deposition_weight(
+            i, j, k, arc_i, arc_j, arc_k,
+            f_l[i, j, k], penetration_cells, enable_surface_weight,
+        )
+        if w_dep < 1e-6:
+            continue
         di = ti.f32(i) - arc_i
         dj = ti.f32(j) - arc_j
         dk = ti.f32(k) - arc_k
@@ -296,7 +367,7 @@ def inject_goldak_heat(
         r2 = r2_xy + dk_eff * dk_eff * 4.0
 
         norm = Q_w * eta * frac / (2.0 * ti.math.pi * sigma * sigma + eps)
-        flux = norm * ti.math.exp(-r2 * inv2s2)
+        flux = norm * ti.math.exp(-r2 * inv2s2) * w_dep
         H[i, j, k] += flux * dt / dx3
 
 
@@ -794,6 +865,59 @@ def clamp_enthalpy_floor_scalar(
 
 
 @ti.kernel
+def clamp_enthalpy_ceiling_scalar(
+    H: ti.template(),
+    flags: ti.template(),
+    cp_rho: ti.f32,
+    T_solidus: ti.f32,
+    T_liquidus: ti.f32,
+    T_vapor_cap: ti.f32,
+    L_rho: ti.f32,
+    FLAG_GAS: ti.i32,
+):
+    """Cap enthalpy at vaporization ceiling (prevents runaway superheat)."""
+    h_liq = cp_rho * T_liquidus + L_rho
+    h_cap_liquid = h_liq + cp_rho * (T_vapor_cap - T_liquidus)
+    h_cap_solid = cp_rho * T_vapor_cap
+    for i, j, k in H:
+        if flags[i, j, k] == FLAG_GAS:
+            continue
+        h = H[i, j, k]
+        if h > h_liq:
+            if h > h_cap_liquid:
+                H[i, j, k] = h_cap_liquid
+        else:
+            if h > h_cap_solid:
+                H[i, j, k] = h_cap_solid
+
+
+@ti.kernel
+def clamp_enthalpy_ceiling_variable_cp(
+    H: ti.template(),
+    flags: ti.template(),
+    cp_rho_field: ti.template(),
+    T_liquidus: ti.f32,
+    T_vapor_cap: ti.f32,
+    L_rho: ti.f32,
+    FLAG_GAS: ti.i32,
+):
+    for i, j, k in H:
+        if flags[i, j, k] == FLAG_GAS:
+            continue
+        cp_r = cp_rho_field[i, j, k]
+        h_liq = cp_r * T_liquidus + L_rho
+        h_cap_liquid = h_liq + cp_r * (T_vapor_cap - T_liquidus)
+        h_cap_solid = cp_r * T_vapor_cap
+        h = H[i, j, k]
+        if h > h_liq:
+            if h > h_cap_liquid:
+                H[i, j, k] = h_cap_liquid
+        else:
+            if h > h_cap_solid:
+                H[i, j, k] = h_cap_solid
+
+
+@ti.kernel
 def update_cooling_rate(
     T: ti.template(),
     T_prev: ti.template(),
@@ -1251,6 +1375,9 @@ def shift_simulation_window_x(
     T_max: ti.template(),
     T_prev: ti.template(),
     dT_dt: ti.template(),
+    time_above_800: ti.template(),
+    time_above_1100: ti.template(),
+    time_above_solidus: ti.template(),
     rho: ti.template(),
     ux: ti.template(),
     uy: ti.template(),
@@ -1286,6 +1413,9 @@ def shift_simulation_window_x(
             T_max[i, j, k] = T_max[si, j, k]
             T_prev[i, j, k] = T_prev[si, j, k]
             dT_dt[i, j, k] = dT_dt[si, j, k]
+            time_above_800[i, j, k] = time_above_800[si, j, k]
+            time_above_1100[i, j, k] = time_above_1100[si, j, k]
+            time_above_solidus[i, j, k] = time_above_solidus[si, j, k]
             rho[i, j, k] = rho[si, j, k]
             ux[i, j, k] = ux[si, j, k]
             uy[i, j, k] = uy[si, j, k]
@@ -1317,6 +1447,10 @@ def shift_simulation_window_x(
         Fz[i, j, k] = 0.0
         T_prev[i, j, k] = T_amb
         dT_dt[i, j, k] = 0.0
+        T_max[i, j, k] = T_amb
+        time_above_800[i, j, k] = 0.0
+        time_above_1100[i, j, k] = 0.0
+        time_above_solidus[i, j, k] = 0.0
         if k < nz_solid:
             flags[i, j, k] = FLAG_SOLID
             phi[i, j, k] = 1.0
@@ -1838,3 +1972,123 @@ def advect_tracers(
             # physical velocity = u * dx / dt
             # dx_phys = (u * dx / dt) * dt = u * dx
             pos[p] += u * dx
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  KERNEL 12 — Diagnostics (HAZ time-at-T, export derived fields, force snapshot)
+# ──────────────────────────────────────────────────────────────────────────────
+@ti.kernel
+def update_time_above_T(
+    T: ti.template(),
+    flags: ti.template(),
+    time_above_800: ti.template(),
+    time_above_1100: ti.template(),
+    time_above_solidus: ti.template(),
+    dt: ti.f32,
+    T_800: ti.f32,
+    T_1100: ti.f32,
+    T_solidus: ti.f32,
+    FLAG_GAS: ti.i32,
+):
+    for i, j, k in T:
+        if flags[i, j, k] == FLAG_GAS:
+            continue
+        t_c = T[i, j, k]
+        if t_c >= T_800:
+            time_above_800[i, j, k] += dt
+        if t_c >= T_1100:
+            time_above_1100[i, j, k] += dt
+        if t_c >= T_solidus:
+            time_above_solidus[i, j, k] += dt
+
+
+@ti.kernel
+def snapshot_forces(
+    Fx: ti.template(),
+    Fy: ti.template(),
+    Fz: ti.template(),
+    Fx_snap: ti.template(),
+    Fy_snap: ti.template(),
+    Fz_snap: ti.template(),
+):
+    for i, j, k in Fx:
+        Fx_snap[i, j, k] = Fx[i, j, k]
+        Fy_snap[i, j, k] = Fy[i, j, k]
+        Fz_snap[i, j, k] = Fz[i, j, k]
+
+
+@ti.kernel
+def compute_curvature_field(
+    phi: ti.template(),
+    flags: ti.template(),
+    kappa_out: ti.template(),
+    FLAG_GAS: ti.i32,
+    nx: ti.i32,
+    ny: ti.i32,
+    nz: ti.i32,
+):
+    """VOF curvature κ = -∇·n̂ (same convention as compute_csf_tension)."""
+    eps = 1e-6
+    for i, j, k in kappa_out:
+        kappa_out[i, j, k] = 0.0
+        if flags[i, j, k] == FLAG_GAS:
+            continue
+        dpx = 0.5 * (phi[ti.min(i + 1, nx - 1), j, k] - phi[ti.max(i - 1, 0), j, k])
+        dpy = 0.5 * (phi[i, ti.min(j + 1, ny - 1), k] - phi[i, ti.max(j - 1, 0), k])
+        dpz = 0.5 * (phi[i, j, ti.min(k + 1, nz - 1)] - phi[i, j, ti.max(k - 1, 0)])
+        gmag = ti.sqrt(dpx * dpx + dpy * dpy + dpz * dpz)
+        if gmag < eps:
+            continue
+        div_n = (
+            0.5 * (
+                (phi[ti.min(i + 1, nx - 1), j, k] - phi[ti.max(i - 1, 0), j, k])
+                - (phi[ti.max(i - 1, 0), j, k] - phi[ti.max(i - 2, 0), j, k])
+            )
+            + 0.5 * (
+                (phi[i, ti.min(j + 1, ny - 1), k] - phi[i, ti.max(j - 1, 0), k])
+                - (phi[i, ti.max(j - 1, 0), k] - phi[i, ti.max(j - 2, 0), k])
+            )
+            + 0.5 * (
+                (phi[i, j, ti.min(k + 1, nz - 1)] - phi[i, j, ti.max(k - 1, 0)])
+                - (phi[i, j, ti.max(k - 1, 0)] - phi[i, j, ti.max(k - 2, 0)])
+            )
+        )
+        kappa_out[i, j, k] = -div_n / (gmag + eps)
+
+
+@ti.kernel
+def compute_vorticity_magnitude(
+    ux: ti.template(),
+    uy: ti.template(),
+    uz: ti.template(),
+    flags: ti.template(),
+    vort_out: ti.template(),
+    dx: ti.f32,
+    dt: ti.f32,
+    FLAG_GAS: ti.i32,
+    nx: ti.i32,
+    ny: ti.i32,
+    nz: ti.i32,
+):
+    """|∇×u| in physical units [1/s] from lattice velocity."""
+    scale = 1.0 / (dx + 1e-12) / (dt + 1e-12)
+    for i, j, k in vort_out:
+        vort_out[i, j, k] = 0.0
+        if flags[i, j, k] == FLAG_GAS:
+            continue
+        ip = ti.min(i + 1, nx - 1)
+        im = ti.max(i - 1, 0)
+        jp = ti.min(j + 1, ny - 1)
+        jm = ti.max(j - 1, 0)
+        kp = ti.min(k + 1, nz - 1)
+        km = ti.max(k - 1, 0)
+        duz_dy = 0.5 * (uz[i, jp, k] - uz[i, jm, k])
+        duy_dz = 0.5 * (uy[i, j, kp] - uy[i, j, km])
+        dux_dz = 0.5 * (ux[i, j, kp] - ux[i, j, km])
+        duz_dx = 0.5 * (uz[ip, j, k] - uz[im, j, k])
+        duy_dx = 0.5 * (uy[ip, j, k] - uy[im, j, k])
+        dux_dy = 0.5 * (ux[i, jp, k] - ux[i, jm, k])
+        wx = (duz_dy - duy_dz) * scale
+        wy = (dux_dz - duz_dx) * scale
+        wz = (duy_dx - dux_dy) * scale
+        vort_out[i, j, k] = ti.sqrt(wx * wx + wy * wy + wz * wz)

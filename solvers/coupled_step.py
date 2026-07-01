@@ -13,6 +13,23 @@ if TYPE_CHECKING:
     from ..twin import WAAMTwin
 
 
+def _clamp_enthalpy_ceiling(twin: "WAAMTwin", g) -> None:
+    if not twin.enable_enthalpy_cap:
+        return
+    if twin.use_material_tables:
+        thermal.clamp_enthalpy_ceiling_variable_cp(
+            g.H, g.flags, g.cp_rho_field,
+            twin.mat.T_liquidus, twin.T_vapor_cap_K, twin.L_rho,
+            g.FLAG_GAS,
+        )
+    else:
+        thermal.clamp_enthalpy_ceiling_scalar(
+            g.H, g.flags, twin.cp_rho,
+            twin.mat.T_solidus, twin.mat.T_liquidus, twin.T_vapor_cap_K,
+            twin.L_rho, g.FLAG_GAS,
+        )
+
+
 def _resolve_arc_k(twin: "WAAMTwin", g, arc_i: float, arc_j: float) -> float:
     i0 = max(0, min(int(arc_i), g.nx - 1))
     j0 = max(0, min(int(arc_j), g.ny - 1))
@@ -39,6 +56,7 @@ def coupled_step(twin: "WAAMTwin", torch_x_m: float, torch_y_m: float, is_weldin
 
     if is_welding:
         twin.arc_source.inject(twin, g, arc_i, arc_j, arc_k)
+        _clamp_enthalpy_ceiling(twin, g)
 
         sim_time = twin._step_n * g.dt
         if twin.droplet_freq > 0:
@@ -46,25 +64,37 @@ def coupled_step(twin: "WAAMTwin", torch_x_m: float, torch_y_m: float, is_weldin
             if sim_time - twin._last_droplet_time >= period:
                 current_pressure += 100_000.0
                 twin._last_droplet_time = sim_time
+                drop_r = deposition.droplet_radius_cells(twin)
+                drop_vol = deposition.droplet_mass_kg(twin) / twin.mat.rho
                 kernels.inject_tracers(
                     g.porosity_pos, g.porosity_active, g.tracer_head,
                     g.max_tracers,
                     torch_x_m, torch_y_m, float(arc_k + 1) * g.dx,
                     float(twin.sigma_cells * g.dx), 50,
                 )
-                deposition.feed_wire(
-                    g.f_src, g.flags, g.f_l, g.phi, g.H, g.T, g.rho,
-                    arc_i, arc_j, arc_k,
-                    3.0,
-                    twin.mat.T_liquidus + 500.0,
-                    twin.cp_rho, twin.L_rho, twin.mat.rho,
-                    g.FLAG_GAS, g.FLAG_FLUID,
-                    g.nx, g.ny, g.nz,
-                )
+                g.deposit_vol_buf[None] = 0.0
+                r_try = drop_r
+                for _ in range(8):
+                    deposition.feed_wire(
+                        g.f_src, g.flags, g.f_l, g.phi, g.H, g.T, g.rho,
+                        arc_i, arc_j, arc_k,
+                        r_try,
+                        drop_vol,
+                        twin.mat.T_liquidus + 500.0,
+                        twin.cp_rho, twin.L_rho, twin.mat.rho,
+                        g.deposit_vol_buf, g.dx ** 3,
+                        g.FLAG_GAS, g.FLAG_FLUID,
+                        g.nx, g.ny, g.nz,
+                    )
+                    if float(g.deposit_vol_buf[None]) >= drop_vol * 0.98:
+                        break
+                    r_try = min(r_try + 1.5, 14.0)
+                twin._deposited_volume_m3 += float(g.deposit_vol_buf[None])
+                twin._n_droplets_fired += 1
                 if twin.enable_deposition_momentum:
                     deposition.feed_wire_momentum(
                         g.ux, g.uy, g.uz, g.flags, g.f_l,
-                        arc_i, arc_j, arc_k, 3.0,
+                        arc_i, arc_j, arc_k, drop_r,
                         twin.droplet_vz_lu,
                         g.FLAG_GAS, g.nx, g.ny, g.nz,
                     )
@@ -142,6 +172,8 @@ def coupled_step(twin: "WAAMTwin", torch_x_m: float, torch_y_m: float, is_weldin
             twin.cp_rho, twin.L_rho,
             twin.mat.T_solidus, twin.mat.T_liquidus,
         )
+
+    _clamp_enthalpy_ceiling(twin, g)
 
     thermal.update_cooling_rate(
         g.T, g.T_prev, g.dT_dt, g.flags, g.dt, g.FLAG_GAS,
@@ -280,5 +312,16 @@ def coupled_step(twin: "WAAMTwin", torch_x_m: float, torch_y_m: float, is_weldin
         g.FLAG_SOLID, g.FLAG_GAS,
     )
 
+    kernels.update_time_above_T(
+        g.T, g.flags,
+        g.time_above_800_s, g.time_above_1100_s, g.time_above_solidus_s,
+        g.dt, 800.0 + 273.15, 1100.0 + 273.15, twin.mat.T_solidus,
+        g.FLAG_GAS,
+    )
+    kernels.snapshot_forces(g.Fx, g.Fy, g.Fz, g.Fx_snap, g.Fy_snap, g.Fz_snap)
+
     g.swap_buffers()
     twin._step_n += 1
+
+    if hasattr(twin, "probe_recorder") and twin.probe_recorder is not None:
+        twin.probe_recorder.record_step(twin)

@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from .material_tables import MaterialTables, interp_linear, tables_from_yaml
 
 from .paths import PROJECT_ROOT as _PROJECT_ROOT
+from .paths import resolve_project_path
 _MATERIALS_JSON = _PROJECT_ROOT / "materials.json"
 _SCHEMA_PATH = _PROJECT_ROOT / "materials" / "schema.json"
 _PLACEHOLDER_DIR = _PROJECT_ROOT / "materials" / "placeholders"
@@ -126,7 +127,7 @@ def _load_yaml_file(path: pathlib.Path) -> MaterialProps:
 
 
 def _resolve_material_path(name: str) -> pathlib.Path | None:
-    p = pathlib.Path(name)
+    p = resolve_project_path(name)
     if p.suffix in (".yaml", ".yml") and p.exists():
         return p
     if p.exists():
@@ -172,7 +173,7 @@ def load_material(name: str, high_sulphur: bool = False) -> MaterialProps:
     Warns when status is placeholder.
     """
     env_path = pathlib.Path(name) if "/" in name or name.endswith((".yaml", ".yml")) else None
-    path = _resolve_material_path(name) if env_path is None else env_path
+    path = _resolve_material_path(name) if env_path is None else resolve_project_path(name)
 
     if path is not None and path.exists():
         props = _load_yaml_file(path)

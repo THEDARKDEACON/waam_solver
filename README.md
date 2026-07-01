@@ -32,7 +32,7 @@ waam_twin/                    ← git repository root (this folder)
 ├── torch_path.py             # CSV / waypoint torch paths
 ├── kuka_adapter.py           # KUKA TCP mm → sim metres (thin bridge)
 ├── benchmark.py              # Pool W/D measurement helpers
-├── viewer.py                 # Interactive Taichi viewer
+├── viewer/                   # Interactive Taichi GGUI viewer
 ├── verify.py                 # → validation.run_all
 ├── config/
 │   └── presets.yaml          # minimal | standard | high | ultra
@@ -211,21 +211,97 @@ twin.step(0.015, 0.010, is_welding=True)
 
 ### Interactive viewer
 
+Real-time **Taichi GGUI** particle view of the melt pool (voxel-based, not ParaView quality). Defaults to the calibrated bead-on-plate job (VOF + heat loss + calibration overlay).
+
 ```bash
-export PYTHONPATH=...
-export WAAM_PRESET=standard
-python3 -m waam_twin.viewer
+cd FYP22-01   # parent on PYTHONPATH
+export PYTHONPATH=.
+export WAAM_BACKEND=cuda   # or cpu / vulkan
+
+# Calibrated job (recommended)
+python3 -m waam_twin.viewer --job jobs/examples/bead_on_plate.yaml
+
+# Multi-bead path job
+python3 -m waam_twin.viewer --job jobs/examples/multi_bead.yaml
+
+# Preset-only demo (no job file)
+python3 -m waam_twin.viewer --preset minimal --material materials/validated/ER70S-6.v1.yaml
 ```
+
+| Key | Action |
+|-----|--------|
+| `M` | Cycle Temperature / HAZ / Velocity / Vorticity / Body force |
+| `V` | Cycle flow overlay: off / arrows / streamlines |
+| `B` | All metal ↔ liquid-only |
+| `H` | Solid-only (HAZ) filter |
+| `F` | Surface filter (φ band; requires VOF) |
+| `N` | Surface mesh (φ shell) vs particles |
+| `G` | Full research VTK bundle |
+| `P` | Add probe at torch (T(t) CSV on export) |
+| `C` / `Z` | Y / Z cross-section clip |
+| `T` / `O` | Tracers / torch marker |
+| `R` | Reset simulation |
+| `+` / `-` | Steps per frame |
+| `S` | Screenshot → `viewer_output/` |
+| `V` | VTK dump → `viewer_output/` |
+| `SPACE` | Pause |
+
+HUD shows live pool width/depth, peak temperature, and Marangoni speed from `get_telemetry()`.
+
+#### Resolution tuning
+
+Two separate knobs: **simulation grid** (physics) vs **particle size** (display only).
+
+| What | Where | Effect |
+|------|--------|--------|
+| **Grid / cell size** | Job YAML `simulation.preset` or viewer `--preset` | `minimal` → dx≈0.5 mm, `standard` → 0.3 mm, `high` → 0.2 mm |
+| **Preset definitions** | [`config/presets.yaml`](config/presets.yaml) | Edit `target_dx_mm`, `domain_mm`, `vram_budget_mb` per tier |
+| **Viewer override** | CLI | `--preset standard` overrides job preset without editing YAML |
+| **Particle “ball” size** | CLI | `--particle-scale 0.25` (fraction of cell width; default `0.35`) |
+
+Example — finer physics + smaller particles:
+
+```bash
+python3 -m waam_twin.viewer \
+  --job jobs/examples/bead_on_plate.yaml \
+  --preset standard \
+  --particle-scale 0.28
+```
+
+Or edit the job file:
+
+```yaml
+simulation:
+  preset: standard   # was minimal — 0.3 mm cells, larger grid
+  enable_vof: true
+```
+
+**VRAM:** `standard` needs ~2 GB GPU budget; `high` ~8 GB. Your RTX-class laptop can usually run `standard` on CUDA.
 
 ### VTK export
 
 ```python
-twin.export_vtk("pool.vts")
-twin.export_surface_vtk("bead_surface.vtp")
-twin.export_haz_vtk("haz.vts")
+twin.export_vtk("pool.vti")                    # Tier 0+3 volume (full research set)
+twin.export_vtk_full("pool.vti", tiers=(0,1,2,3))
+twin.export_surface_vtk("bead_surface.vtp")    # φ isosurface + κ
+twin.export_tracers_vtk("tracers.vtp")
+twin.export_research_bundle("run_out/")        # volume + surface + tracers + meta.json
 ```
 
+**Viewer:** `G` = full research bundle; `V` = legacy quick volume (+ surface if VOF).
+
+**CLI sequence export:**
+
+```bash
+python3 -m waam_twin.export --job jobs/examples/bead_on_plate.yaml --steps 300 --every 50 --out viewer_output/seq
+# Open viewer_output/seq/sequence.pvd in ParaView
+```
+
+Legacy `.vts` paths are auto-rewritten to `.vti`. Press **`G`** in the viewer for a full bundle, or **`V`** for a quick volume dump.
+
 Set `WAAM_HEADLESS=1` to skip VTK in batch runs.
+
+Full field inventory, research bundle layout, and diagnostic roadmap: [docs/DIAGNOSTICS_AND_VTK_SPEC.md](docs/DIAGNOSTICS_AND_VTK_SPEC.md).
 
 ---
 
@@ -254,7 +330,7 @@ See [docs/MATERIALS.md](docs/MATERIALS.md) and [docs/HARDWARE.md](docs/HARDWARE.
 | `WAAM_PRESET` | `minimal`, `standard`, `high`, `ultra` | `standard` |
 | `WAAM_VRAM_MB` | integer override | auto-detect |
 | `WAAM_HEADLESS` | `0`, `1` | `0` |
-| `WAAM_JOB` | path to job YAML | `jobs/examples/bead_on_plate.yaml` |
+| `WAAM_JOB` | path to job YAML | `jobs/examples/bead_on_plate.yaml` (under `waam_twin/`) |
 | `WAAM_FULL_VALIDATION` | `1` = process + soak tests | off |
 | `WAAM_STANDARD_VALIDATION` | `1` = standard-dx pool test | off |
 | `WAAM_BACKEND_MATRIX` | `1` = probe vulkan/cuda in smoke test | off |
@@ -331,11 +407,10 @@ Grid dimensions are computed by `auto_grid()` from `config/presets.yaml` and ava
 
 ## Relationship to FYP22-01
 
-| In this repo | In parent FYP22-01 only |
-|--------------|-------------------------|
-| `waam_twin` simulator | Flask web UI (`main.py`) |
-| Job / material YAML | `materials.json` (UI list) |
-| `kuka_adapter` | `kuka.py` socket protocol |
-| CSV torch paths | `gcode_pipeline.py`, `gcode_cleaner.py` |
+| In `waam_twin/` (this repo) | In parent FYP22-01 only |
+|-----------------------------|-------------------------|
+| `config/`, `jobs/`, `materials/`, `docs/` | Flask UI (`main.py`), `kuka.py` |
+| Job / material YAML | Parent `materials.json` (UI wire list) |
+| `kuka_adapter.py` | `waam_physics.py`, `gcode_pipeline.py` |
 
-Clone or copy this folder as the canonical simulator; point `PYTHONPATH` at its parent directory when running imports.
+When nested under FYP22-01: `export PYTHONPATH=.` on the **parent**. Paths like `jobs/examples/…` resolve inside **`waam_twin/`** via `paths.resolve_project_path()`.

@@ -33,7 +33,10 @@ def run(n_steps: int = 100, threshold: float = 15.0) -> float:
         g.FLAG_FLUID, g.FLAG_SOLID,
     )
     kernels.init_aux_fields(
-        g.T_max, g.T_prev, g.dT_dt, g.Fx, g.Fy, g.Fz, twin.T_amb,
+        g.T_max, g.T_prev, g.dT_dt,
+        g.time_above_800_s, g.time_above_1100_s, g.time_above_solidus_s,
+        g.Fx_snap, g.Fy_snap, g.Fz_snap,
+        g.Fx, g.Fy, g.Fz, twin.T_amb,
         g.porosity_active, g.tracer_head, g.max_tracers,
     )
     kernels.stream(g.f_a, g.f_b, g.flags, g.FLAG_SOLID, g.FLAG_GAS, g.nx, g.ny, g.nz)

@@ -31,6 +31,14 @@ def main() -> int:
         ("arc_pressure", "waam_twin.validation.test_arc_pressure"),
         ("moving_window", "waam_twin.validation.test_moving_window"),
         ("surface_vtk", "waam_twin.validation.test_surface_vtk"),
+        ("viewer_session", "waam_twin.validation.test_viewer_session"),
+        ("viewer_extract", "waam_twin.validation.test_viewer_extract"),
+        ("export_full_vtk", "waam_twin.validation.test_export_full_vtk"),
+        ("export_bundle", "waam_twin.validation.test_export_bundle"),
+        ("probe_recorder", "waam_twin.validation.test_probe_recorder"),
+        ("enthalpy_cap", "waam_twin.validation.test_enthalpy_cap"),
+        ("mass_balance", "waam_twin.validation.test_mass_balance"),
+        ("arc_surface_weight", "waam_twin.validation.test_arc_surface_weight"),
         ("backend_smoke", "waam_twin.validation.test_backend_smoke"),
     ]
 

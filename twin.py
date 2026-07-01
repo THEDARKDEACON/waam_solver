@@ -51,6 +51,11 @@ class WAAMTwin:
         recoil_pressure_pa: float = 5000.0,
         travel_speed_m_s: float = 0.0,
         use_variable_tau: bool = True,
+        enable_enthalpy_cap: bool = True,
+        T_vapor_cap_K: float = 3200.0,
+        arc_surface_weighting: bool = True,
+        arc_penetration_mm: float = 2.0,
+        wire_diameter_mm: float = 1.2,
     ):
         if isinstance(material, MaterialProps):
             self.mat = material
@@ -84,12 +89,22 @@ class WAAMTwin:
         self.recoil_pressure_pa = recoil_pressure_pa
         self.travel_speed_m_s = travel_speed_m_s
         self.use_variable_tau = use_variable_tau
+        self.enable_enthalpy_cap = enable_enthalpy_cap
+        self.T_vapor_cap_K = T_vapor_cap_K
+        self.arc_surface_weighting = arc_surface_weighting
+        self.arc_penetration_m = arc_penetration_mm * 1e-3
+        self.wire_diameter_m = wire_diameter_mm * 1e-3
+        self.wire_feed_m_s = 0.0
+        self._deposited_volume_m3 = 0.0
+        self._n_droplets_fired = 0
         self.nz_solid = max(1, nz // 5)
         self._step_n = 0
         self._last_droplet_time = 0.0
         self._window_offset_x_m = 0.0
         self._interpass_cooling_steps = 0
         self.preset_name: str | None = None
+        self.probe_recorder = None
+        self._job_path: str | None = None
 
         kernels.bind_velocity_set(self.grid)
 
@@ -167,12 +182,19 @@ class WAAMTwin:
         return twin
 
     @classmethod
-    def from_job(cls, job_path: str | pathlib.Path, **kwargs: Any) -> "WAAMTwin":
+    def from_job(
+        cls,
+        job_path: str | pathlib.Path,
+        preset_override: str | None = None,
+        **kwargs: Any,
+    ) -> "WAAMTwin":
         from .job import load_job_config
         from .platform import ensure_taichi
 
         ensure_taichi()
         job = load_job_config(job_path)
+        if preset_override:
+            job.setdefault("simulation", {})["preset"] = preset_override
         preset = job.get("simulation", {}).get("preset", "standard")
         material = job.get("material", "ER70S-6")
         process = job.get("process", {})
@@ -199,13 +221,17 @@ class WAAMTwin:
             arc_efficiency=arc_eta,
             T_ambient=T_amb,
             heat_source=str(job.get("heat_source", kwargs.pop("heat_source", "gaussian2d"))),
-            enable_vof=bool(job.get("simulation", {}).get("enable_vof", kwargs.pop("enable_vof", False))),
             **heat_kwargs,
             **kwargs,
         )
         from .job import apply_job_to_twin
         apply_job_to_twin(twin, job)
         twin._job_config = job
+        twin._job_path = str(job_path)
+        probes_cfg = job.get("probes")
+        if probes_cfg:
+            from .export.probes import ProbeRecorder
+            twin.probe_recorder = ProbeRecorder.from_job_list(probes_cfg, twin)
         return twin
 
     def reset(self, T_ambient: float | None = None, test_fluid_domain: bool = False):
@@ -222,7 +248,10 @@ class WAAMTwin:
             g.FLAG_FLUID, g.FLAG_SOLID, g.FLAG_GAS,
         )
         kernels.init_aux_fields(
-            g.T_max, g.T_prev, g.dT_dt, g.Fx, g.Fy, g.Fz, T0,
+            g.T_max, g.T_prev, g.dT_dt,
+            g.time_above_800_s, g.time_above_1100_s, g.time_above_solidus_s,
+            g.Fx_snap, g.Fy_snap, g.Fz_snap,
+            g.Fx, g.Fy, g.Fz, T0,
             g.porosity_active, g.tracer_head, g.max_tracers,
         )
         kernels.stream(
@@ -232,6 +261,9 @@ class WAAMTwin:
         )
         self._step_n = 0
         self._last_droplet_time = 0.0
+        self._deposited_volume_m3 = 0.0
+        self._n_droplets_fired = 0
+        g.deposit_vol_buf[None] = 0.0
         print(f"[WAAMTwin] Grid reset. T_ambient={T0:.1f}K  test_fluid={test_fluid_domain}")
 
     def step(self, torch_x_m: float, torch_y_m: float, is_welding: bool = True):
@@ -255,6 +287,7 @@ class WAAMTwin:
             g.f_a, g.f_b,
             g.T, g.H, g.f_l, g.phi, g.flags,
             g.T_max, g.T_prev, g.dT_dt,
+            g.time_above_800_s, g.time_above_1100_s, g.time_above_solidus_s,
             g.rho, g.ux, g.uy, g.uz, g.Fx, g.Fy, g.Fz,
             g.cp_rho_field, g.alpha_lu_field, g.dgamma_lu_field, g.tau_field,
             self.T_amb, self.cp_rho, g.mat.rho,
@@ -310,23 +343,18 @@ class WAAMTwin:
             cx, cy = clamp_torch_to_domain(x, y, g.nx, g.ny, g.dx)
             self.step(cx, cy, is_welding)
 
-    def export_haz_vtk(self, path: str = "haz_map.vts") -> None:
+    @staticmethod
+    def _vtk_imagedata_path(path: str) -> str:
+        """PyVista ImageData requires .vti (legacy .vts is rewritten)."""
+        p = pathlib.Path(path)
+        if p.suffix.lower() in (".vts", ""):
+            return str(p.with_suffix(".vti"))
+        return path
+
+    def export_haz_vtk(self, path: str = "haz_map.vti") -> None:
         """Export peak temperature (HAZ) field to VTK."""
-        if __import__("os").environ.get("WAAM_HEADLESS") == "1":
-            return
-        try:
-            import pyvista as pv
-        except ImportError:
-            print("[WAAMTwin] pyvista not installed. Skipping HAZ VTK export.")
-            return
-        g = self.grid
-        grid_pv = pv.ImageData()
-        grid_pv.dimensions = (g.nx + 1, g.ny + 1, g.nz + 1)
-        grid_pv.spacing = (g.dx * 1000,) * 3
-        grid_pv.cell_data["T_max_K"] = g.T_max.to_numpy().ravel(order="F")
-        grid_pv.cell_data["T_current_K"] = g.T.to_numpy().ravel(order="F")
-        grid_pv.save(path)
-        print(f"[WAAMTwin] HAZ VTK exported → {path}")
+        from .export.vtk_io import export_volume, TIER_CORE
+        export_volume(self, path, tiers=(TIER_CORE,), crop_liquid=False)
 
     def get_telemetry(self) -> dict:
         g = self.grid
@@ -363,6 +391,18 @@ class WAAMTwin:
         n_active = int((active == 1).sum())
         porosity_pct = 100.0 * n_trapped / max(n_trapped + n_active, 1)
 
+        from .physics.deposition import (
+            droplet_mass_kg,
+            expected_deposited_mass_kg,
+            wire_mass_flux_kg_s,
+        )
+
+        dep_mass = self._deposited_volume_m3 * self.mat.rho
+        exp_mass = expected_deposited_mass_kg(self)
+        m_drop = droplet_mass_kg(self)
+        exp_drop_mass = self._n_droplets_fired * m_drop
+        mass_ratio = dep_mass / max(exp_drop_mass, 1e-12)
+
         return {
             "step": self._step_n,
             "sim_time_ms": round(self._step_n * g.dt * 1000, 4),
@@ -383,72 +423,63 @@ class WAAMTwin:
             "porosity_pct": round(porosity_pct, 3),
             "n_trapped_tracers": n_trapped,
             "window_offset_x_mm": round(self._window_offset_x_m * 1000, 3),
+            "deposited_mass_g": round(dep_mass * 1000, 4),
+            "expected_wire_mass_g": round(exp_mass * 1000, 4),
+            "expected_drop_mass_g": round(exp_drop_mass * 1000, 4),
+            "n_droplets_fired": self._n_droplets_fired,
+            "droplet_mass_mg": round(m_drop * 1e6, 3),
+            "mass_balance_ratio": round(mass_ratio, 3),
+            "wire_mass_flux_g_s": round(wire_mass_flux_kg_s(self) * 1000, 4),
+            "T_vapor_cap_K": self.T_vapor_cap_K,
+            "arc_surface_weighting": self.arc_surface_weighting,
+            "enable_enthalpy_cap": self.enable_enthalpy_cap,
         }
 
-    def export_vtk(self, path: str = "weld_pool.vts"):
-        if __import__("os").environ.get("WAAM_HEADLESS") == "1":
-            return
-        try:
-            import shutil
-            usage = shutil.disk_usage(pathlib.Path(path).parent)
-            if usage.free < 50 * 1024 * 1024:
-                print("[WAAMTwin] Low disk space (<50 MB). Skipping VTK export.")
-                return
-        except OSError:
-            pass
-        try:
-            import pyvista as pv
-        except ImportError:
-            print("[WAAMTwin] pyvista not installed. Skipping VTK export.")
-            return
+    def export_vtk(self, path: str = "weld_pool.vti"):
+        """Export full research volume (Tier 0+3) or legacy path."""
+        from .export.vtk_io import export_volume, TIER_CORE, TIER_DERIVED
+        export_volume(self, path, tiers=(TIER_CORE, TIER_DERIVED))
 
-        g = self.grid
-        T_np = g.T.to_numpy()
-        fl_np = g.f_l.to_numpy()
-        ux_np = g.ux.to_numpy()
-        uz_np = g.uz.to_numpy()
-
-        grid_pv = pv.ImageData()
-        grid_pv.dimensions = (g.nx + 1, g.ny + 1, g.nz + 1)
-        grid_pv.spacing = (g.dx * 1000,) * 3
-        grid_pv.cell_data["Temperature_K"] = T_np.ravel(order="F")
-        grid_pv.cell_data["Liquid_Fraction"] = fl_np.ravel(order="F")
-        grid_pv.cell_data["T_max_K"] = g.T_max.to_numpy().ravel(order="F")
-        grid_pv.cell_data["Velocity_X_ms"] = (ux_np * g.dx / g.dt).ravel(order="F")
-        grid_pv.cell_data["Velocity_Z_ms"] = (uz_np * g.dx / g.dt).ravel(order="F")
-        grid_pv.save(path)
-        print(f"[WAAMTwin] VTK exported → {path}")
+    def export_vtk_full(
+        self,
+        path: str = "weld_pool_full.vti",
+        tiers: tuple[int, ...] = (0, 1, 2, 3),
+        crop_liquid: bool = False,
+    ) -> str | None:
+        from .export import vtk_io
+        tier_tuple = tuple(vtk_io.TIER_MAP.get(t, t) for t in tiers)
+        return vtk_io.export_volume(self, path, tiers=tier_tuple, crop_liquid=crop_liquid)
 
     def export_surface_vtk(self, path: str = "bead_surface.vtp") -> None:
         """Export φ=0.5 isosurface as PolyData (melt-pool boundary mesh)."""
-        if __import__("os").environ.get("WAAM_HEADLESS") == "1":
-            return
-        try:
-            import pyvista as pv
-        except ImportError:
-            print("[WAAMTwin] pyvista not installed. Skipping surface VTK.")
-            return
-        g = self.grid
-        phi_np = g.phi.to_numpy()
-        grid_pv = pv.ImageData()
-        grid_pv.dimensions = (g.nx + 1, g.ny + 1, g.nz + 1)
-        grid_pv.spacing = (g.dx * 1000,) * 3
-        grid_pv.origin = (self._window_offset_x_m * 1000, 0.0, 0.0)
-        grid_pv.cell_data["phi"] = phi_np.ravel(order="F")
-        grid_pv.cell_data["Liquid_Fraction"] = g.f_l.to_numpy().ravel(order="F")
-        grid_pv.cell_data["Temperature_K"] = g.T.to_numpy().ravel(order="F")
-        point_grid = grid_pv.cell_data_to_point_data()
-        surf = None
-        for scalar in ("phi", "Liquid_Fraction"):
-            try:
-                candidate = point_grid.contour([0.5], scalars=scalar)
-            except Exception:
-                candidate = point_grid.contour(isosurfaces=[0.5], scalars=scalar)
-            if candidate.n_cells > 0:
-                surf = candidate
-                break
-        if surf is None or surf.n_cells == 0:
-            print("[WAAMTwin] No φ/f_l=0.5 surface found; skipping surface VTK.")
-            return
-        surf.save(path)
-        print(f"[WAAMTwin] Surface VTK exported → {path}  ({surf.n_cells} cells)")
+        from .export.vtk_io import export_surface
+        export_surface(self, path, include_kappa=True)
+
+    def export_tracers_vtk(self, path: str = "tracers.vtp") -> None:
+        from .export.vtk_io import export_tracers
+        export_tracers(self, path)
+
+    def export_research_bundle(
+        self,
+        out_dir: str | pathlib.Path,
+        tag: str | None = None,
+        tiers: tuple[int, ...] = (0, 1, 3),
+        include_surface: bool = True,
+        include_tracers: bool = True,
+        crop_liquid: bool = False,
+    ) -> dict[str, str]:
+        from .export.bundle import export_research_bundle
+        return export_research_bundle(
+            self,
+            out_dir,
+            tag=tag,
+            tiers=tiers,
+            include_surface=include_surface,
+            include_tracers=include_tracers,
+            job_path=self._job_path,
+            crop_liquid=crop_liquid,
+        )
+
+    def export_research_sequence(self, *args, **kwargs):
+        from .export.bundle import export_research_sequence
+        return export_research_sequence(self, *args, job_path=self._job_path, **kwargs)

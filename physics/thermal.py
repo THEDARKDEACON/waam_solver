@@ -16,6 +16,8 @@ init_stefan_liquid_column = kernels.init_stefan_liquid_column
 clamp_substrate_enthalpy = kernels.clamp_substrate_enthalpy
 clamp_enthalpy_floor = kernels.clamp_enthalpy_floor
 clamp_enthalpy_floor_scalar = kernels.clamp_enthalpy_floor_scalar
+clamp_enthalpy_ceiling_scalar = kernels.clamp_enthalpy_ceiling_scalar
+clamp_enthalpy_ceiling_variable_cp = kernels.clamp_enthalpy_ceiling_variable_cp
 
 __all__ = [
     "advect_diffuse_temperature",
@@ -32,4 +34,6 @@ __all__ = [
     "clamp_substrate_enthalpy",
     "clamp_enthalpy_floor",
     "clamp_enthalpy_floor_scalar",
+    "clamp_enthalpy_ceiling_scalar",
+    "clamp_enthalpy_ceiling_variable_cp",
 ]
