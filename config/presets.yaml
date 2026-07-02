@@ -17,7 +17,7 @@ standard:
 high:
   vram_budget_mb: 8192
   domain_mm: [120, 60, 40]
-  target_dx_mm: 0.2
+  target_dx_mm: 0.05
   max_tracers: 50000
   use_srt: false
 
