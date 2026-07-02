@@ -2112,6 +2112,102 @@ def remelt_hot_solid_scalar(
 
 
 @ti.kernel
+def solidify_trailing_pool(
+    T: ti.template(),
+    H: ti.template(),
+    f_l: ti.template(),
+    phi: ti.template(),
+    flags: ti.template(),
+    ux: ti.template(),
+    uy: ti.template(),
+    uz: ti.template(),
+    cp_rho_field: ti.template(),
+    arc_i: ti.f32,
+    arc_j: ti.f32,
+    arc_k: ti.f32,
+    dir_x: ti.f32,
+    dir_y: ti.f32,
+    dir_z: ti.f32,
+    lookback_cells: ti.f32,
+    T_freeze: ti.f32,
+    T_solidus: ti.f32,
+    FLAG_SOLID: ti.i32,
+    FLAG_FLUID: ti.i32,
+    FLAG_GAS: ti.i32,
+):
+    """Clamp the far trailing pool back to solid once it cools below a mild superheat margin."""
+    for i, j, k in T:
+        if flags[i, j, k] == FLAG_GAS:
+            continue
+        if phi[i, j, k] < 0.85 or f_l[i, j, k] < 0.05:
+            continue
+        di = ti.f32(i) - arc_i
+        dj = ti.f32(j) - arc_j
+        dk = ti.f32(k) - arc_k
+        proj = di * dir_x + dj * dir_y + dk * dir_z
+        if proj > -lookback_cells:
+            continue
+        if T[i, j, k] >= T_freeze:
+            continue
+        cp_r = cp_rho_field[i, j, k]
+        H[i, j, k] = cp_r * T_solidus
+        T[i, j, k] = T_solidus
+        f_l[i, j, k] = 0.0
+        phi[i, j, k] = 1.0
+        flags[i, j, k] = FLAG_SOLID
+        ux[i, j, k] = 0.0
+        uy[i, j, k] = 0.0
+        uz[i, j, k] = 0.0
+
+
+@ti.kernel
+def solidify_trailing_pool_scalar(
+    T: ti.template(),
+    H: ti.template(),
+    f_l: ti.template(),
+    phi: ti.template(),
+    flags: ti.template(),
+    ux: ti.template(),
+    uy: ti.template(),
+    uz: ti.template(),
+    cp_rho: ti.f32,
+    arc_i: ti.f32,
+    arc_j: ti.f32,
+    arc_k: ti.f32,
+    dir_x: ti.f32,
+    dir_y: ti.f32,
+    dir_z: ti.f32,
+    lookback_cells: ti.f32,
+    T_freeze: ti.f32,
+    T_solidus: ti.f32,
+    FLAG_SOLID: ti.i32,
+    FLAG_FLUID: ti.i32,
+    FLAG_GAS: ti.i32,
+):
+    for i, j, k in T:
+        if flags[i, j, k] == FLAG_GAS:
+            continue
+        if phi[i, j, k] < 0.85 or f_l[i, j, k] < 0.05:
+            continue
+        di = ti.f32(i) - arc_i
+        dj = ti.f32(j) - arc_j
+        dk = ti.f32(k) - arc_k
+        proj = di * dir_x + dj * dir_y + dk * dir_z
+        if proj > -lookback_cells:
+            continue
+        if T[i, j, k] >= T_freeze:
+            continue
+        H[i, j, k] = cp_rho * T_solidus
+        T[i, j, k] = T_solidus
+        f_l[i, j, k] = 0.0
+        phi[i, j, k] = 1.0
+        flags[i, j, k] = FLAG_SOLID
+        ux[i, j, k] = 0.0
+        uy[i, j, k] = 0.0
+        uz[i, j, k] = 0.0
+
+
+@ti.kernel
 def shift_simulation_window_x(
     n_shift: ti.i32,
     f_a: ti.template(),

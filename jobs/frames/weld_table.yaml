@@ -1,0 +1,17 @@
+# Robot ↔ simulation coordinate frame (table / fixture datum).
+# KUKA TCP positions in mm are converted: sim_m = (tcp_mm - origin_mm) / 1000
+
+name: default_weld_table
+origin_mm:
+  x: 0.0
+  y: 0.0
+  z: 0.0
+# Robot-frame Z of substrate top (plate surface before build).
+substrate_z_mm: 0.0
+# Optional shift if sim grid origin is not at table XY corner (metres).
+sim_origin_offset_m:
+  x: 0.0
+  y: 0.0
+notes: >
+  Align origin_mm with KRL BASE or G54 fixture zero. Set substrate_z_mm to the
+  plate top height in the same frame. Override per job with frame: path/to/frame.yaml

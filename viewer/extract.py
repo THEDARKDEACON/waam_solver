@@ -408,6 +408,7 @@ def extract_flow_arrows(
     dx_m: ti.f32,
     dt_s: ti.f32,
     arrow_len_mm: ti.f32,
+    min_len_mm: ti.f32,
     stride: ti.i32,
     FLAG_GAS: ti.i32,
     FLAG_SOLID: ti.i32,
@@ -419,6 +420,8 @@ def extract_flow_arrows(
     ny: ti.i32,
     nz: ti.i32,
 ):
+    """Velocity arrow segments (origin → tip) in mm; length scales with |u|."""
+    u_ref = dx_m / dt_s + 1e-9
     for i, j, k in ux:
         if flags[i, j, k] == FLAG_GAS:
             continue
@@ -428,16 +431,17 @@ def extract_flow_arrows(
             continue
         if clip_z == 1 and k > nz // 2:
             continue
-        if f_l[i, j, k] < 0.2:
+        fl = f_l[i, j, k]
+        if fl < 0.08 and not (use_phi == 1 and phi[i, j, k] > 0.15 and phi[i, j, k] < 0.95):
             continue
         if _cell_passes_filter(
-            f_l[i, j, k], phi[i, j, k], flags[i, j, k],
+            fl, phi[i, j, k], flags[i, j, k],
             filter_mode, use_phi, FLAG_SOLID, FLAG_GAS,
         ) == 0:
             continue
         v_lu = ti.Vector([ux[i, j, k], uy[i, j, k], uz[i, j, k]])
         vmag = ti.sqrt(v_lu.dot(v_lu))
-        if vmag < 1e-6:
+        if vmag < 1e-12:
             continue
         idx = ti.atomic_add(count[None], 1)
         if idx < max_arrows:
@@ -447,10 +451,208 @@ def extract_flow_arrows(
                 ti.f32(j) * dx_mm,
                 ti.f32(k) * dx_mm,
             ])
-            direction = v_lu / vmag * arrow_len_mm
+            v_phys = vmag * u_ref
+            seg_len = ti.max(min_len_mm, ti.min(arrow_len_mm, v_phys * arrow_len_mm * 4.0))
+            direction = (v_lu / vmag) * seg_len
             vert_arr[base] = origin
             vert_arr[base + 1] = origin + direction
-            c = ti.Vector([0.2, 0.85, 1.0])
+            intensity = ti.max(0.25, ti.min(1.0, v_phys / (u_ref * 0.15 + 1e-9)))
+            c = ti.Vector([0.15, 0.55 + intensity * 0.45, 1.0])
+            col_arr[base] = c
+            col_arr[base + 1] = c
+
+
+@ti.kernel
+def extract_flow_arrows_near(
+    ux: ti.template(),
+    uy: ti.template(),
+    uz: ti.template(),
+    f_l: ti.template(),
+    phi: ti.template(),
+    flags: ti.template(),
+    vert_arr: ti.template(),
+    col_arr: ti.template(),
+    count: ti.template(),
+    dx_mm: ti.f32,
+    offset_x_mm: ti.f32,
+    dx_m: ti.f32,
+    dt_s: ti.f32,
+    arrow_len_mm: ti.f32,
+    min_len_mm: ti.f32,
+    ci: ti.i32,
+    cj: ti.i32,
+    ck: ti.i32,
+    radius: ti.i32,
+    sub_stride: ti.i32,
+    FLAG_GAS: ti.i32,
+    max_arrows: ti.i32,
+    nx: ti.i32,
+    ny: ti.i32,
+    nz: ti.i32,
+):
+    """Velocity arrows in a dense box around the torch (ignores global stride/clip)."""
+    u_ref = dx_m / dt_s + 1e-9
+    for di in range(-radius, radius + 1):
+        for dj in range(-radius, radius + 1):
+            for dk in range(-radius, radius + 1):
+                if di % sub_stride != 0 or dj % sub_stride != 0 or dk % sub_stride != 0:
+                    continue
+                i = ci + di
+                j = cj + dj
+                k = ck + dk
+                if i < 0 or i >= nx or j < 0 or j >= ny or k < 0 or k >= nz:
+                    continue
+                if flags[i, j, k] == FLAG_GAS:
+                    continue
+                fl = f_l[i, j, k]
+                if fl < 0.15 and phi[i, j, k] < 0.2:
+                    continue
+                v_lu = ti.Vector([ux[i, j, k], uy[i, j, k], uz[i, j, k]])
+                vmag = ti.sqrt(v_lu.dot(v_lu))
+                if vmag < 1e-12:
+                    continue
+                idx = ti.atomic_add(count[None], 1)
+                if idx < max_arrows:
+                    base = idx * 2
+                    origin = ti.Vector([
+                        ti.f32(i) * dx_mm + offset_x_mm,
+                        ti.f32(j) * dx_mm,
+                        ti.f32(k) * dx_mm,
+                    ])
+                    v_phys = vmag * u_ref
+                    seg_len = ti.max(min_len_mm, ti.min(arrow_len_mm, v_phys * arrow_len_mm * 4.0))
+                    direction = (v_lu / vmag) * seg_len
+                    vert_arr[base] = origin
+                    vert_arr[base + 1] = origin + direction
+                    intensity = ti.max(0.25, ti.min(1.0, v_phys / (u_ref * 0.15 + 1e-9)))
+                    c = ti.Vector([0.15, 0.55 + intensity * 0.45, 1.0])
+                    col_arr[base] = c
+                    col_arr[base + 1] = c
+
+
+@ti.kernel
+def extract_force_arrows_near(
+    Fx: ti.template(),
+    Fy: ti.template(),
+    Fz: ti.template(),
+    f_l: ti.template(),
+    phi: ti.template(),
+    flags: ti.template(),
+    vert_arr: ti.template(),
+    col_arr: ti.template(),
+    count: ti.template(),
+    dx_mm: ti.f32,
+    offset_x_mm: ti.f32,
+    arrow_len_mm: ti.f32,
+    f_ref_lu: ti.f32,
+    ci: ti.i32,
+    cj: ti.i32,
+    ck: ti.i32,
+    radius: ti.i32,
+    sub_stride: ti.i32,
+    FLAG_GAS: ti.i32,
+    max_arrows: ti.i32,
+    nx: ti.i32,
+    ny: ti.i32,
+    nz: ti.i32,
+):
+    for di in range(-radius, radius + 1):
+        for dj in range(-radius, radius + 1):
+            for dk in range(-radius, radius + 1):
+                if di % sub_stride != 0 or dj % sub_stride != 0 or dk % sub_stride != 0:
+                    continue
+                i = ci + di
+                j = cj + dj
+                k = ck + dk
+                if i < 0 or i >= nx or j < 0 or j >= ny or k < 0 or k >= nz:
+                    continue
+                if flags[i, j, k] == FLAG_GAS:
+                    continue
+                if f_l[i, j, k] < 0.1:
+                    continue
+                f_lu = ti.Vector([Fx[i, j, k], Fy[i, j, k], Fz[i, j, k]])
+                fmag = ti.sqrt(f_lu.dot(f_lu))
+                if fmag < 1e-12:
+                    continue
+                idx = ti.atomic_add(count[None], 1)
+                if idx < max_arrows:
+                    base = idx * 2
+                    origin = ti.Vector([
+                        ti.f32(i) * dx_mm + offset_x_mm,
+                        ti.f32(j) * dx_mm,
+                        ti.f32(k) * dx_mm,
+                    ])
+                    seg_len = ti.max(dx_mm * 0.8, ti.min(arrow_len_mm, fmag / f_ref_lu * arrow_len_mm))
+                    direction = (f_lu / fmag) * seg_len
+                    vert_arr[base] = origin
+                    vert_arr[base + 1] = origin + direction
+                    intensity = ti.max(0.2, ti.min(1.0, fmag / (f_ref_lu + 1e-12)))
+                    c = ti.Vector([intensity, 0.2, 1.0 - intensity * 0.7])
+                    col_arr[base] = c
+                    col_arr[base + 1] = c
+
+
+@ti.kernel
+def extract_force_arrows(
+    Fx: ti.template(),
+    Fy: ti.template(),
+    Fz: ti.template(),
+    f_l: ti.template(),
+    phi: ti.template(),
+    flags: ti.template(),
+    vert_arr: ti.template(),
+    col_arr: ti.template(),
+    count: ti.template(),
+    dx_mm: ti.f32,
+    offset_x_mm: ti.f32,
+    arrow_len_mm: ti.f32,
+    f_ref_lu: ti.f32,
+    stride: ti.i32,
+    FLAG_GAS: ti.i32,
+    FLAG_SOLID: ti.i32,
+    filter_mode: ti.i32,
+    use_phi: ti.i32,
+    max_arrows: ti.i32,
+    clip_y: ti.i32,
+    clip_z: ti.i32,
+    ny: ti.i32,
+    nz: ti.i32,
+):
+    """Body-force arrow segments (same layout as velocity arrows)."""
+    for i, j, k in Fx:
+        if flags[i, j, k] == FLAG_GAS:
+            continue
+        if i % stride != 0 or j % stride != 0 or k % stride != 0:
+            continue
+        if clip_y == 1 and j > ny // 2:
+            continue
+        if clip_z == 1 and k > nz // 2:
+            continue
+        if f_l[i, j, k] < 0.08:
+            continue
+        if _cell_passes_filter(
+            f_l[i, j, k], phi[i, j, k], flags[i, j, k],
+            filter_mode, use_phi, FLAG_SOLID, FLAG_GAS,
+        ) == 0:
+            continue
+        f_lu = ti.Vector([Fx[i, j, k], Fy[i, j, k], Fz[i, j, k]])
+        fmag = ti.sqrt(f_lu.dot(f_lu))
+        if fmag < 1e-12:
+            continue
+        idx = ti.atomic_add(count[None], 1)
+        if idx < max_arrows:
+            base = idx * 2
+            origin = ti.Vector([
+                ti.f32(i) * dx_mm + offset_x_mm,
+                ti.f32(j) * dx_mm,
+                ti.f32(k) * dx_mm,
+            ])
+            seg_len = ti.max(dx_mm * 0.8, ti.min(arrow_len_mm, fmag / f_ref_lu * arrow_len_mm))
+            direction = (f_lu / fmag) * seg_len
+            vert_arr[base] = origin
+            vert_arr[base + 1] = origin + direction
+            intensity = ti.max(0.2, ti.min(1.0, fmag / (f_ref_lu + 1e-12)))
+            c = ti.Vector([intensity, 0.2, 1.0 - intensity * 0.7])
             col_arr[base] = c
             col_arr[base + 1] = c
 
@@ -458,12 +660,16 @@ def extract_flow_arrows(
 @ti.kernel
 def extract_surface_points(
     phi: ti.template(),
+    T: ti.template(),
+    f_l: ti.template(),
     flags: ti.template(),
     pos_arr: ti.template(),
     col_arr: ti.template(),
     count: ti.template(),
     dx_mm: ti.f32,
     offset_x_mm: ti.f32,
+    T_solidus: ti.f32,
+    T_liquidus: ti.f32,
     FLAG_GAS: ti.i32,
     max_out: ti.i32,
     clip_y: ti.i32,
@@ -471,7 +677,7 @@ def extract_surface_points(
     ny: ti.i32,
     nz: ti.i32,
 ):
-    """Dense surface shell points (φ interface band) for mesh-like view."""
+    """Dense φ interface shell; color by local temperature."""
     for i, j, k in phi:
         if flags[i, j, k] == FLAG_GAS:
             continue
@@ -488,5 +694,8 @@ def extract_surface_points(
                 ti.f32(j) * dx_mm,
                 ti.f32(k) * dx_mm,
             ])
-            t = (phi[i, j, k] - 0.35) / 0.3
-            col_arr[idx] = ti.Vector([0.3 + t * 0.5, 0.7, 1.0 - t * 0.3])
+            if f_l[i, j, k] > 0.1:
+                col_arr[idx] = _temperature_color(T[i, j, k], T_solidus, T_liquidus)
+            else:
+                t = (phi[i, j, k] - 0.35) / 0.3
+                col_arr[idx] = ti.Vector([0.3 + t * 0.5, 0.7, 1.0 - t * 0.3])

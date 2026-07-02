@@ -1,12 +1,26 @@
 simulation:
-  preset: minimal
-  enable_substrate_growth: true
+  preset: standard
+  backend: cuda
+  enable_vof: true
+  enable_csf_tension: true
   enable_wetting: true
+  enable_hydrostatic_gravity: true
   enable_bead_freeze: true
+  enable_recoil: true
+  use_recoil_clausius_clapeyron: true  # true for CCCC, false for RR
+  enable_lorentz: true
+  enable_gas_shear: true
+  enable_droplet_impact_pressure: true
+  enable_enthalpy_cap: true
+  arc_surface_weighting: true
+  enable_substrate_growth: true
+  enable_moving_window: true
   enable_ctwd: true
+  # use_torch_z: true  # enable only for KRL/CSV robot TCP paths (not inline torch_path below)
 
+frame: jobs/frames/weld_table.yaml
 material: materials/validated/ER70S-6.v1.yaml
-calibration: materials/calibration/ER70S-6.bead_on_plate.yaml
+calibration: null # no calibration for this example
 
 process:
   current_A: 140
@@ -14,7 +28,18 @@ process:
   arc_efficiency: 0.72
   travel_speed_mm_s: 5
   wire_feed_m_min: 8
+  wire_diameter_mm: 1.2
+  droplet_length_mm: 3.0
   T_ambient_K: 300
+  stickout_mm: 12.0
+  ctwd_mm: 15.0
+
+deposition:
+  superheat_K: 500.0
+  footprint_sigma_scale: 1.0
+
+surface_wetting:
+  contact_angle_deg: 80.0
 
 heat_source: gaussian2d
 heat_loss:
@@ -24,6 +49,8 @@ heat_loss:
 interpass:
   cooling_steps: 80
 
+# Layer 1 along +x at table Z; layer 2 return pass at raised Z (see layer_height_mm).
+# z_mm here is path elevation in table/sim mm, not robot TCP (unless exported from G-code CSV).
 torch_path:
   - {x_mm: 5, y_mm: 10, z_mm: 0}
   - {x_mm: 25, y_mm: 10, z_mm: 0}

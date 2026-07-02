@@ -65,7 +65,8 @@ class ViewerSession:
                 if self.torch_x_m >= self.x_max_m or self.torch_x_m <= self.x_min_m:
                     self._bounce_dir *= -1
                     self.torch_x_m = max(self.x_min_m, min(self.torch_x_m, self.x_max_m))
-            self.twin.step(self.torch_x_m, self.torch_y_m, is_welding=is_welding)
+            tz = self.torch_z_m if getattr(self.twin, "use_torch_z", False) else None
+            self.twin.step(self.torch_x_m, self.torch_y_m, is_welding=is_welding, torch_z_m=tz)
 
     def offset_x_mm(self) -> float:
         return self.twin._window_offset_x_m * 1000.0

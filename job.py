@@ -85,6 +85,18 @@ def apply_job_to_twin(twin, job: dict[str, Any]) -> None:
 
     if "wire_diameter_mm" in process:
         twin.wire_diameter_m = float(process["wire_diameter_mm"]) / 1000.0
+    if "droplet_freq_hz" in process:
+        twin.droplet_freq = float(process["droplet_freq_hz"])
+    if "pulse_frequency_hz" in process:
+        twin.pulse_frequency_hz = float(process["pulse_frequency_hz"])
+    if "droplet_transfer_mode" in process:
+        twin.droplet_transfer_mode = str(process["droplet_transfer_mode"])
+    if "transfer_mode" in process:
+        twin.droplet_transfer_mode = str(process["transfer_mode"])
+    if "droplet_size_jitter" in process:
+        twin.droplet_size_jitter = float(process["droplet_size_jitter"])
+    if "impact_lead_angle_deg" in process:
+        twin.impact_lead_angle_deg = float(process["impact_lead_angle_deg"])
 
     travel_mm_s = process.get("travel_speed_mm_s")
     if travel_mm_s is not None:
@@ -143,6 +155,11 @@ def apply_job_to_twin(twin, job: dict[str, Any]) -> None:
         twin.enable_bead_freeze = bool(sim["enable_bead_freeze"])
     if "enable_ctwd" in sim:
         twin.enable_ctwd = bool(sim["enable_ctwd"])
+    if sim.get("use_torch_z") or sim.get("enable_torch_z"):
+        twin.use_torch_z = True
+
+    from .frame import apply_frame_from_job
+    apply_frame_from_job(twin, job)
 
     wet = job.get("surface_wetting", {})
     if "contact_angle_deg" in wet:
@@ -154,6 +171,10 @@ def apply_job_to_twin(twin, job: dict[str, Any]) -> None:
         twin.deposition_superheat_K = float(dep["superheat_K"])
     if "footprint_sigma_scale" in dep:
         twin.deposition_footprint_sigma_scale = float(dep["footprint_sigma_scale"])
+    if "trailing_solidify_lookback_mm" in dep:
+        twin.trailing_solidify_lookback_mm = float(dep["trailing_solidify_lookback_mm"])
+    if "trailing_solidify_temp_margin_K" in dep:
+        twin.trailing_solidify_temp_margin_K = float(dep["trailing_solidify_temp_margin_K"])
 
     if "layer_height_mm" in job:
         twin.layer_height_m = float(job["layer_height_mm"]) / 1000.0

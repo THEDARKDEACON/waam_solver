@@ -153,6 +153,12 @@ class WAAMTwin:
         self.arc_penetration_m = arc_penetration_mm * 1e-3
         self.wire_diameter_m = wire_diameter_mm * 1e-3
         self.wire_feed_m_s = 0.0
+        self.droplet_transfer_mode = "auto"
+        self.pulse_frequency_hz = 0.0
+        self.droplet_size_jitter = 0.12
+        self.impact_lead_angle_deg = 0.0
+        self.trailing_solidify_lookback_mm = 2.5
+        self.trailing_solidify_temp_margin_K = 35.0
         self._deposited_volume_m3 = 0.0
         self._n_droplets_fired = 0
         self._deposition_overflow = 0
@@ -165,6 +171,14 @@ class WAAMTwin:
         self.preset_name: str | None = None
         self.probe_recorder = None
         self._job_path: str | None = None
+        self.use_torch_z = False
+        self.substrate_z_m = 0.0
+        self.frame_origin_mm = (0.0, 0.0, 0.0)
+        self._sim_origin_offset_x_m = 0.0
+        self._sim_origin_offset_y_m = 0.0
+        self.weld_frame = None
+        self._last_torch_pos_m: tuple[float, float, float] | None = None
+        self._torch_dir_xyz = (1.0, 0.0, 0.0)
 
         kernels.bind_velocity_set(self.grid)
 
@@ -325,15 +339,33 @@ class WAAMTwin:
         self._n_droplets_fired = 0
         self._deposition_overflow = 0
         self._bead_height_m = 0.0
+        self._last_torch_pos_m = None
+        self._torch_dir_xyz = (1.0, 0.0, 0.0)
         g.deposit_vol_buf[None] = 0.0
         print(f"[WAAMTwin] Grid reset. T_ambient={T0:.1f}K  test_fluid={test_fluid_domain}")
 
-    def step(self, torch_x_m: float, torch_y_m: float, is_welding: bool = True):
+    def step(
+        self,
+        torch_x_m: float,
+        torch_y_m: float,
+        is_welding: bool = True,
+        torch_z_m: float | None = None,
+    ):
+        z_now = 0.0 if torch_z_m is None else float(torch_z_m)
+        if self._last_torch_pos_m is not None:
+            px, py, pz = self._last_torch_pos_m
+            dx = torch_x_m - px
+            dy = torch_y_m - py
+            dz = z_now - pz
+            norm = math.sqrt(dx * dx + dy * dy + dz * dz)
+            if norm > 1e-12:
+                self._torch_dir_xyz = (dx / norm, dy / norm, dz / norm)
+        self._last_torch_pos_m = (torch_x_m, torch_y_m, z_now)
         if self.enable_moving_window:
             self._maybe_shift_window(torch_x_m)
-        sim_x = torch_x_m - self._window_offset_x_m
-        sim_y = torch_y_m
-        coupled_step(self, sim_x, sim_y, is_welding)
+        sim_x = torch_x_m - self._window_offset_x_m - self._sim_origin_offset_x_m
+        sim_y = torch_y_m - self._sim_origin_offset_y_m
+        coupled_step(self, sim_x, sim_y, is_welding, torch_z_m)
 
     def _maybe_shift_window(self, torch_x_world: float) -> None:
         g = self.grid
@@ -395,15 +427,17 @@ class WAAMTwin:
         interpass = int(getattr(self, "_interpass_cooling_steps", 0) or interpass_steps)
         prev_seg = -1
 
-        for step, x, y, _z in driver.positions_for_steps(n_steps, g.dt):
+        for step, x, y, z in driver.positions_for_steps(n_steps, g.dt):
             seg = driver.segment_index_at_distance(driver.distance_at_step(step, g.dt))
             if interpass > 0 and seg > prev_seg and prev_seg >= 0:
+                park = driver.segment_end(prev_seg)
+                px, py, pz = park if park else (x, y, z)
                 for _ in range(interpass):
-                    cx, cy = clamp_torch_to_domain(x, y, g.nx, g.ny, g.dx)
-                    self.step(cx, cy, is_welding=False)
+                    cx, cy = clamp_torch_to_domain(px, py, g.nx, g.ny, g.dx)
+                    self.step(cx, cy, is_welding=False, torch_z_m=pz)
             prev_seg = seg
             cx, cy = clamp_torch_to_domain(x, y, g.nx, g.ny, g.dx)
-            self.step(cx, cy, is_welding)
+            self.step(cx, cy, is_welding, torch_z_m=z)
 
     @staticmethod
     def _vtk_imagedata_path(path: str) -> str:
@@ -454,6 +488,7 @@ class WAAMTwin:
         porosity_pct = 100.0 * n_trapped / max(n_trapped + n_active, 1)
 
         from .physics.deposition import (
+            infer_transfer_mode,
             droplet_mass_kg,
             expected_deposited_mass_kg,
             wire_mass_flux_kg_s,
@@ -467,6 +502,7 @@ class WAAMTwin:
 
         from .physics.bead_geometry import bead_reinforcement_height_mm, estimate_toe_angle_deg
         from .physics.electrical_stickout import droplet_entry_temperature_K
+        from .physics.weld_forces import droplet_impact_velocity_m_s
 
         bead_h = bead_reinforcement_height_mm(self, g)
         toe_deg = estimate_toe_angle_deg(self, g) if self.enable_wetting else 0.0
@@ -496,6 +532,8 @@ class WAAMTwin:
             "expected_drop_mass_g": round(exp_drop_mass * 1000, 4),
             "n_droplets_fired": self._n_droplets_fired,
             "droplet_mass_mg": round(m_drop * 1e6, 3),
+            "droplet_transfer_mode": infer_transfer_mode(self),
+            "droplet_impact_velocity_ms": round(droplet_impact_velocity_m_s(self), 4),
             "mass_balance_ratio": round(mass_ratio, 3),
             "wire_mass_flux_g_s": round(wire_mass_flux_kg_s(self) * 1000, 4),
             "T_vapor_cap_K": self.T_vapor_cap_K,

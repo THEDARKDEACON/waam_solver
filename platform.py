@@ -119,9 +119,19 @@ def _detect_ram_mb() -> int:
     return 8192
 
 
+def _runtime_is_live() -> bool:
+    try:
+        return ti.lang.impl.get_runtime().prog is not None
+    except Exception:
+        return False
+
+
 def init_taichi(backend: str | None = None) -> PlatformProfile:
     """Initialize Taichi once: CUDA → Vulkan → CPU."""
     global _taichi_initialized, _profile
+    if _taichi_initialized and not _runtime_is_live():
+        _taichi_initialized = False
+        _profile = None
     if _taichi_initialized and _profile is not None:
         return _profile
 
@@ -186,6 +196,16 @@ def ensure_taichi() -> PlatformProfile:
     if not _taichi_initialized:
         return init_taichi()
     return _profile  # type: ignore[return-value]
+
+
+def reset_taichi() -> None:
+    """Reset Taichi and clear the cached backend/profile state."""
+    global _taichi_initialized, _profile
+    try:
+        ti.reset()
+    finally:
+        _taichi_initialized = False
+        _profile = None
 
 
 def auto_tracer_count(vram_mb: int | None, preset: PresetConfig) -> int:

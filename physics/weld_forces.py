@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING
 
-from .deposition_balance import droplet_mass_kg
+from .deposition_balance import droplet_mass_kg, infer_transfer_mode
 
 if TYPE_CHECKING:
     from ..twin import WAAMTwin
@@ -19,33 +19,62 @@ def _kwf():
     return kernels
 
 
-def droplet_impact_velocity_m_s(twin: "WAAMTwin") -> float:
-    """Impact speed from wire feed + gravitational detachment (deterministic)."""
+def droplet_impact_velocity_m_s(twin: "WAAMTwin", m_drop_kg: float | None = None) -> float:
+    """Impact speed from feed, gravity, and a simple pinch term."""
     g = 9.81
     drop_len = 3e-3
     if twin.droplet_freq > 0 and twin.wire_feed_m_s > 0:
         drop_len = twin.wire_feed_m_s / twin.droplet_freq
+    if m_drop_kg is None:
+        m_drop_kg = droplet_mass_kg(twin)
     v_feed = max(twin.wire_feed_m_s, 0.0)
     v_grav = math.sqrt(max(0.0, 2.0 * g * drop_len))
-    return min(3.0, max(v_feed, v_grav))
+    # Crude wire-tip pinch / electromagnetic assist term.
+    dia_ref = max(twin.wire_diameter_m, 1e-6)
+    pinch = 0.35 * math.sqrt(max(twin.welding_current_A, 0.0) / 200.0) * math.sqrt(1.2e-3 / dia_ref)
+    mode = infer_transfer_mode(twin)
+    if mode == "globular":
+        mode_scale = 0.78
+    elif mode == "spray":
+        mode_scale = 1.18
+    elif mode == "pulsed":
+        mode_scale = 1.05
+    else:
+        mode_scale = 1.0
+    mass_term = 1.0
+    if m_drop_kg > 0:
+        mass_term = max(0.8, min(1.25, math.sqrt(droplet_mass_kg(twin) / m_drop_kg)))
+    return min(5.0, mode_scale * max(v_feed, v_grav + pinch) * mass_term)
 
 
-def droplet_velocity_lu(twin: "WAAMTwin") -> tuple[float, float, float]:
-    """Droplet velocity in lattice units (downward + travel direction)."""
+def droplet_velocity_lu(twin: "WAAMTwin", m_drop_kg: float | None = None) -> tuple[float, float, float]:
+    """Droplet velocity in lattice units with travel direction and lead angle."""
     grid = twin.grid
-    v = droplet_impact_velocity_m_s(twin)
-    vz_lu = -v * grid.dt / grid.dx
-    vx_lu = twin.travel_speed_m_s * grid.dt / grid.dx
-    return vx_lu, 0.0, vz_lu
+    v = droplet_impact_velocity_m_s(twin, m_drop_kg)
+    lead = math.radians(float(getattr(twin, "impact_lead_angle_deg", 0.0)))
+    dir_x, dir_y, _ = getattr(twin, "_torch_dir_xyz", (1.0, 0.0, 0.0))
+    dxy = math.sqrt(dir_x * dir_x + dir_y * dir_y)
+    if dxy < 1e-9:
+        dir_x, dir_y, dxy = 1.0, 0.0, 1.0
+    dir_x /= dxy
+    dir_y /= dxy
+    v_xy = max(twin.travel_speed_m_s, abs(v) * math.tan(lead))
+    v_xy = min(v * 0.65, v_xy)
+    v_z = -math.sqrt(max(v * v - v_xy * v_xy, v * v * 0.20))
+    return (
+        v_xy * dir_x * grid.dt / grid.dx,
+        v_xy * dir_y * grid.dt / grid.dx,
+        v_z * grid.dt / grid.dx,
+    )
 
 
-def droplet_impact_pressure_pa(twin: "WAAMTwin") -> float:
+def droplet_impact_pressure_pa(twin: "WAAMTwin", m_drop_kg: float | None = None, drop_r_m: float | None = None) -> float:
     """Kinetic pressure scale ½ρv² from droplet mass and contact area."""
-    m = droplet_mass_kg(twin)
+    m = droplet_mass_kg(twin) if m_drop_kg is None else m_drop_kg
     if m <= 0:
         return 0.0
-    v = droplet_impact_velocity_m_s(twin)
-    r = max(twin.grid.dx * 1.5, twin.wire_diameter_m * 0.5)
+    v = droplet_impact_velocity_m_s(twin, m)
+    r = drop_r_m if drop_r_m is not None else max(twin.grid.dx * 1.5, twin.wire_diameter_m * 0.5)
     area = math.pi * r * r
     ke = 0.5 * m * v * v
     return ke / max(area, 1e-12)
@@ -101,10 +130,11 @@ def apply_droplet_impact(
     arc_j: float,
     arc_k: float,
     drop_r: float,
+    drop_mass_kg: float | None = None,
 ) -> None:
     if not twin.enable_deposition_momentum:
         return
-    vx, vy, vz = droplet_velocity_lu(twin)
+    vx, vy, vz = droplet_velocity_lu(twin, drop_mass_kg)
     kwf = _kwf()
     kwf.feed_wire_momentum_impact(
         g.ux, g.uy, g.uz, g.flags, g.f_l,
@@ -116,7 +146,7 @@ def apply_droplet_impact(
         kwf.apply_droplet_impact_pressure(
             g.Fz, g.flags, g.phi, g.f_l,
             arc_i, arc_j, arc_k, drop_r,
-            droplet_impact_pressure_pa(twin),
+            droplet_impact_pressure_pa(twin, drop_mass_kg, drop_r * g.dx),
             g.dt, g.dx, twin.mat.rho,
             g.FLAG_GAS, g.FLAG_SOLID,
         )

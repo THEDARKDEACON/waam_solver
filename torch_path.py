@@ -107,6 +107,12 @@ class TorchPathDriver:
             d -= seg.length_m
         return len(self.segments) - 1
 
+    def segment_end(self, seg_idx: int) -> tuple[float, float, float] | None:
+        if not self.segments or seg_idx < 0 or seg_idx >= len(self.segments):
+            return None
+        s = self.segments[seg_idx]
+        return s.x1, s.y1, s.z1
+
     def position_at_time(self, sim_time_s: float) -> tuple[float, float, float]:
         if not self.segments:
             return self._fallback

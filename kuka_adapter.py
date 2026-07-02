@@ -1,7 +1,7 @@
 """
 kuka_adapter.py — Thin bridge from KUKA TCP coordinates to waam_twin job space.
 
-No simulation logic here; use WAAM_JOB env var or pass a job path explicitly.
+No simulation logic here; use WAAM_JOB / WAAM_FRAME environment variables or job YAML.
 """
 
 from __future__ import annotations
@@ -12,14 +12,27 @@ from typing import Any
 
 import numpy as np
 
+from .frame import WeldFrame, apply_frame_to_twin, load_weld_frame
 
-def tcp_mm_to_sim_m(tcp_xyz_mm: list[float] | np.ndarray, origin_mm: tuple[float, float, float] = (0, 0, 0)) -> tuple[float, float, float]:
-    """Convert KUKA TCP [mm] to simulation metres relative to weld table origin."""
+
+def get_weld_frame(twin=None) -> WeldFrame:
+    if twin is not None and getattr(twin, "weld_frame", None) is not None:
+        return twin.weld_frame
+    return load_weld_frame()
+
+
+def tcp_mm_to_sim_m(
+    tcp_xyz_mm: list[float] | np.ndarray,
+    frame: WeldFrame | None = None,
+) -> tuple[float, float, float]:
+    """Convert KUKA TCP [mm] to simulation metres using weld-table frame."""
+    frame = frame or load_weld_frame()
     arr = np.asarray(tcp_xyz_mm, dtype=np.float64)
-    ox, oy, oz = origin_mm
+    ox, oy, oz = frame.origin_mm
+    sx, sy, _ = frame.sim_origin_offset_m
     return (
-        (float(arr[0]) - ox) / 1000.0,
-        (float(arr[1]) - oy) / 1000.0,
+        (float(arr[0]) - ox) / 1000.0 - sx,
+        (float(arr[1]) - oy) / 1000.0 - sy,
         (float(arr[2]) - oz) / 1000.0,
     )
 
@@ -32,18 +45,28 @@ def default_job_path() -> pathlib.Path:
 
 
 def create_twin_from_env(**kwargs: Any):
-    """Create WAAMTwin from WAAM_JOB + WAAM_PRESET environment variables."""
+    """Create WAAMTwin from WAAM_JOB + WAAM_PRESET + WAAM_FRAME environment variables."""
     from waam_twin.platform import init_taichi
     from waam_twin import WAAMTwin
 
     init_taichi()
     job_path = default_job_path()
     if job_path.exists():
-        return WAAMTwin.from_job(job_path, **kwargs)
-    preset = os.environ.get("WAAM_PRESET", "standard")
-    return WAAMTwin.from_preset(preset, **kwargs)
+        twin = WAAMTwin.from_job(job_path, **kwargs)
+    else:
+        preset = os.environ.get("WAAM_PRESET", "standard")
+        twin = WAAMTwin.from_preset(preset, **kwargs)
+        apply_frame_to_twin(twin, load_weld_frame())
+    return twin
 
 
-def step_from_tcp(twin, tcp_xyz_mm: list[float], is_welding: bool = True, origin_mm=(0, 0, 0)) -> None:
-    x, y, z = tcp_mm_to_sim_m(tcp_xyz_mm, origin_mm)
-    twin.step(x, y, is_welding=is_welding)
+def step_from_tcp(
+    twin,
+    tcp_xyz_mm: list[float] | np.ndarray,
+    is_welding: bool = True,
+    frame: WeldFrame | None = None,
+) -> None:
+    """Advance one timestep from KUKA $POS_ACT-style TCP (mm)."""
+    frame = frame or get_weld_frame(twin)
+    x, y, z = tcp_mm_to_sim_m(tcp_xyz_mm, frame)
+    twin.step(x, y, is_welding=is_welding, torch_z_m=z if getattr(twin, "use_torch_z", False) else None)

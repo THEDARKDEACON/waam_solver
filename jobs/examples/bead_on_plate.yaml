@@ -15,7 +15,7 @@ simulation:
   arc_surface_weighting: true
 
 material: materials/validated/ER70S-6.v1.yaml
-calibration: materials/calibration/ER70S-6.bead_on_plate.yaml
+calibration: null
 
 # Goldak (1984) moving double-ellipsoid — asymmetric pool for travel along +x
 heat_source: goldak
@@ -52,8 +52,16 @@ process:
   T_ambient_K: 293
   stickout_mm: 12.0
   ctwd_mm: 15.0
+  transfer_mode: globular   # globular | spray | pulsed | auto
+  droplet_freq_hz: 44.0
+  pulse_frequency_hz: 90.0
+  droplet_size_jitter: 0.12
+  impact_lead_angle_deg: 8.0
+
 
 deposition:
+  trailing_solidify_lookback_mm: 2.5
+  trailing_solidify_temp_margin_K: 35.0
   superheat_K: 500.0
   footprint_sigma_scale: 1.0
 

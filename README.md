@@ -241,21 +241,22 @@ python3 -m waam_twin.viewer --preset minimal --material materials/validated/ER70
 
 | Key | Action |
 |-----|--------|
-| `M` | Cycle view: Temperature / HAZ / Velocity / Vorticity / Body force |
-| `V` | Cycle flow overlay: off / arrows / streamlines |
+| `M` | Cycle view: Temperature / HAZ / Velocity / Vorticity / Body force (+ force arrows in body-force mode) |
+| `V` | Cycle flow overlay: off / velocity arrows / streamlines |
 | `B` / `H` / `F` | Filter: all metal / solid-only / surface (φ band) |
-| `N` | Toggle surface mesh (φ shell) vs particles |
-| `C` / `Z` | Toggle Y / Z cross-section clip (Z clip hides bead crown) |
+| `N` | Toggle φ surface shell (T-colored) vs particles |
+| `C` / `Z` | Toggle Y / Z cross-section clip |
 | `T` / `O` | Toggle porosity tracers / torch marker |
 | `G` | Full research VTK bundle → `viewer_output/bundle_step_*/` |
-| `P` | Add probe at torch (CSV on bundle export) |
+| `I` | Pick probe at camera lookat; **T(t)** panel updates live |
+| `P` | Add probe at torch (CSV on **`G`** export) |
 | `R` | Reset simulation |
 | `+` / `-` | More / fewer physics steps per frame |
 | `S` | Screenshot PNG → `viewer_output/` |
 | `SPACE` | Pause / resume |
 | `ESC` | Exit |
 
-HUD shows pool W/D, peak T, Marangoni speed, **liquid cell count**, **bead height**, and **deposited mass** from `get_telemetry()`.
+HUD shows pool W/D, peak T, Marangoni speed, liquid cell count, bead height, deposited mass, and a **T(t) probe** sparkline when a probe is active (`P`, `I`, or job `probes:`).
 
 Temperature view colors hot liquid, warm HAZ, substrate (dark), and frozen bead (bronze) — not flat grey on solids.
 
@@ -331,7 +332,7 @@ Each frame folder contains:
 - Threshold `Cell_Flags` (0 = fluid, 1 = solid) and clip Z above substrate to isolate deposited bead.
 - Legacy `.vts` paths are rewritten to `.vti`. Set `WAAM_HEADLESS=1` to skip VTK in batch runs.
 
-Full field inventory: [docs/DIAGNOSTICS_AND_VTK_SPEC.md](docs/DIAGNOSTICS_AND_VTK_SPEC.md).
+Full field inventory (names, units, computation): [docs/VTK_EXPORT.md](docs/VTK_EXPORT.md). Implementation spec: [docs/DIAGNOSTICS_AND_VTK_SPEC.md](docs/DIAGNOSTICS_AND_VTK_SPEC.md).
 
 ### Bead geometry physics (job flags)
 
@@ -347,6 +348,23 @@ Example [`jobs/examples/bead_on_plate.yaml`](jobs/examples/bead_on_plate.yaml):
 | `enable_gas_shear` | Shielding-gas traction on free surface |
 | `enable_droplet_impact_pressure` | Droplet momentum pulse on impact |
 | `enable_ctwd` | Stick-out I²R wire preheat (open-loop CTWD) |
+
+New droplet / impact knobs:
+
+```yaml
+process:
+  transfer_mode: globular   # globular | spray | pulsed | auto
+  droplet_freq_hz: 44.0     # optional base detachment rate
+  pulse_frequency_hz: 90.0  # for pulsed transfer
+  droplet_size_jitter: 0.12 # deterministic ± modulation
+  impact_lead_angle_deg: 8.0
+
+deposition:
+  trailing_solidify_lookback_mm: 2.5
+  trailing_solidify_temp_margin_K: 35.0
+```
+
+`transfer_mode` changes detachment period, drop mass, and impact speed heuristically; the trailing-solidify settings help clamp the far wake back to solid once it cools below a mild superheat margin.
 
 Spec: [docs/BEAD_GEOMETRY_PHYSICS_SPEC.md](docs/BEAD_GEOMETRY_PHYSICS_SPEC.md).
 
@@ -411,16 +429,36 @@ Legacy entry: `python3 -m waam_twin.verify` (delegates to `run_all`).
 
 ## KUKA / robot integration
 
-`kuka_adapter.py` converts TCP coordinates (mm) to simulation metres. The parent FYP22-01 `kuka.py` robot loop may call `create_twin_from_env()` when the GPU twin is enabled:
+**Coordinate frame:** `jobs/frames/weld_table.yaml` (or `frame:` in job YAML, `WAAM_FRAME` env).
+
+**G-code → twin path:**
+
+```bash
+# From FYP22-01 (parent on PYTHONPATH):
+export PYTHONPATH=.
+python3 -m waam_twin.tools.gcode_to_torch_csv part.gcode -o waam_twin/jobs/paths/part.csv
+```
+
+Flask upload (`POST /api/gcode`) also writes `waam_twin/jobs/paths/<PROGRAM>.csv` automatically.
+
+**Job wiring:**
+
+```yaml
+frame: jobs/frames/weld_table.yaml
+simulation:
+  use_torch_z: true   # map robot Z + CTWD → arc height
+torch_path_csv: jobs/paths/part.csv
+```
+
+**Live MockKUKA:** `kuka.py` calls `kuka_adapter.step_from_tcp()` with `$POS_ACT` mm values.
 
 ```bash
 export WAAM_JOB=jobs/examples/bead_on_plate.yaml
+export WAAM_FRAME=jobs/frames/weld_table.yaml
 export WAAM_PRESET=minimal
 ```
 
-No robot logic lives inside this package — only coordinate mapping and twin construction.
-
-**G-code:** This repo accepts **CSV torch paths** and **YAML waypoints**. G-code cleaning/transpilation is borrowed from the parent FYP22-01 project (`gcode_pipeline.py`), not vendored here.
+No robot logic lives inside this package — only frame mapping, CSV paths, and twin construction.
 
 ---
 

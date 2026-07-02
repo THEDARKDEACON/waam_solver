@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import pathlib
+from collections import deque
 
 import numpy as np
 import taichi as ti
 
 from .cli import build_parser
+from .pick import lookat_to_grid, sample_cell
 from .session import create_session
 from .streamlines import seeds_near_torch, trace_streamlines
 
@@ -23,6 +25,8 @@ FLOW_ARROWS = 1
 FLOW_STREAMLINES = 2
 FLOW_NAMES = ("off", "arrows", "streamlines")
 
+PROBE_HISTORY_LEN = 48
+
 
 def _ensure_output_dir(path: str | None) -> pathlib.Path:
     if path is None:
@@ -32,6 +36,36 @@ def _ensure_output_dir(path: str | None) -> pathlib.Path:
         out = pathlib.Path(path)
     out.mkdir(parents=True, exist_ok=True)
     return out
+
+
+def _sparkline(values: deque[float], t_min: float, t_max: float, width: int = 24) -> str:
+    if not values:
+        return "(no data yet)"
+    blocks = " ▁▂▃▄▅▆▇█"
+    span = max(t_max - t_min, 1.0)
+    if len(values) >= width:
+        sample = list(values)[-width:]
+    else:
+        sample = list(values)
+    chars = []
+    for v in sample:
+        idx = int(max(0, min(len(blocks) - 1, round((v - t_min) / span * (len(blocks) - 1)))))
+        chars.append(blocks[idx])
+    return "".join(chars)
+
+
+def _flow_filter(filter_mode: int, flow_mode: int, liquid_only: int) -> int:
+    """Prefer liquid/surface cells for flow overlays."""
+    from .extract import FILTER_ALL, FILTER_LIQUID, FILTER_SOLID, FILTER_SURFACE
+
+    if flow_mode == FLOW_OFF:
+        return filter_mode
+    if filter_mode == FILTER_SOLID:
+        return FILTER_LIQUID
+    if filter_mode == FILTER_ALL and liquid_only:
+        return FILTER_LIQUID
+    return filter_mode
+
 
 
 def run(argv: list[str] | None = None) -> None:
@@ -48,6 +82,9 @@ def run(argv: list[str] | None = None) -> None:
         FILTER_SURFACE,
         extract_body_force,
         extract_flow_arrows,
+        extract_flow_arrows_near,
+        extract_force_arrows,
+        extract_force_arrows_near,
         extract_haz,
         extract_melt_pool,
         extract_surface_points,
@@ -83,23 +120,12 @@ def run(argv: list[str] | None = None) -> None:
     max_arrows = 4096
     arrow_vert = ti.Vector.field(3, dtype=ti.f32, shape=max_arrows * 2)
     arrow_col = ti.Vector.field(3, dtype=ti.f32, shape=max_arrows * 2)
-    arrow_idx = ti.field(dtype=ti.i32, shape=(max_arrows, 2))
-
-    # Pre-fill line indices
-    @ti.kernel
-    def _init_arrow_idx():
-        for i in range(max_arrows):
-            arrow_idx[i, 0] = i * 2
-            arrow_idx[i, 1] = i * 2 + 1
-
-    _init_arrow_idx()
 
     tracer_pos = ti.Vector.field(3, dtype=ti.f32, shape=g.max_tracers)
     tracer_col = ti.Vector.field(3, dtype=ti.f32, shape=g.max_tracers)
 
     sl_vert = ti.Vector.field(3, dtype=ti.f32, shape=8192)
     sl_col = ti.Vector.field(3, dtype=ti.f32, shape=8192)
-    sl_idx = ti.field(dtype=ti.i32, shape=(4096, 2))
 
     window = ti.ui.Window("WAAM Digital Twin", (1280, 720), vsync=True)
     camera = ti.ui.Camera()
@@ -126,6 +152,18 @@ def run(argv: list[str] | None = None) -> None:
     dump_idx = 0
     streamline_cache: list[np.ndarray] = []
     streamline_frame = -999
+    num_flow_arrows = 0
+    pick_cell: tuple[int, int, int] | None = None
+    pick_label = ""
+    probe_t_history: deque[float] = deque(maxlen=PROBE_HISTORY_LEN)
+    probe_spark_min = 300.0
+    probe_spark_max = 2000.0
+
+    if twin.probe_recorder is None and getattr(twin, "_job_config", None):
+        probes_cfg = twin._job_config.get("probes")
+        if probes_cfg:
+            from waam_twin.export.probes import ProbeRecorder
+            twin.probe_recorder = ProbeRecorder.from_job_list(probes_cfg, twin)
 
     _print_controls()
 
@@ -144,6 +182,7 @@ def run(argv: list[str] | None = None) -> None:
                 render_mode = (render_mode + 1) % len(MODE_NAMES)
             elif e.key in ("v", "V"):
                 flow_mode = (flow_mode + 1) % len(FLOW_NAMES)
+                print(f"[viewer] Flow overlay → {FLOW_NAMES[flow_mode]}")
             elif e.key in ("b", "B"):
                 if filter_mode == FILTER_ALL:
                     filter_mode = FILTER_LIQUID
@@ -161,6 +200,7 @@ def run(argv: list[str] | None = None) -> None:
                 filter_mode = FILTER_SOLID if filter_mode != FILTER_SOLID else FILTER_LIQUID
             elif e.key in ("n", "N"):
                 show_surface_mesh = not show_surface_mesh
+                print(f"[viewer] Surface view → {'φ shell (T-colored)' if show_surface_mesh else 'particles'}")
             elif e.key in ("c", "C"):
                 clip_y = not clip_y
             elif e.key in ("z", "Z"):
@@ -172,6 +212,7 @@ def run(argv: list[str] | None = None) -> None:
             elif e.key in ("r", "R"):
                 session.reset_motion()
                 streamline_cache = []
+                probe_t_history.clear()
             elif e.key == "=" or e.key == "+":
                 steps_per_frame = min(500, steps_per_frame + 5)
             elif e.key == "-" or e.key == "_":
@@ -203,11 +244,26 @@ def run(argv: list[str] | None = None) -> None:
                     from waam_twin.export.probes import ProbeRecorder
                     twin.probe_recorder = ProbeRecorder()
                 g2 = twin.grid
-                ti_c = int(np.clip(tx / dx_mm, 0, g2.nx - 1))
+                ti_c = int(np.clip((tx - session.offset_x_mm()) / dx_mm, 0, g2.nx - 1))
                 tj_c = int(np.clip(ty / dx_mm, 0, g2.ny - 1))
                 tk_c = int(np.clip(tz / dx_mm, 0, g2.nz - 1))
                 twin.probe_recorder.add_grid(ti_c, tj_c, tk_c, f"torch_{len(twin.probe_recorder.probes)}")
                 print(f"[viewer] Probe added at ({ti_c},{tj_c},{tk_c})")
+            elif e.key in ("i", "I"):
+                la = camera.lookat
+                look_mm = (float(la[0]), float(la[1]), float(la[2]))
+                pi, pj, pk = lookat_to_grid(look_mm, twin, session.offset_x_mm())
+                pick_cell = (pi, pj, pk)
+                pick_label = f"lookat_{pi}_{pj}_{pk}"
+                if twin.probe_recorder is None:
+                    from waam_twin.export.probes import ProbeRecorder
+                    twin.probe_recorder = ProbeRecorder()
+                twin.probe_recorder.add_grid(pi, pj, pk, pick_label)
+                vals = sample_cell(twin, pi, pj, pk)
+                print(
+                    f"[viewer] Pick ({pi},{pj},{pk})  T={vals['T_C']:.0f}°C  "
+                    f"T_max={vals['T_max_K']:.0f}K  f_l={vals['f_l']:.3f}"
+                )
             elif e.key == ti.ui.ESCAPE:
                 window.running = False
 
@@ -233,9 +289,10 @@ def run(argv: list[str] | None = None) -> None:
         reset_count(count_field)
         if show_surface_mesh and twin.enable_vof:
             extract_surface_points(
-                g.phi, g.flags,
+                g.phi, g.T, g.f_l, g.flags,
                 render_pos, render_col, count_field,
                 dx_mm, offset_x_mm,
+                twin.mat.T_solidus, twin.mat.T_liquidus,
                 g.FLAG_GAS, max_cells,
                 clip_y_i, clip_z_i, g.ny, g.nz,
             )
@@ -298,85 +355,125 @@ def run(argv: list[str] | None = None) -> None:
             )
             num_cells = count_field[None]
 
-        if num_cells > 0 and not show_surface_mesh:
-            scene.particles(
-                render_pos,
-                radius=dx_mm * particle_scale,
-                per_vertex_color=render_col,
-                index_count=num_cells,
+        if pick_cell is not None:
+            pi, pj, pk = pick_cell
+            extract_torch_marker(
+                render_pos, render_col, count_field,
+                pi * dx_mm + offset_x_mm, pj * dx_mm, pk * dx_mm,
+                max_cells + 1,
             )
-        elif show_surface_mesh and num_cells > 0:
+            num_cells = count_field[None]
+
+        if num_cells > 0:
+            rad = dx_mm * particle_scale * (0.55 if show_surface_mesh else 1.0)
             scene.particles(
                 render_pos,
-                radius=dx_mm * particle_scale * 0.55,
+                radius=rad,
                 per_vertex_color=render_col,
                 index_count=num_cells,
             )
 
-        num_arrows = 0
+        num_flow_arrows = 0
         if flow_mode == FLOW_ARROWS:
+            tx, ty, tz = session.torch_mm()
+            ti_c = int(np.clip((tx - offset_x_mm) / dx_mm, 0, g.nx - 1))
+            tj_c = int(np.clip(ty / dx_mm, 0, g.ny - 1))
+            tk_c = int(np.clip(tz / dx_mm, 0, g.nz - 1))
             reset_count(count_field)
-            stride = max(2, int(round(4.0 / particle_scale)))
-            extract_flow_arrows(
+            extract_flow_arrows_near(
                 g.ux, g.uy, g.uz, g.f_l, g.phi, g.flags,
                 arrow_vert, arrow_col, count_field,
-                dx_mm, offset_x_mm, g.dx, g.dt, dx_mm * 2.5,
-                stride,
-                g.FLAG_GAS, g.FLAG_SOLID,
-                filter_mode, use_phi, max_arrows,
-                clip_y_i, clip_z_i, g.ny, g.nz,
+                dx_mm, offset_x_mm, g.dx, g.dt,
+                dx_mm * 4.0, dx_mm * 1.5,
+                ti_c, tj_c, tk_c, 12, 1,
+                g.FLAG_GAS, max_arrows, g.nx, g.ny, g.nz,
             )
-            num_arrows = count_field[None]
-            if num_arrows > 0:
+            num_flow_arrows = count_field[None]
+            if num_flow_arrows == 0:
+                reset_count(count_field)
+                extract_flow_arrows(
+                    g.ux, g.uy, g.uz, g.f_l, g.phi, g.flags,
+                    arrow_vert, arrow_col, count_field,
+                    dx_mm, offset_x_mm, g.dx, g.dt,
+                    dx_mm * 4.0, dx_mm * 1.5,
+                    1,
+                    g.FLAG_GAS, g.FLAG_SOLID,
+                    FILTER_LIQUID, use_phi, max_arrows,
+                    0, 0, g.ny, g.nz,
+                )
+                num_flow_arrows = count_field[None]
+            if num_flow_arrows > 0:
                 scene.lines(
                     arrow_vert,
-                    indices=arrow_idx,
                     per_vertex_color=arrow_col,
-                    width=2.0,
-                    index_count=num_arrows,
+                    width=5.0,
+                    vertex_count=num_flow_arrows * 2,
                 )
 
-        if flow_mode == FLOW_STREAMLINES and twin._step_n - streamline_frame > 5:
+        if render_mode == MODE_FORCE and flow_mode == FLOW_OFF:
+            tx, ty, tz = session.torch_mm()
+            ti_c = int(np.clip((tx - offset_x_mm) / dx_mm, 0, g.nx - 1))
+            tj_c = int(np.clip(ty / dx_mm, 0, g.ny - 1))
+            tk_c = int(np.clip(tz / dx_mm, 0, g.nz - 1))
+            reset_count(count_field)
+            extract_force_arrows_near(
+                g.Fx_snap, g.Fy_snap, g.Fz_snap,
+                g.f_l, g.phi, g.flags,
+                arrow_vert, arrow_col, count_field,
+                dx_mm, offset_x_mm, dx_mm * 3.5, 0.002,
+                ti_c, tj_c, tk_c, 10, 1,
+                g.FLAG_GAS, max_arrows, g.nx, g.ny, g.nz,
+            )
+            n_force = count_field[None]
+            if n_force > 0:
+                scene.lines(
+                    arrow_vert,
+                    per_vertex_color=arrow_col,
+                    width=3.5,
+                    vertex_count=n_force * 2,
+                )
+
+        if flow_mode == FLOW_STREAMLINES and twin._step_n - streamline_frame > 4:
             streamline_frame = twin._step_n
             tx, ty, tz = session.torch_mm()
             ti_c = int(np.clip((tx - offset_x_mm) / dx_mm, 0, g.nx - 1))
             tj_c = int(np.clip(ty / dx_mm, 0, g.ny - 1))
             tk_c = int(np.clip(tz / dx_mm, 0, g.nz - 1))
-            seeds = seeds_near_torch(g.nx, g.ny, g.nz, ti_c, tj_c, tk_c, 12)
+            seeds = seeds_near_torch(g.nx, g.ny, g.nz, ti_c, tj_c, tk_c, 16)
             streamline_cache = trace_streamlines(
                 g.ux.to_numpy(), g.uy.to_numpy(), g.uz.to_numpy(),
-                seeds, n_steps=25,
+                seeds, n_steps=45, step_cells=0.7,
             )
 
         if flow_mode == FLOW_STREAMLINES and streamline_cache:
             vert_list: list[list[float]] = []
-            idx_list: list[list[int]] = []
             base = 0
+            n_seg = 0
             for line in streamline_cache:
-                for p in line:
-                    vert_list.append([
-                        float(p[0]) * dx_mm + offset_x_mm,
-                        float(p[1]) * dx_mm,
-                        float(p[2]) * dx_mm,
-                    ])
                 for k in range(len(line) - 1):
-                    idx_list.append([base + k, base + k + 1])
-                base += len(line)
-            n_v = min(len(vert_list), sl_vert.shape[0])
-            n_l = min(len(idx_list), sl_idx.shape[0])
-            if n_l > 0 and n_v > 0:
-                for i in range(n_v):
-                    sl_vert[i] = vert_list[i]
-                    sl_col[i] = [0.2, 0.9, 1.0]
-                for i in range(n_l):
-                    sl_idx[i, 0] = idx_list[i][0]
-                    sl_idx[i, 1] = idx_list[i][1]
+                    if base + 1 >= sl_vert.shape[0]:
+                        break
+                    p0, p1 = line[k], line[k + 1]
+                    sl_vert[base] = [
+                        float(p0[0]) * dx_mm + offset_x_mm,
+                        float(p0[1]) * dx_mm,
+                        float(p0[2]) * dx_mm,
+                    ]
+                    sl_vert[base + 1] = [
+                        float(p1[0]) * dx_mm + offset_x_mm,
+                        float(p1[1]) * dx_mm,
+                        float(p1[2]) * dx_mm,
+                    ]
+                    sl_col[base] = [0.15, 0.95, 1.0]
+                    sl_col[base + 1] = [0.15, 0.95, 1.0]
+                    base += 2
+                    n_seg += 1
+            if n_seg > 0:
                 scene.lines(
                     sl_vert,
-                    indices=sl_idx,
                     per_vertex_color=sl_col,
-                    width=1.5,
-                    index_count=n_l,
+                    width=3.0,
+                    vertex_count=n_seg * 2,
                 )
 
         reset_count(count_field)
@@ -406,16 +503,35 @@ def run(argv: list[str] | None = None) -> None:
         }
         status_str = "PAUSED" if paused else f"LIVE  {steps_per_frame} st/frame"
 
-        window.GUI.begin("WAAM Twin", 0.01, 0.01, 0.42, 0.48)
+        # Probe T(t) for sparkline (first probe or pick cell)
+        spark_name = ""
+        if twin.probe_recorder and twin.probe_recorder.probes:
+            p0 = twin.probe_recorder.probes[0]
+            vals = sample_cell(twin, p0.i, p0.j, p0.k)
+            probe_t_history.append(vals["T_K"])
+            spark_name = p0.name
+            probe_spark_min = min(probe_spark_min, vals["T_K"] - 50.0)
+            probe_spark_max = max(probe_spark_max, vals["T_K"] + 50.0)
+        elif pick_cell is not None:
+            vals = sample_cell(twin, *pick_cell)
+            probe_t_history.append(vals["T_K"])
+            spark_name = pick_label or "pick"
+
+        window.GUI.begin("WAAM Twin", 0.01, 0.01, 0.42, 0.46)
         window.GUI.text(f"Job    : {session.job_label}")
         window.GUI.text(f"Status : {status_str}")
         window.GUI.text(f"View   : {MODE_NAMES[render_mode]}")
-        window.GUI.text(f"Flow   : {FLOW_NAMES[flow_mode]}  (V=cycle)")
+        flow_hint = FLOW_NAMES[flow_mode]
+        if flow_mode != FLOW_OFF:
+            flow_hint += f"  ({num_flow_arrows} arrows)" if flow_mode == FLOW_ARROWS else f"  ({len(streamline_cache)} lines)"
+        window.GUI.text(f"Flow   : {flow_hint}  (V=cycle)")
+        if flow_mode != FLOW_OFF and num_flow_arrows == 0:
+            window.GUI.text("  (no flow arrows at torch — try B=liquid, Z=off)")
         window.GUI.text(f"Filter : {filter_labels.get(filter_mode, '?')}  (B/H/F)")
-        window.GUI.text(f"Surface: {'mesh' if show_surface_mesh else 'particles'}  (N)")
+        window.GUI.text(f"Surface: {'φ shell' if show_surface_mesh else 'particles'}  (N)")
         window.GUI.text(f"Clip Y : {'ON' if clip_y else 'OFF'}  Z : {'ON' if clip_z else 'OFF'}")
         if clip_z:
-            window.GUI.text("  (Z clip hides bead crown — press Z to show)")
+            window.GUI.text("  (Z clip hides crown — press Z)")
         window.GUI.text(f"Sim t  : {telem['sim_time_ms']:.2f} ms  step {telem['step']}")
         window.GUI.text(
             f"Pool   : W {telem['pool_width_mm']:.2f} mm  "
@@ -436,9 +552,23 @@ def run(argv: list[str] | None = None) -> None:
             f"tracers {num_tracers}"
         )
         window.GUI.text(f"Mat    : {telem['material_name']} ({telem['material_status']})")
+        if pick_cell is not None:
+            pv = sample_cell(twin, *pick_cell)
+            window.GUI.text(
+                f"Pick   : ({pick_cell[0]},{pick_cell[1]},{pick_cell[2]})  "
+                f"T={pv['T_C']:.0f}°C  f_l={pv['f_l']:.2f}"
+            )
         if twin.probe_recorder and twin.probe_recorder.probes:
-            window.GUI.text(f"Probes : {len(twin.probe_recorder.probes)}  (P=add at torch)")
+            window.GUI.text(f"Probes : {len(twin.probe_recorder.probes)}  (P=torch  I=lookat)")
         window.GUI.end()
+
+        if probe_t_history:
+            window.GUI.begin("T(t) probe", 0.01, 0.50, 0.42, 0.22)
+            window.GUI.text(f"Probe  : {spark_name}")
+            window.GUI.text(f"T now  : {probe_t_history[-1] - 273.15:.0f} °C")
+            window.GUI.text(_sparkline(probe_t_history, probe_spark_min, probe_spark_max))
+            window.GUI.text(f"range  : {probe_spark_min - 273.15:.0f}–{probe_spark_max - 273.15:.0f} °C")
+            window.GUI.end()
 
         window.show()
 
@@ -449,11 +579,12 @@ def _print_controls() -> None:
     print("  M         Cycle view (T / HAZ / Velocity / Vorticity / Body force)")
     print("  V         Cycle flow overlay (off / arrows / streamlines)")
     print("  B / H / F Filter: all / solid / surface")
-    print("  N         Toggle surface mesh (φ shell)")
+    print("  N         Toggle φ surface shell (T-colored)")
     print("  C / Z     Toggle Y / Z cross-section clip")
     print("  T / O     Toggle tracers / torch marker")
     print("  G         Full research VTK bundle → viewer_output/")
     print("  P         Add probe at torch position")
+    print("  I         Pick probe at camera lookat (screen center)")
     print("  R         Reset simulation")
     print("  + / -     More / fewer steps per frame")
     print("  S         Screenshot → viewer_output/")

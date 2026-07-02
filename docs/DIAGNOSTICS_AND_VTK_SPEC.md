@@ -29,13 +29,17 @@ Residual stress remains a **separate coupled module** (§6), not an extension of
 
 | Key | Mode | Rendering |
 |-----|------|-----------|
-| `M` | Temperature / HAZ (`T_max`) / Velocity | Colored **spheres** at cell centers |
-| `B` | All metal ↔ liquid-only | Particle filter |
-| `F` | Surface (φ band) | Requires `enable_vof` |
-| `T` | Porosity tracers | Extra particles |
-| `V` | VTK dump | Volume + surface files to `viewer_output/` |
+| `M` | Temperature / HAZ / Velocity / Vorticity / Body force | Colored **spheres**; body-force mode adds **force arrow** overlay |
+| `V` | Flow overlay: off → **velocity arrows** → **streamlines** | Cyan line segments (`scene.lines`, pair layout) |
+| `N` | φ surface shell | T-colored interface particles (not triangle mesh) |
+| `B` / `H` / `F` | Filters | all / solid / surface |
+| `I` | Pick at camera lookat | Adds probe + HUD readout |
+| `P` | Probe at torch | Adds probe for T(t) panel + CSV on `G` |
+| `G` | VTK bundle | Volume + surface + tracers + meta |
 
-**Not implemented:** arrow glyphs, streamlines, iso-surface mesh in GGUI, force vectors, click-probe, T(t) graphs.
+**Implemented (2026-07):** velocity arrows, streamlines, vorticity/body-force views, φ shell with T color, force arrows, lookat pick (`I`), T(t) sparkline HUD, probe CSV via bundle export.
+
+**Still not in GGUI:** true iso-surface triangle mesh, LMB click-pick, ParaView-quality glyphs, tracer trails, crater warp slider, HAZ isotherm legend.
 
 ### 2.2 VTK export today (`twin.py`)
 

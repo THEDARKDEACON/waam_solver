@@ -31,17 +31,32 @@ def _clamp_enthalpy_ceiling(twin: "WAAMTwin", g) -> None:
         )
 
 
-def _resolve_arc_k(twin: "WAAMTwin", g, arc_i: float, arc_j: float) -> float:
+def _resolve_arc_k(
+    twin: "WAAMTwin",
+    g,
+    arc_i: float,
+    arc_j: float,
+    torch_z_m: float | None = None,
+) -> float:
     i0 = max(0, min(int(arc_i), g.nx - 1))
     j0 = max(0, min(int(arc_j), g.ny - 1))
     free_surface.surface_height_at(
         g.phi, g.flags, g.surface_k_buf,
         i0, j0, twin.nz_solid, g.FLAG_GAS, g.nz,
     )
-    k = float(g.surface_k_buf[None])
-    if k < 1.0:
-        k = float(max(1, twin.nz_solid - 1))
-    return k
+    k_surface = float(g.surface_k_buf[None])
+    if k_surface < 1.0:
+        k_surface = float(max(1, twin.nz_solid - 1))
+
+    if getattr(twin, "use_torch_z", False) and torch_z_m is not None:
+        # Robot Z + CTWD → local bead-top height above substrate datum.
+        z_bead_m = torch_z_m - twin.ctwd_m
+        z_bead_m = max(twin.substrate_z_m, z_bead_m)
+        k_robot = twin.nz_solid + (z_bead_m - twin.substrate_z_m) / g.dx - 1.0
+        k_robot = max(float(twin.nz_solid) + 0.5, min(k_robot, float(g.nz) - 2.0))
+        return max(k_surface, k_robot)
+
+    return k_surface
 
 
 def _solidify_if_enabled(twin: "WAAMTwin", g) -> None:
@@ -55,12 +70,18 @@ def _solidify_if_enabled(twin: "WAAMTwin", g) -> None:
     )
 
 
-def coupled_step(twin: "WAAMTwin", torch_x_m: float, torch_y_m: float, is_welding: bool) -> None:
+def coupled_step(
+    twin: "WAAMTwin",
+    torch_x_m: float,
+    torch_y_m: float,
+    is_welding: bool,
+    torch_z_m: float | None = None,
+) -> None:
     g = twin.grid
 
     arc_i = torch_x_m / g.dx
     arc_j = torch_y_m / g.dx
-    arc_k = _resolve_arc_k(twin, g, arc_i, arc_j)
+    arc_k = _resolve_arc_k(twin, g, arc_i, arc_j, torch_z_m)
 
     forces.clear_forces(g.Fx, g.Fy, g.Fz)
 
@@ -75,11 +96,13 @@ def coupled_step(twin: "WAAMTwin", torch_x_m: float, torch_y_m: float, is_weldin
 
         sim_time = twin._step_n * g.dt
         if twin.droplet_freq > 0:
-            period = 1.0 / twin.droplet_freq
+            period = deposition.droplet_period_s(twin)
             if sim_time - twin._last_droplet_time >= period:
+                drop_dt = sim_time - twin._last_droplet_time
                 twin._last_droplet_time = sim_time
-                drop_r = deposition.droplet_radius_cells(twin)
-                drop_vol = deposition.droplet_mass_kg(twin) / twin.mat.rho
+                drop_mass = deposition.droplet_mass_for_interval_kg(twin, drop_dt)
+                drop_r = deposition.droplet_radius_cells_from_mass_kg(twin, drop_mass)
+                drop_vol = drop_mass / twin.mat.rho
                 T_drop = droplet_entry_temperature_K(twin)
                 kernels.inject_tracers(
                     g.porosity_pos, g.porosity_active, g.tracer_head,
@@ -88,7 +111,7 @@ def coupled_step(twin: "WAAMTwin", torch_x_m: float, torch_y_m: float, is_weldin
                     float(twin.sigma_cells * g.dx), 50,
                 )
                 g.deposit_vol_buf[None] = 0.0
-                foot_r = deposition.deposition_footprint_cells(twin)
+                foot_r = deposition.deposition_footprint_cells(twin, drop_r)
                 r_try = foot_r
                 for _ in range(8):
                     deposition.feed_wire_surface(
@@ -110,7 +133,7 @@ def coupled_step(twin: "WAAMTwin", torch_x_m: float, torch_y_m: float, is_weldin
                     twin._deposition_overflow += 1
                 twin._deposited_volume_m3 += placed
                 twin._n_droplets_fired += 1
-                weld_forces.apply_droplet_impact(twin, g, arc_i, arc_j, arc_k, drop_r)
+                weld_forces.apply_droplet_impact(twin, g, arc_i, arc_j, arc_k, drop_r, drop_mass)
 
     if twin.use_material_tables:
         tbl = twin.gpu_tables
@@ -341,6 +364,24 @@ def coupled_step(twin: "WAAMTwin", torch_x_m: float, torch_y_m: float, is_weldin
                     twin.cp_rho,
                     twin.mat.T_solidus, twin.mat.T_liquidus, twin.L_rho,
                     g.FLAG_SOLID, g.FLAG_FLUID,
+                )
+        if is_welding and twin.enable_bead_freeze:
+            dir_x, dir_y, dir_z = getattr(twin, "_torch_dir_xyz", (1.0, 0.0, 0.0))
+            lookback_cells = max(2.0, twin.trailing_solidify_lookback_mm / (g.dx * 1000.0))
+            T_freeze = twin.mat.T_liquidus + twin.trailing_solidify_temp_margin_K
+            if twin.use_material_tables:
+                kernels.solidify_trailing_pool(
+                    g.T, g.H, g.f_l, g.phi, g.flags, g.ux, g.uy, g.uz, g.cp_rho_field,
+                    arc_i, arc_j, arc_k, dir_x, dir_y, dir_z, lookback_cells, T_freeze,
+                    twin.mat.T_solidus,
+                    g.FLAG_SOLID, g.FLAG_FLUID, g.FLAG_GAS,
+                )
+            else:
+                kernels.solidify_trailing_pool_scalar(
+                    g.T, g.H, g.f_l, g.phi, g.flags, g.ux, g.uy, g.uz, twin.cp_rho,
+                    arc_i, arc_j, arc_k, dir_x, dir_y, dir_z, lookback_cells, T_freeze,
+                    twin.mat.T_solidus,
+                    g.FLAG_SOLID, g.FLAG_FLUID, g.FLAG_GAS,
                 )
         _solidify_if_enabled(twin, g)
 

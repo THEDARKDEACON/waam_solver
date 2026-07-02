@@ -8,7 +8,7 @@ minimal:
   use_srt: true
 
 standard:
-  vram_budget_mb: 2048
+  vram_budget_mb: 1536
   domain_mm: [80, 40, 25]
   target_dx_mm: 0.3
   max_tracers: 20000
