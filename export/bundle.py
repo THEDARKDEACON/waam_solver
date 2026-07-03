@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import pathlib
-from typing import TYPE_CHECKING, Sequence
+from typing import TYPE_CHECKING, Callable, Sequence
 
 from .meta import write_meta_json
 from .vtk_io import (
@@ -121,6 +121,7 @@ def export_research_sequence(
     max_frames: int = 200,
     tiers: Sequence[int] = (0, 3),
     job_path: str | None = None,
+    after_frame: Callable[[int, pathlib.Path, dict[str, str]], None] | None = None,
 ) -> list[str]:
     """Run simulation and export bundles on a schedule; write PVD at end."""
     out_dir = pathlib.Path(out_dir)
@@ -148,6 +149,8 @@ def export_research_sequence(
             include_tracers=(frame == 0 or frame % 5 == 0),
             job_path=job_path,
         )
+        if after_frame is not None:
+            after_frame(frame, sub, paths)
         if "volume" in paths:
             vti_paths.append(paths["volume"])
         frame += 1

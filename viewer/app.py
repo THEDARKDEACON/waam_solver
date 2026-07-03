@@ -250,7 +250,7 @@ def run(argv: list[str] | None = None) -> None:
                 twin.probe_recorder.add_grid(ti_c, tj_c, tk_c, f"torch_{len(twin.probe_recorder.probes)}")
                 print(f"[viewer] Probe added at ({ti_c},{tj_c},{tk_c})")
             elif e.key in ("i", "I"):
-                la = camera.lookat
+                la = camera.curr_lookat
                 look_mm = (float(la[0]), float(la[1]), float(la[2]))
                 pi, pj, pk = lookat_to_grid(look_mm, twin, session.offset_x_mm())
                 pick_cell = (pi, pj, pk)
@@ -277,7 +277,14 @@ def run(argv: list[str] | None = None) -> None:
 
         canvas = window.get_canvas()
         scene = window.get_scene()
-        camera.track_user_inputs(window, movement_speed=5.0, hold_key=ti.ui.LMB)
+        # Invert yaw only; pitch uses Taichi default (drag up → look up).
+        camera.track_user_inputs(
+            window,
+            movement_speed=2.0,
+            hold_key=ti.ui.LMB,
+            yaw_speed=-2.0,
+            pitch_speed=2.0,
+        )
         scene.set_camera(camera)
         scene.ambient_light((0.4, 0.4, 0.4))
         scene.point_light(pos=(cx, cy - 30.0, cz + 40.0), color=(1.0, 0.95, 0.85))

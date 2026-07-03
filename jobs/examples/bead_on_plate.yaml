@@ -42,17 +42,17 @@ advanced_physics:
   R_spec_vapor_J_kgK: 450.0
 
 process:
-  current_A: 140
-  voltage_V: 20
-  arc_efficiency: 0.80
-  travel_speed_mm_s: 15 
-  wire_feed_m_min: 8
+  current_A: 100
+  voltage_V: 12
+  arc_efficiency: 0.70
+  travel_speed_mm_s: 20 
+  wire_feed_m_min: 0.1
   wire_diameter_mm: 1.2
   droplet_length_mm: 3.0
   T_ambient_K: 293
   stickout_mm: 12.0
   ctwd_mm: 15.0
-  transfer_mode: globular   # globular | spray | pulsed | auto
+  transfer_mode: auto   # globular | spray | pulsed | auto
   droplet_freq_hz: 44.0
   pulse_frequency_hz: 90.0
   droplet_size_jitter: 0.12
