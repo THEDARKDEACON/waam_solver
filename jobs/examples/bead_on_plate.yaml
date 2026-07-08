@@ -3,13 +3,13 @@ simulation:
   backend: cuda
   enable_vof: true
   enable_csf_tension: true
-  enable_wetting: true
-  enable_hydrostatic_gravity: true
-  enable_bead_freeze: true
+  enable_wetting: false
+  enable_hydrostatic_gravity: false
+  enable_bead_freeze: false
   enable_recoil: true
   use_recoil_clausius_clapeyron: true #true for CCCC, false for RR
   enable_lorentz: true
-  enable_gas_shear: true
+  enable_gas_shear: false
   enable_droplet_impact_pressure: true
   enable_enthalpy_cap: true
   arc_surface_weighting: true
@@ -42,11 +42,11 @@ advanced_physics:
   R_spec_vapor_J_kgK: 450.0
 
 process:
-  current_A: 100
-  voltage_V: 12
+  current_A: 50
+  voltage_V: 6
   arc_efficiency: 0.70
   travel_speed_mm_s: 20 
-  wire_feed_m_min: 0.1
+  wire_feed_m_min: 0.4
   wire_diameter_mm: 1.2
   droplet_length_mm: 3.0
   T_ambient_K: 293
@@ -63,10 +63,10 @@ deposition:
   trailing_solidify_lookback_mm: 2.5
   trailing_solidify_temp_margin_K: 35.0
   superheat_K: 500.0
-  footprint_sigma_scale: 1.0
+  footprint_sigma_scale: 0.6
 
 surface_wetting:
-  contact_angle_deg: 80.0
+  contact_angle_deg: 90.0
 
 heat_loss:
   convection: true
@@ -75,14 +75,14 @@ heat_loss:
 
 reference:
   pool_width_mm: 7.0
-  pool_depth_mm: 2.8
+  pool_depth_mm: 3.0
   source: macrograph_ER70S-6_bead_on_plate
 
 # Achievable pool envelope on 88×44×44 @ dx=0.3 mm (Goldak + surface-weighted arc).
 # Macro reference above is experimental; use model_reference for CI calibration checks.
 model_reference:
   grid: [88, 44, 44]
-  dx_mm: 0.3
+  dx_mm: 0.0003
   n_steps: 2000
   pool_width_mm: 4.2
   pool_depth_mm: 5.4

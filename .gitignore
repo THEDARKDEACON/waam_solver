@@ -24,11 +24,18 @@ htmlcov/
 *.pvd
 *.png
 viewer_output/
+cloud_runs/
+run_out/
+jobs/notebook_session/
+!jobs/notebook_session/.gitkeep
 imgui.ini
 haz_map.vti
 weld_pool*.vti
 bead_surface.vtp
 tracers.vtp
+sequence/
+sequence_*/
+bundle_step_*/
 
 # Regenerated validation baselines (keep committed baselines; ignore local runs)
 validation/baselines/matrix_latest.json
@@ -43,6 +50,7 @@ materials/user/*
 # ── IDE / OS ─────────────────────────────────────────────────────────────────
 .idea/
 .vscode/
+.ipynb_checkpoints/
 *.swp
 *~
 .DS_Store

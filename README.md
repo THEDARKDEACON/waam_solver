@@ -220,6 +220,50 @@ twin.reset()
 twin.step(0.015, 0.010, is_welding=True)
 ```
 
+### Notebook / Colab workflow
+
+The production notebook is `notebooks/cloud_production_workflow.ipynb`.
+
+Use it when you want:
+
+- long unattended runs
+- Google Drive persistence
+- in-run VTK sequence export
+- editable job/path/preset cells without touching tracked example files
+
+The notebook keeps three editable text blocks in memory, then writes them into a session workspace inside the repo:
+
+| Notebook variable | Writes to | Purpose |
+|------------------|-----------|---------|
+| `JOB_YAML` | `jobs/notebook_session/job.yaml` | full run configuration |
+| `TORCH_PATH_CSV` | `jobs/notebook_session/path.csv` | welding path waypoints |
+| `PRESETS_YAML` | `config/presets.yaml` | optional preset overrides for that session |
+
+`apply_job_config()` materializes those cells and returns the `job` used by `run_job(...)` and `run_job_live_view(...)`.
+
+Main notebook run controls:
+
+| Variable | Meaning |
+|----------|---------|
+| `PRESET_OVERRIDE` | runtime preset override without editing the job YAML |
+| `N_STEPS` | total simulation steps for a batch run |
+| `EXPORT_BUNDLE` | write a final research bundle |
+| `EXPORT_SEQUENCE` | export time-series VTK frames during the main run |
+| `SEQUENCE_EVERY` | export every N steps when sequence export is enabled |
+| `RESET_TAICHI_EACH_RUN` | reinitialize Taichi before each run |
+| `FREE_VRAM_AFTER_RUN` | release memory after the run completes |
+| `KEEP_TWIN_IN_MEMORY` | keep the last twin alive for inspection/debugging |
+| `SYNC_TO_DRIVE` | copy outputs to mounted Google Drive |
+| `SYNC_EACH_EXPORT` | sync after each export instead of only at the end |
+
+Path behavior is intentionally consistent:
+
+- local CLI/Python runs usually point at `jobs/examples/...`
+- notebook runs usually point at `jobs/notebook_session/...`
+- both are resolved relative to the `waam_twin` repo root
+
+For quick local debugging, use the normal CLI/viewer workflow below. For long production runs, prefer the notebook.
+
 ### Interactive viewer
 
 Real-time **Taichi GGUI** particle view of the melt pool (voxel-based, not ParaView quality). Defaults to the calibrated bead-on-plate job (VOF + heat loss + calibration overlay).
@@ -372,14 +416,174 @@ Spec: [docs/BEAD_GEOMETRY_PHYSICS_SPEC.md](docs/BEAD_GEOMETRY_PHYSICS_SPEC.md).
 
 ## Jobs & materials
 
-**Job YAML** (`jobs/examples/`) defines simulation preset, material path, process (I, V, travel, WFS), heat loss, torch path, and references:
+**Job YAML** lives either under `jobs/examples/` for tracked reference cases or under `jobs/notebook_session/` for notebook-generated session jobs. It defines the simulation preset, material, process sheet, optional path/frame wiring, and reference metadata.
 
-| Key | Purpose |
+### Top-level keys
+
+| Key | Meaning |
 |-----|---------|
-| `reference` | Experimental macrograph targets (documentation) |
-| `model_reference` | Simulator envelope used for CI gates |
-| `calibration` | `materials/calibration/*.yaml` overlay |
-| `torch_path` / `torch_path_csv` | Welding path waypoints |
+| `simulation` | solver preset and physics feature flags |
+| `material` | path to the material YAML |
+| `calibration` | optional `materials/calibration/*.yaml` overlay applied after base load |
+| `heat_source` | source model name such as `gaussian2d` or `goldak` |
+| `goldak` | Goldak double-ellipsoid parameters when `heat_source: goldak` |
+| `arc_physics` | arc penetration and vapor-cap settings |
+| `advanced_physics` | Lorentz, gas-shear, conductivity, and vapor-model tuning |
+| `process` | current, voltage, travel speed, wire feed, droplet transfer, ambient |
+| `deposition` | droplet superheat, placement footprint, trailing solidification controls |
+| `surface_wetting` | contact-angle override |
+| `heat_loss` | convection/radiation boundary loss settings |
+| `electrical` | CTWD / stick-out electrical properties |
+| `torch_path` | inline waypoint list in mm |
+| `torch_path_csv` | CSV waypoint file |
+| `frame` | robot/workcell frame mapping YAML |
+| `layer_height_mm` | nominal layer rise for multi-layer jobs |
+| `interpass` | cooling/travel settings between passes |
+| `reference` | experimental comparison targets (documentation/reporting) |
+| `model_reference` | expected simulator envelope used by CI/regression checks |
+| `probes` | named sample points recorded during the run |
+
+### `simulation:`
+
+| Key | Meaning |
+|-----|---------|
+| `preset` | named grid preset from `config/presets.yaml` |
+| `backend` | preferred backend hint for notebooks/docs; runtime still follows `init_taichi(...)` / env vars |
+| `enable_vof` | enable free-surface VOF advection |
+| `enable_csf_tension` | enable capillary surface-tension force |
+| `enable_wetting` | apply the contact-angle wetting boundary condition |
+| `enable_hydrostatic_gravity` | add full hydrostatic `ρg` flattening |
+| `enable_bead_freeze` | solidify cooled deposited metal behind the arc |
+| `enable_recoil` | enable vapor recoil pressure |
+| `use_recoil_clausius_clapeyron` | use the Clausius-Clapeyron recoil model |
+| `enable_lorentz` | enable electromagnetic `J×B` body force |
+| `enable_gas_shear` | enable shielding-gas traction |
+| `enable_droplet_impact_pressure` | apply droplet impact momentum pulse |
+| `enable_enthalpy_cap` | clamp extreme enthalpy / vaporization spikes |
+| `arc_surface_weighting` | bias arc heating toward the top free surface |
+| `enable_substrate_growth` | allow hot solid/substrate remelt and growth studies |
+| `enable_moving_window` | enable moving-domain/window logic |
+| `enable_ctwd` | enable wire stick-out / CTWD preheat model |
+| `use_torch_z` | use path/frame Z to update torch standoff |
+
+### `process:`
+
+| Key | Meaning |
+|-----|---------|
+| `current_A` | welding current in amperes |
+| `voltage_V` | arc voltage; combined with current and efficiency for nominal arc power |
+| `arc_efficiency` | fraction of electrical power deposited as heat |
+| `travel_speed_mm_s` | torch travel speed along the path |
+| `wire_feed_m_min` | wire feed speed; drives deposition mass rate |
+| `wire_diameter_mm` | filler wire diameter |
+| `droplet_length_mm` | characteristic wire length per droplet when frequency is inferred |
+| `T_ambient_K` | ambient/reference temperature |
+| `stickout_mm` | exposed wire stick-out length |
+| `ctwd_mm` | contact-tip-to-work distance |
+| `transfer_mode` | transfer heuristic: `globular`, `spray`, `pulsed`, or `auto` |
+| `droplet_freq_hz` | explicit droplet detachment frequency override |
+| `pulse_frequency_hz` | pulse frequency for pulsed-transfer heuristics |
+| `droplet_size_jitter` | deterministic droplet-size modulation factor |
+| `impact_lead_angle_deg` | forward impact-angle bias relative to travel direction |
+
+Notes:
+
+- if `droplet_freq_hz` is omitted, the loader infers it from `wire_feed_m_min / droplet_length_mm`
+- `current_A`, `voltage_V`, and `arc_efficiency` together set the thermal input level; changing one of them can affect both pool size and bead shape
+
+### `goldak:`
+
+| Key | Meaning |
+|-----|---------|
+| `ff` | front heat fraction |
+| `fr` | rear heat fraction |
+| `depth_front_mm` | front ellipsoid penetration depth |
+| `depth_rear_mm` | rear ellipsoid penetration depth |
+
+### `arc_physics:`
+
+| Key | Meaning |
+|-----|---------|
+| `penetration_mm` | arc penetration attenuation depth |
+| `T_vapor_cap_K` | temperature ceiling for vapor/enthalpy cap behavior |
+| `surface_weighting` | alternate place to enable surface-weighted arc deposition |
+
+### `advanced_physics:`
+
+| Key | Meaning |
+|-----|---------|
+| `gas_jet_velocity_m_s` | gas jet speed used by gas-shear forcing |
+| `gas_shear_coeff` | scale factor for gas-shear traction |
+| `sigma_liquid_Sm` | liquid electrical conductivity |
+| `sigma_solid_Sm` | solid electrical conductivity |
+| `lorentz_jacobi_iters` | iteration count for the Lorentz solve |
+| `T_boiling_K` | boiling temperature used by recoil/vapor models |
+| `L_vapor_J_kg` | latent heat of vaporization |
+| `R_spec_vapor_J_kgK` | vapor specific gas constant |
+
+### `deposition:`
+
+| Key | Meaning |
+|-----|---------|
+| `superheat_K` | temperature excess assigned to deposited droplets |
+| `footprint_sigma_scale` | multiplier on deposition spread; lower values usually raise bead crown |
+| `trailing_solidify_lookback_mm` | distance behind the arc checked for trailing freeze |
+| `trailing_solidify_temp_margin_K` | margin above liquidus used as the freeze threshold |
+
+### `surface_wetting:`
+
+| Key | Meaning |
+|-----|---------|
+| `contact_angle_deg` | static wetting/contact angle used by the wall boundary condition |
+
+### `heat_loss:`
+
+| Key | Meaning |
+|-----|---------|
+| `convection` | enable convective boundary losses |
+| `radiation` | enable radiative boundary losses |
+| `h_conv` | convective heat-transfer coefficient |
+| `eps_rad` | emissivity for radiation losses |
+
+### `electrical:`
+
+| Key | Meaning |
+|-----|---------|
+| `rho_e_ohm_m` | electrical resistivity for stick-out heating |
+| `eta_stick` | fraction of resistive stick-out heating retained by the wire |
+
+### Paths, probes, and references
+
+| Key | Meaning |
+|-----|---------|
+| `torch_path` | inline list of `{x_mm, y_mm, z_mm}` waypoints |
+| `torch_path_csv` | external CSV of torch waypoints |
+| `frame` | frame transform YAML for robot/workcell coordinates |
+| `probes` | list of named `{name, x_mm, y_mm, z_mm}` sample points |
+| `reference` | experimental targets for comparison/reporting |
+| `model_reference` | expected simulator envelope for sanity/CI checks |
+| `interpass.cooling_steps` | idle cooling steps between passes |
+| `interpass.travel_speed_mm_s` | non-welding travel speed during interpass motion |
+| `layer_height_mm` | nominal layer rise for multi-layer jobs |
+
+### Minimal example
+
+```yaml
+simulation:
+  preset: standard
+  enable_vof: true
+  enable_csf_tension: true
+  enable_wetting: true
+material: materials/validated/ER70S-6.v1.yaml
+process:
+  current_A: 120
+  voltage_V: 18
+  arc_efficiency: 0.72
+  travel_speed_mm_s: 8
+  wire_feed_m_min: 2.5
+heat_source: goldak
+torch_path_csv: jobs/paths/bead_line.csv
+```
 
 **Materials** are YAML under `materials/` with `status: placeholder` or `calibrated`. Placeholders print a warning at load time.
 
