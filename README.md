@@ -45,7 +45,7 @@ waam_twin/                    ← git repository root (this folder)
 │   ├── validated/            # Calibrated alloys
 │   ├── calibration/          # η, σ fits per process
 │   └── user/                 # Local overrides (gitignored)
-├── docs/                     # HARDWARE, MATERIALS, execution plan, validation
+├── docs/                     # HARDWARE, MATERIALS, VTK, LBM, weld-pool physics
 ├── physics/                  # Modular operators (re-export kernels)
 │   ├── thermal.py
 │   ├── phase_change.py
@@ -143,7 +143,7 @@ Each `WAAMTwin.step(x, y, is_welding)` runs, in order:
 10. **Remelt hot solid + solidify cooled metal** (bead freeze / substrate growth)  
 11. Buffer swap  
 
-See [docs/BEAD_GEOMETRY_PHYSICS_SPEC.md](docs/BEAD_GEOMETRY_PHYSICS_SPEC.md) and [docs/weld_pool_physics.md](docs/weld_pool_physics.md).
+See [docs/weld_pool_physics.md](docs/weld_pool_physics.md), [`solvers/coupled_step.py`](solvers/coupled_step.py), and the **Jobs & materials** section below for bead/deposition flags.
 
 ### Layer responsibilities
 
@@ -376,7 +376,7 @@ Each frame folder contains:
 - Threshold `Cell_Flags` (0 = fluid, 1 = solid) and clip Z above substrate to isolate deposited bead.
 - Legacy `.vts` paths are rewritten to `.vti`. Set `WAAM_HEADLESS=1` to skip VTK in batch runs.
 
-Full field inventory (names, units, computation): [docs/VTK_EXPORT.md](docs/VTK_EXPORT.md). Implementation spec: [docs/DIAGNOSTICS_AND_VTK_SPEC.md](docs/DIAGNOSTICS_AND_VTK_SPEC.md).
+Full field inventory (names, units, computation): [docs/VTK_EXPORT.md](docs/VTK_EXPORT.md).
 
 ### Bead geometry physics (job flags)
 
@@ -408,9 +408,7 @@ deposition:
   trailing_solidify_temp_margin_K: 35.0
 ```
 
-`transfer_mode` changes detachment period, drop mass, and impact speed heuristically; the trailing-solidify settings help clamp the far wake back to solid once it cools below a mild superheat margin.
-
-Spec: [docs/BEAD_GEOMETRY_PHYSICS_SPEC.md](docs/BEAD_GEOMETRY_PHYSICS_SPEC.md).
+`transfer_mode` changes detachment period, drop mass, and impact speed heuristically; the trailing-solidify settings help clamp the far wake back to solid once it cools below a mild superheat margin. See the **Jobs & materials** section for all deposition and wetting keys.
 
 ---
 
@@ -689,13 +687,21 @@ Schema: [validation/telemetry_schema.json](validation/telemetry_schema.json).
 
 ## Further reading
 
-- [Bead geometry physics spec](docs/BEAD_GEOMETRY_PHYSICS_SPEC.md) — wetting, deposition, freeze, CTWD  
-- [Weld pool forces](docs/weld_pool_physics.md) — Marangoni, Lorentz, recoil, droplets  
-- [VTK & diagnostics spec](docs/DIAGNOSTICS_AND_VTK_SPEC.md) — export tiers, ParaView workflow  
-- [Execution plan](docs/WAAM_TWIN_V2_EXECUTION_PLAN.md) — phases, task IDs, exit gates  
-- [Validation report](docs/validation/VALIDATION_REPORT.md)  
-- [ER70S-6 reference case](docs/validation/reference_case_ER70S6.md)  
-- [LBM numerics](docs/physics/LBM.md)
+Tracked operational docs (in git):
+
+- [Weld pool forces](docs/weld_pool_physics.md) — Marangoni, Lorentz, buoyancy, recoil, droplets  
+- [VTK export reference](docs/VTK_EXPORT.md) — field names, tiers, ParaView workflow  
+- [LBM numerics](docs/physics/LBM.md) — lattice units, collision, forcing  
+- [Materials](docs/MATERIALS.md) — YAML schema, placeholder vs calibrated  
+- [Hardware & presets](docs/HARDWARE.md) — backends, VRAM, environment variables  
+
+Validation and reference data live in code, not markdown reports:
+
+- `python -m waam_twin.validation.run_all` — current pass/fail truth  
+- [`jobs/examples/bead_on_plate.yaml`](jobs/examples/bead_on_plate.yaml) — ER70S-6 reference job with `reference` and `model_reference` blocks  
+- [`validation/telemetry_schema.json`](validation/telemetry_schema.json) — telemetry JSON schema  
+
+Local-only planning notes (gitignored): `docs/archive/`, `docs/research-notes/`, and draft specs such as execution plans or FEM slide analyses if you keep them on disk.
 
 ---
 

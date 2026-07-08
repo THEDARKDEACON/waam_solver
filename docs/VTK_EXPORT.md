@@ -221,5 +221,5 @@ python3 -m waam_twin.export \
 
 ## Related docs
 
-- [DIAGNOSTICS_AND_VTK_SPEC.md](DIAGNOSTICS_AND_VTK_SPEC.md) — viewer diagnostics, planned fields, bundle layout spec
 - [README.md § VTK export](../README.md) — quick start commands
+- [README.md § Interactive viewer](../README.md) — live GGUI keys and export shortcuts

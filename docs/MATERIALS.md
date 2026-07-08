@@ -77,7 +77,7 @@ heat_loss:
 3. **Add** optional `tables` block (cp, k, μ, dγ/dT) from literature or measurement.
 4. **Create** `materials/calibration/<alloy>.<process>.yaml` with fitted η, `arc_sigma_scale`, etc. (`tools/fit_calibration`).
 5. **Add** `model_reference` W/D to the matching job YAML (simulator envelope, not macrograph).
-6. **Run** `WAAM_FULL_VALIDATION=1` + `WAAM_STANDARD_VALIDATION=1`; record results in `docs/validation/VALIDATION_REPORT.md`.
+6. **Run** `WAAM_FULL_VALIDATION=1` + `WAAM_STANDARD_VALIDATION=1`; confirm pass via `python -m waam_twin.validation.run_all`.
 7. **Bump** material version (`v1` → `v2`) when properties or calibration change; never overwrite validated files in place.
 
 Until step 6 passes, keep `status: placeholder` and expect startup warnings.
