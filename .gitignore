@@ -47,6 +47,21 @@ validation/baselines/performance_latest.json
 materials/user/*
 !materials/user/.gitkeep
 
+# ── Planning / review / draft specs (local notes, not operational docs) ───────
+# These are useful for thesis or history, but they go stale and overlap with
+# README + validation tests. Stop tracking after: git rm --cached <path>
+docs/WAAM_TWIN_V2_EXECUTION_PLAN.md
+docs/FEM_LECTURE_SLIDES_ANALYSIS.md
+docs/BEAD_GEOMETRY_PHYSICS_SPEC.md
+docs/DIAGNOSTICS_AND_VTK_SPEC.md
+docs/validation/VALIDATION_REPORT.md
+docs/validation/thermal_v1.md
+docs/validation/reference_case_ER70S6.md
+
+# Optional local-only doc drop (never commit)
+docs/archive/
+docs/research-notes/
+
 # ── IDE / OS ─────────────────────────────────────────────────────────────────
 .idea/
 .vscode/
