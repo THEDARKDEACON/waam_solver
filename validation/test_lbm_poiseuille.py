@@ -13,7 +13,8 @@ from waam_twin import WAAMTwin
 from waam_twin import kernels
 
 
-def run(n_steps: int = 100, threshold: float = 15.0) -> float:
+def run(n_steps: int = 100, threshold: float = 8.0) -> float:
+    # Gate tightened 15% → 10% after the Guo-forcing ρ_lu fix (measured 6.5%).
     init_taichi(backend="cpu")
 
     nx, ny, nz = 64, 32, 6

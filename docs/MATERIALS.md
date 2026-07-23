@@ -21,8 +21,23 @@ Built-in presets (`ER70S-6`, `SS316L`, etc.) resolve to `materials/placeholders/
 | `T_solidus`, `T_liquidus` | K | Phase change |
 | `alpha` | m²/s | Thermal diffusion |
 | `beta_T` | 1/K | Thermal expansion (buoyancy) |
-| `dgamma_dT` | N/(m·K) | Marangoni driving force |
-| `surface_tension` | N/m | Reference (future CSF) |
+| `dgamma_dT` | N/(m·K) | Marangoni driving force (overridden by surfactant model) |
+| `surface_tension` / `gamma_0` | N/m | CSF reference; Sahoo model resets from \(\gamma(T_{\ell},a_S)\) |
+
+## Surfactant block
+
+```yaml
+surfactant:
+  model: sahoo        # or heiple (default)
+  sulphur_ppm: 28.0
+```
+
+| Model | Behaviour |
+|-------|-----------|
+| `heiple` | Static S-ppm scale of YAML `dgamma_dT` (Mills/Heiple thresholds) |
+| `sahoo` | Sahoo–DebRoy–McNallan (1988) Fe–S: builds a local \(\mathrm{d}\gamma/\mathrm{d}T(T,a_S)\) table for GPU property refresh |
+
+Validated ER70S-6 uses `sahoo`. See `physics/surfactant.py` and `PHYSICS_FORCE_CORRECTNESS_SPEC.md` §5.9.
 
 ## Loading
 

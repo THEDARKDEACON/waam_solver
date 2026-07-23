@@ -19,6 +19,45 @@ def _kwf():
     return kernels
 
 
+def lin_eagar_peak_pa(current_A: float, sigma_p_m: float) -> float:
+    """
+    Lin & Eagar (1986) peak arc pressure [Pa]:
+
+        p0 = μ0 · I² / (4 π² σ_p²)
+
+    σ_p is the Gaussian pressure radius [m].
+    """
+    sig = max(float(sigma_p_m), 1.0e-6)
+    i = max(float(current_A), 0.0)
+    return MU0 * i * i / (4.0 * math.pi * math.pi * sig * sig)
+
+
+def arc_pressure_sigma_m(twin: "WAAMTwin") -> float:
+    """Pressure Gaussian radius [m]; defaults to arc heat σ."""
+    sig = getattr(twin, "pressure_sigma_m", None)
+    if sig is not None and sig > 0.0:
+        return float(sig)
+    return float(twin.arc_sigma_m)
+
+
+def arc_pressure_sigma_cells(twin: "WAAMTwin") -> float:
+    return arc_pressure_sigma_m(twin) / twin.grid.dx
+
+
+def arc_pressure_peak_pa(twin: "WAAMTwin") -> float:
+    """
+    Resolve peak arc pressure for the current step.
+
+    Models (twin.arc_pressure_model):
+      - lin_eagar — Lin & Eagar I² / σ_p² (default for physics_tier: full)
+      - constant  — twin.arc_pressure [Pa] (legacy / calibration)
+    """
+    model = str(getattr(twin, "arc_pressure_model", "constant")).strip().lower()
+    if model in ("lin_eagar", "lineagar", "lin-eagar"):
+        return lin_eagar_peak_pa(twin.welding_current_A, arc_pressure_sigma_m(twin))
+    return float(twin.arc_pressure)
+
+
 def droplet_impact_velocity_m_s(twin: "WAAMTwin", m_drop_kg: float | None = None) -> float:
     """Impact speed from feed, gravity, and a simple pinch term."""
     g = 9.81
@@ -96,8 +135,9 @@ def apply_recoil(twin: "WAAMTwin", g: "WAAMGrid", arc_i: float, arc_j: float, ar
             g.Fz, g.T, g.phi, g.flags,
             arc_i, arc_j, arc_k, twin.sigma_cells,
             twin.P_vapor_ref_Pa, twin.T_boiling_K, twin.L_vapor_J_kg, twin.R_spec_vapor_J_kgK,
+            float(getattr(twin, "recoil_accommodation", 0.54)),
             g.dt, g.dx, twin.mat.rho,
-            g.FLAG_GAS, g.FLAG_SOLID,
+            g.FLAG_SOLID, g.FLAG_GAS,
         )
     else:
         from .forces import apply_vapor_recoil
@@ -106,7 +146,7 @@ def apply_recoil(twin: "WAAMTwin", g: "WAAMGrid", arc_i: float, arc_j: float, ar
             arc_i, arc_j, arc_k, twin.sigma_cells,
             twin.recoil_pressure_pa, twin.mat.T_liquidus,
             g.dt, g.dx, twin.mat.rho,
-            g.FLAG_GAS, g.FLAG_SOLID,
+            g.FLAG_SOLID, g.FLAG_GAS,
         )
 
 
@@ -119,7 +159,7 @@ def apply_gas_shear(twin: "WAAMTwin", g: "WAAMGrid", arc_i: float, arc_j: float,
         g.Fx, g.Fy, g.phi, g.flags,
         arc_i, arc_j, arc_k, twin.sigma_cells,
         tau, g.dt, g.dx, twin.mat.rho,
-        g.FLAG_GAS, g.FLAG_SOLID,
+        g.FLAG_SOLID, g.FLAG_GAS,
     )
 
 
@@ -137,6 +177,7 @@ def apply_droplet_impact(
     vx, vy, vz = droplet_velocity_lu(twin, drop_mass_kg)
     kwf = _kwf()
     kwf.feed_wire_momentum_impact(
+        g.f_src, g.rho,
         g.ux, g.uy, g.uz, g.flags, g.f_l,
         arc_i, arc_j, arc_k, drop_r,
         vx, vy, vz,
@@ -148,13 +189,14 @@ def apply_droplet_impact(
             arc_i, arc_j, arc_k, drop_r,
             droplet_impact_pressure_pa(twin, drop_mass_kg, drop_r * g.dx),
             g.dt, g.dx, twin.mat.rho,
-            g.FLAG_GAS, g.FLAG_SOLID,
+            g.FLAG_SOLID, g.FLAG_GAS,
         )
 
 
 def solve_lorentz(twin: "WAAMTwin", g: "WAAMGrid", arc_i: float, arc_j: float, arc_k: float) -> None:
     if not twin.enable_lorentz:
         return
+    g.ensure_lorentz_fields()
     kwf = _kwf()
     kwf.elec_build_sigma(
         g.sigma_elec, g.f_l, g.flags,
@@ -167,20 +209,70 @@ def solve_lorentz(twin: "WAAMTwin", g: "WAAMGrid", arc_i: float, arc_j: float, a
         twin.sigma_cells, twin.welding_current_A, g.dx, g.nz,
     )
     kwf.elec_normalize_source(g.elec_source, twin.welding_current_A, g.dx)
-    kwf.elec_init_ground(g.phi_elec, g.flags, twin.nz_solid, g.FLAG_SOLID)
-    for _ in range(twin.lorentz_jacobi_iters):
-        kwf.elec_jacobi_step(
-            g.phi_elec, g.phi_elec_tmp, g.sigma_elec, g.elec_source, g.flags,
-            g.dx, twin.lorentz_jacobi_omega,
-            g.FLAG_GAS, g.FLAG_SOLID, twin.nz_solid, g.nx, g.ny, g.nz,
-        )
-        g.phi_elec.copy_from(g.phi_elec_tmp)
+
+    # Warm start: keep the potential from the previous step (the geometry
+    # changes slowly, so a few dozen iterations/step track the solution).
+    # Zeroing φ every call forced a cold start each timestep, which a fixed
+    # iteration budget could never converge — the J×B force came from a
+    # potential ~40× off on even a 32³ grid.
+    cold_start = not getattr(twin, "_lorentz_warm", False)
+    if cold_start:
+        kwf.elec_init_ground(g.phi_elec, g.flags, twin.nz_solid, g.FLAG_SOLID)
+        twin._lorentz_warm = True
+
+    # Jacobi solve with convergence monitoring: iterate in chunks and stop
+    # when the relative L1 change drops below tolerance. Jacobi needs
+    # O(N²·ln 1/tol) iterations from a cold start, so the first solve gets a
+    # grid-scaled cap; warm-started steps use the configured budget.
+    max_iters = max(int(twin.lorentz_jacobi_iters), 20)
+    if cold_start:
+        n_max = max(g.nx, g.ny, g.nz)
+        max_iters = max(max_iters, 2 * n_max * n_max)
+    tol = float(getattr(twin, "lorentz_jacobi_tol", 1e-4))
+    check_every = 10
+    converged = False
+    iters_done = 0
+    while iters_done < max_iters:
+        for _ in range(min(check_every, max_iters - iters_done)):
+            kwf.elec_jacobi_step(
+                g.phi_elec, g.phi_elec_tmp, g.sigma_elec, g.elec_source, g.flags,
+                g.dx, twin.lorentz_jacobi_omega,
+                g.FLAG_GAS, g.FLAG_SOLID, twin.nz_solid, g.nx, g.ny, g.nz,
+            )
+            kwf.elec_l1_diff(g.phi_elec_tmp, g.phi_elec, g.elec_res_buf, g.elec_norm_buf)
+            g.phi_elec.copy_from(g.phi_elec_tmp)
+            iters_done += 1
+        rel = float(g.elec_res_buf[None]) / max(float(g.elec_norm_buf[None]), 1e-30)
+        if rel < tol:
+            converged = True
+            break
+    if not converged:
+        twin._lorentz_unconverged = getattr(twin, "_lorentz_unconverged", 0) + 1
+        twin._lorentz_unconverged_streak = getattr(twin, "_lorentz_unconverged_streak", 0) + 1
+        if twin._lorentz_unconverged in (1, 10, 100) or twin._lorentz_unconverged % 1000 == 0:
+            print(
+                f"[weld_forces] WARNING: Lorentz Jacobi hit {max_iters} iters "
+                f"without converging (rel Δ={rel:.2e} > {tol:.0e}); "
+                f"raise lorentz_jacobi_iters. ({twin._lorentz_unconverged} occurrences)"
+            )
+    else:
+        twin._lorentz_unconverged_streak = 0
+
     kwf.elec_compute_J(
         g.Jx, g.Jy, g.Jz, g.phi_elec, g.sigma_elec, g.flags, g.dx,
         g.FLAG_GAS, g.nx, g.ny, g.nz,
     )
-    kwf.elec_compute_B_from_J(
-        g.Bx, g.By, g.Bz, g.Jx, g.Jy, g.Jz, g.dx, MU0, g.nx, g.ny, g.nz,
+    # Axisymmetric self-magnetic field from the enclosed axial current
+    # (Ampère's law) — see kernels.elec_B_axisymmetric.
+    bin_dr_cells = max(float(max(g.nx, g.ny)) / (2.0 * g.n_elec_bins), 0.5)
+    kwf.elec_bin_axial_current(
+        g.Jz, g.elec_rad_bins, arc_i, arc_j, g.dx,
+        bin_dr_cells, g.n_elec_bins, g.nz,
+    )
+    kwf.elec_prefix_bins(g.elec_rad_bins, g.n_elec_bins, g.nz)
+    kwf.elec_B_axisymmetric(
+        g.Bx, g.By, g.Bz, g.elec_rad_bins,
+        arc_i, arc_j, g.dx, bin_dr_cells, MU0, g.n_elec_bins, g.nz,
     )
     kwf.apply_lorentz_JxB(
         g.Fx, g.Fy, g.Fz,

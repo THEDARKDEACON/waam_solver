@@ -1,5 +1,5 @@
 """
-test_arc_pressure.py — Arc pressure produces downward interface force.
+test_arc_pressure.py — Arc pressure downward force + Lin–Eagar I² scaling.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ import numpy as np
 from waam_twin.platform import init_taichi
 from waam_twin import WAAMTwin
 from waam_twin.physics import forces
+from waam_twin.physics.weld_forces import lin_eagar_peak_pa, arc_pressure_peak_pa
 
 
 def run(min_delta_Fz: float = 1e-10) -> float:
@@ -18,8 +19,10 @@ def run(min_delta_Fz: float = 1e-10) -> float:
     twin = WAAMTwin(
         nx=40, ny=20, nz=24, dx=2.5e-4,
         arc_pressure_pa=50_000.0,
+        welding_current_A=200.0,
         max_tracers=10,
     )
+    twin.arc_pressure_model = "constant"
     twin.reset()
     g = twin.grid
     nz_s = twin.nz_solid
@@ -45,6 +48,23 @@ def run(min_delta_Fz: float = 1e-10) -> float:
     print(f"[arc_pressure] min ΔFz = {delta:.3e}  (expect < 0)")
     if delta > -min_delta_Fz:
         raise AssertionError("Arc pressure did not deflect free surface downward")
+
+    # Lin–Eagar: doubling I → 4× peak pressure
+    twin.arc_pressure_model = "lin_eagar"
+    twin.welding_current_A = 100.0
+    p100 = arc_pressure_peak_pa(twin)
+    twin.welding_current_A = 200.0
+    p200 = arc_pressure_peak_pa(twin)
+    ratio = p200 / max(p100, 1e-30)
+    p_analytic = lin_eagar_peak_pa(200.0, twin.arc_sigma_m)
+    print(
+        f"[arc_pressure] Lin–Eagar p(100A)={p100:.1f} Pa  p(200A)={p200:.1f} Pa  "
+        f"ratio={ratio:.3f}  (expect 4)  analytic_200={p_analytic:.1f}"
+    )
+    if abs(ratio - 4.0) > 1e-9:
+        raise AssertionError(f"Lin–Eagar peak must scale as I² (ratio={ratio})")
+    if abs(p200 - p_analytic) > 1e-6 * max(p_analytic, 1.0):
+        raise AssertionError("arc_pressure_peak_pa disagrees with lin_eagar_peak_pa")
     return delta
 
 

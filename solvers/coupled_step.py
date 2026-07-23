@@ -20,7 +20,7 @@ def _clamp_enthalpy_ceiling(twin: "WAAMTwin", g) -> None:
     if twin.use_material_tables:
         thermal.clamp_enthalpy_ceiling_variable_cp(
             g.H, g.flags, g.cp_rho_field,
-            twin.mat.T_liquidus, twin.T_vapor_cap_K, twin.L_rho,
+            twin.H_liq, twin.mat.T_liquidus, twin.T_vapor_cap_K,
             g.FLAG_GAS,
         )
     else:
@@ -77,18 +77,31 @@ def coupled_step(
     is_welding: bool,
     torch_z_m: float | None = None,
 ) -> None:
+    """One coupled physics timestep.
+
+    Operator-splitting note: the thermal advection-diffusion step uses the
+    velocity field from the END of the previous step (first-order Lie
+    splitting). The flow⇄thermal coupling therefore lags by one Δt; the
+    splitting error is O(Δt·|∂u/∂t|) and grows with Marangoni number. At the
+    production Δt (≈ dx·u_lu/u_ref ~ 10 µs) this is far below the spatial
+    discretization error, but it is a systematic phase lag — halve dt to
+    check sensitivity if you operate at extreme surface-tension gradients.
+    """
     g = twin.grid
 
     arc_i = torch_x_m / g.dx
     arc_j = torch_y_m / g.dx
     arc_k = _resolve_arc_k(twin, g, arc_i, arc_j, torch_z_m)
+    twin._last_arc_ijk = (float(arc_i), float(arc_j), float(arc_k))
 
     forces.clear_forces(g.Fx, g.Fy, g.Fz)
 
     if twin.enable_ctwd:
         update_ctwd(twin, g)
 
-    current_pressure = twin.arc_pressure
+    # Peak arc pressure: Lin–Eagar I²/σ² or constant Pa (see weld_forces).
+    current_pressure = weld_forces.arc_pressure_peak_pa(twin)
+    pressure_sigma_cells = weld_forces.arc_pressure_sigma_cells(twin)
 
     if is_welding:
         twin.arc_source.inject(twin, g, arc_i, arc_j, arc_k)
@@ -111,27 +124,44 @@ def coupled_step(
                     float(twin.sigma_cells * g.dx), 50,
                 )
                 g.deposit_vol_buf[None] = 0.0
+                g.deposit_real_buf[None] = 0.0
                 foot_r = deposition.deposition_footprint_cells(twin, drop_r)
                 r_try = foot_r
-                for _ in range(8):
+                placed_real = 0.0
+                for _ in range(10):
+                    # Resume budget from metal already placed so retries expand
+                    # the footprint instead of re-filling with thermal no-ops.
+                    g.deposit_vol_buf[None] = placed_real
+                    g.deposit_real_buf[None] = placed_real
                     deposition.feed_wire_surface(
                         g.f_src, g.flags, g.f_l, g.phi, g.H, g.T, g.rho,
                         arc_i, arc_j, arc_k,
                         r_try, drop_r,
                         drop_vol,
                         T_drop,
-                        twin.cp_rho, twin.L_rho, twin.mat.rho,
-                        g.deposit_vol_buf, g.dx ** 3,
+                        twin.cp_rho, twin.L_rho,
+                        1.0,  # lattice density (rho_lu ≈ 1 convention)
+                        g.deposit_vol_buf, g.deposit_real_buf, g.dx ** 3,
                         g.FLAG_GAS, g.FLAG_FLUID, g.FLAG_SOLID,
                         g.nx, g.ny, g.nz,
                     )
-                    if float(g.deposit_vol_buf[None]) >= drop_vol * 0.98:
+                    placed_real = float(g.deposit_real_buf[None])
+                    if placed_real >= drop_vol * 0.98:
                         break
-                    r_try = min(r_try + 1.5, 14.0)
-                placed = float(g.deposit_vol_buf[None])
-                if placed < drop_vol * 0.98:
+                    r_try = min(r_try + 1.5, 16.0)
+                # Mass ledger counts only real gas→fluid conversions.
+                if placed_real < drop_vol * 0.98:
                     twin._deposition_overflow += 1
-                twin._deposited_volume_m3 += placed
+                    if not twin._warned_overflow and twin._deposition_overflow >= 20:
+                        twin._warned_overflow = True
+                        print(
+                            f"[coupled_step] WARNING: {twin._deposition_overflow} droplets "
+                            f"deposited less volume than the wire feed supplies "
+                            f"(latest: {placed_real / max(drop_vol, 1e-30):.0%} of target). "
+                            f"Cumulative mass balance will drift below 1.0 — check "
+                            f"mass_balance_ratio in telemetry."
+                        )
+                twin._deposited_volume_m3 += placed_real
                 twin._n_droplets_fired += 1
                 weld_forces.apply_droplet_impact(twin, g, arc_i, arc_j, arc_k, drop_r, drop_mass)
 
@@ -145,7 +175,7 @@ def coupled_step(
             tbl.n_cp, tbl.n_k, tbl.n_mu, tbl.n_dgamma,
             g.mat.rho, g.dt, g.dx,
             tbl.cp_fallback, tbl.k_fallback, tbl.mu_fallback, tbl.dgamma_fallback,
-            twin.force_scale,
+            twin.force_scale / g.dx,  # Marangoni prefactor: scale_F/dx (lattice ∇)
             twin.cp_rho, twin.alpha_lu, twin.dgamma_dT_lu, g.tau,
             twin.marangoni_scale,
             1, g.flags, g.FLAG_SOLID, g.FLAG_GAS,
@@ -194,8 +224,6 @@ def coupled_step(
                 g.H, twin.cp_rho, g.flags, twin.T_amb, g.FLAG_GAS,
             )
 
-    thermal.update_T_max(g.T, g.T_max, g.flags, g.FLAG_GAS)
-
     if twin.use_material_tables:
         thermal.update_phase_variable_cp(
             g.H, g.T, g.f_l, g.cp_rho_field,
@@ -210,13 +238,31 @@ def coupled_step(
             twin.mat.T_solidus, twin.mat.T_liquidus,
         )
 
+    # Cap H, then re-recover T so telemetry / T_max cannot retain a
+    # post-phase spike above T_vapor_cap while H was already clamped.
     _clamp_enthalpy_ceiling(twin, g)
+    if twin.use_material_tables:
+        thermal.update_phase_variable_cp(
+            g.H, g.T, g.f_l, g.cp_rho_field,
+            twin.L_rho,
+            twin.mat.T_solidus, twin.mat.T_liquidus,
+            twin.H_sol, twin.H_liq,
+        )
+    else:
+        phase_change.update_phase(
+            g.H, g.T, g.f_l,
+            twin.cp_rho, twin.L_rho,
+            twin.mat.T_solidus, twin.mat.T_liquidus,
+        )
+
+    thermal.update_T_max(g.T, g.T_max, g.flags, g.FLAG_GAS)
 
     thermal.update_cooling_rate(
         g.T, g.T_prev, g.dT_dt, g.flags, g.dt, g.FLAG_GAS,
     )
 
     if twin.enable_vof:
+        g.ensure_vof_buffers()
         free_surface.advect_phi(
             g.phi_tmp, g.phi, g.ux, g.uy, g.uz, g.flags,
             g.FLAG_SOLID, g.FLAG_GAS,
@@ -236,6 +282,18 @@ def coupled_step(
             g.phi, g.f_l, g.flags, twin.nz_solid,
             g.FLAG_FLUID, g.FLAG_SOLID, g.FLAG_GAS, g.FLAG_IFACE,
         )
+        # Clear contradictory liquid-in-gas / solid-with-f_l after flag update.
+        free_surface.sync_phi_liquid_fraction(
+            g.phi, g.f_l, g.flags, g.FLAG_GAS, g.FLAG_SOLID,
+        )
+
+    # ── Force assembly (PHYSICS_FORCE_CORRECTNESS_SPEC §4.1) ─────────────
+    # clear_forces already ran at step start. Every kernel below MUST use +=
+    # only. Droplet impact pressure (if any) was applied earlier this step
+    # during deposition and must be preserved by additive surface forces.
+    #
+    # Order: CSF → Marangoni → gas shear → arc pressure → recoil
+    #      → hydrostatic → Boussinesq → Lorentz → collide (Darcy inside).
 
     if twin.enable_csf_tension:
         forces.compute_csf_tension(
@@ -264,9 +322,22 @@ def coupled_step(
             g.nx, g.ny, g.nz,
         )
 
+    if is_welding and twin.enable_gas_shear:
+        weld_forces.apply_gas_shear(twin, g, arc_i, arc_j, arc_k)
+
+    if is_welding:
+        forces.apply_arc_pressure(
+            g.Fz, g.flags, g.phi,
+            arc_i, arc_j, arc_k, pressure_sigma_cells,
+            current_pressure, g.dt, g.dx, twin.mat.rho,
+            g.FLAG_SOLID, g.FLAG_GAS,
+        )
+        weld_forces.apply_recoil(twin, g, arc_i, arc_j, arc_k)
+
+    # rho_ref = 1.0: lattice force densities under the ρ_lu ≈ 1 convention.
     if twin.enable_hydrostatic_gravity:
         forces.add_hydrostatic_gravity(
-            g.Fz, g.f_l, g.flags, g.mat.rho, twin.g_lu,
+            g.Fz, g.f_l, g.flags, 1.0, twin.g_lu,
             g.FLAG_SOLID, g.FLAG_GAS,
         )
 
@@ -274,24 +345,21 @@ def coupled_step(
         g.T, g.Fz, g.f_l, g.flags,
         twin.g_lu, twin.beta_T,
         twin.mat.T_liquidus,
-        g.mat.rho,
+        1.0,
         g.FLAG_SOLID, g.FLAG_GAS,
     )
 
-    if is_welding:
-        if twin.enable_lorentz:
-            weld_forces.solve_lorentz(twin, g, arc_i, arc_j, arc_k)
-        if twin.enable_gas_shear:
-            weld_forces.apply_gas_shear(twin, g, arc_i, arc_j, arc_k)
+    if is_welding and twin.enable_lorentz:
+        weld_forces.solve_lorentz(twin, g, arc_i, arc_j, arc_k)
 
-    if is_welding:
-        forces.apply_arc_pressure(
-            g.Fz, g.flags, g.phi,
-            arc_i, arc_j, arc_k, twin.sigma_cells,
-            current_pressure, g.dt, g.dx, twin.mat.rho,
+    # Stability: full-tier surface/body forces on coarse grids can drive Ma≫1.
+    u_cap = float(getattr(twin, "u_mach_limit_lu", 0.08))
+    F_cap = float(getattr(twin, "force_limit_lu", 0.05))
+    if F_cap > 0.0:
+        kernels.clamp_body_force_magnitude(
+            g.Fx, g.Fy, g.Fz, g.flags, F_cap,
             g.FLAG_SOLID, g.FLAG_GAS,
         )
-        weld_forces.apply_recoil(twin, g, arc_i, arc_j, arc_k)
 
     if twin.use_material_tables and twin.use_variable_tau:
         lbm.collide_srt_variable_tau(
@@ -315,17 +383,22 @@ def coupled_step(
             g.nx, g.ny, g.nz,
         )
     else:
-        omega_s = twin.omega
         lbm.collide_mrt(
             g.f_src, g.f_dst,
             g.rho, g.ux, g.uy, g.uz,
             g.Fx, g.Fy, g.Fz,
             g.f_l, g.flags,
             g.ex, g.ey, g.ez, g.w, g.opp,
-            omega_s, omega_s,
+            twin.omega, twin.omega_bulk,
             twin.C_darcy,
             g.FLAG_SOLID, g.FLAG_GAS,
             g.nx, g.ny, g.nz,
+        )
+
+    if u_cap > 0.0:
+        kernels.clamp_velocity_mach(
+            g.ux, g.uy, g.uz, g.flags, u_cap,
+            g.FLAG_SOLID, g.FLAG_GAS,
         )
 
     lbm.stream(
@@ -351,20 +424,19 @@ def coupled_step(
     kernels.snapshot_forces(g.Fx, g.Fy, g.Fz, g.Fx_snap, g.Fy_snap, g.Fz_snap)
 
     if twin.enable_substrate_growth or twin.enable_bead_freeze:
-        if twin.enable_substrate_growth or twin.enable_bead_freeze:
-            if twin.use_material_tables:
-                free_surface.remelt_hot_solid(
-                    g.T, g.H, g.f_l, g.phi, g.flags, g.cp_rho_field,
-                    twin.mat.T_solidus, twin.mat.T_liquidus, twin.L_rho,
-                    g.FLAG_SOLID, g.FLAG_FLUID,
-                )
-            else:
-                free_surface.remelt_hot_solid_scalar(
-                    g.T, g.H, g.f_l, g.phi, g.flags,
-                    twin.cp_rho,
-                    twin.mat.T_solidus, twin.mat.T_liquidus, twin.L_rho,
-                    g.FLAG_SOLID, g.FLAG_FLUID,
-                )
+        if twin.use_material_tables:
+            free_surface.remelt_hot_solid(
+                g.T, g.H, g.f_l, g.phi, g.flags, g.cp_rho_field,
+                twin.mat.T_solidus, twin.mat.T_liquidus, twin.L_rho,
+                g.FLAG_SOLID, g.FLAG_FLUID,
+            )
+        else:
+            free_surface.remelt_hot_solid_scalar(
+                g.T, g.H, g.f_l, g.phi, g.flags,
+                twin.cp_rho,
+                twin.mat.T_solidus, twin.mat.T_liquidus, twin.L_rho,
+                g.FLAG_SOLID, g.FLAG_FLUID,
+            )
         if is_welding and twin.enable_bead_freeze:
             dir_x, dir_y, dir_z = getattr(twin, "_torch_dir_xyz", (1.0, 0.0, 0.0))
             lookback_cells = max(2.0, twin.trailing_solidify_lookback_mm / (g.dx * 1000.0))

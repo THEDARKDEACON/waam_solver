@@ -100,7 +100,9 @@ class TorchPathDriver:
     def segment_index_at_distance(self, dist_m: float) -> int:
         if not self.segments:
             return 0
-        d = dist_m % max(self.total_length, 1e-9)
+        # Clamp (do not wrap): once the path is complete the torch parks at
+        # the end instead of teleporting back to the start.
+        d = min(dist_m, self.total_length)
         for idx, seg in enumerate(self.segments):
             if d <= seg.length_m:
                 return idx
@@ -116,7 +118,8 @@ class TorchPathDriver:
     def position_at_time(self, sim_time_s: float) -> tuple[float, float, float]:
         if not self.segments:
             return self._fallback
-        dist = (sim_time_s * self.speed) % max(self.total_length, 1e-9)
+        # Clamp to path end (no modulo wrap-around).
+        dist = min(sim_time_s * self.speed, self.total_length)
         for seg in self.segments:
             if dist <= seg.length_m:
                 t = dist / seg.length_m
@@ -128,6 +131,12 @@ class TorchPathDriver:
             dist -= seg.length_m
         last = self.segments[-1]
         return last.x1, last.y1, last.z1
+
+    def is_complete(self, sim_time_s: float) -> bool:
+        """True once travel distance has reached the last waypoint."""
+        if not self.segments or self.total_length <= 0.0:
+            return False
+        return sim_time_s * self.speed >= self.total_length - 1e-12
 
     def positions_for_steps(
         self,

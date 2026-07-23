@@ -15,6 +15,7 @@ build/
 .ruff_cache/
 .coverage
 htmlcov/
+*.log
 
 # ── Simulation, VTK & viewer outputs (regenerated locally / by tools) ─────────
 *.vtk
@@ -23,6 +24,8 @@ htmlcov/
 *.vtp
 *.pvd
 *.png
+*.jpg
+*.jpeg
 viewer_output/
 cloud_runs/
 run_out/
@@ -37,23 +40,22 @@ sequence/
 sequence_*/
 bundle_step_*/
 
-# Regenerated validation baselines (keep committed baselines; ignore local runs)
-validation/baselines/matrix_latest.json
-validation/baselines/v2.0_matrix.json
-validation/baselines/calibration_fit_latest.json
-validation/baselines/performance_latest.json
-
 # ── User-local material overrides ─────────────────────────────────────────────
 materials/user/*
 !materials/user/.gitkeep
 
 # ── Planning / review / draft specs (local notes, not operational docs) ───────
-# These are useful for thesis or history, but they go stale and overlap with
-# README + validation tests. Stop tracking after: git rm --cached <path>
+# Tracked operational docs stay in git (PHYSICS_FORCE_*, PHYSICS CENTRE, MATERIALS,
+# VTK, LBM, HARDWARE, weld_pool_physics). These drafts go stale — untrack with:
+#   git rm --cached <path>
 docs/WAAM_TWIN_V2_EXECUTION_PLAN.md
 docs/FEM_LECTURE_SLIDES_ANALYSIS.md
 docs/BEAD_GEOMETRY_PHYSICS_SPEC.md
 docs/DIAGNOSTICS_AND_VTK_SPEC.md
+docs/WAAM_DIGITAL_TWIN_ARCHITECTURE*.md
+docs/WAAM_DT_OBJECTIVE_ARCHITECTURE.md
+docs/WAAM_PARALLEL_PREDICTIVE_ARCHITECTURE.md
+docs/WAAM_PREDICTOR_SOFTWARE_ARCHITECTURE.md
 docs/validation/VALIDATION_REPORT.md
 docs/validation/thermal_v1.md
 docs/validation/reference_case_ER70S6.md
@@ -62,9 +64,10 @@ docs/validation/reference_case_ER70S6.md
 docs/archive/
 docs/research-notes/
 
-# ── IDE / OS ─────────────────────────────────────────────────────────────────
+# ── IDE / OS / editor ─────────────────────────────────────────────────────────
 .idea/
 .vscode/
+.cursor/
 .ipynb_checkpoints/
 *.swp
 *~

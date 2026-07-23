@@ -1,0 +1,90 @@
+# =============================================================================
+# Bead calibration job — fixed domain for deposition + pool W/D tuning
+# =============================================================================
+# Tuned vs macrograph W≈7 mm, D≈3 mm (cool_shallow ≈6.8×3.2, err≈7%).
+# Power convention: Q_w = I·V (electrical); kernels apply η separately.
+#   python3 -m waam_twin.viewer --job jobs/examples/bead_calibrate.yaml
+# =============================================================================
+
+simulation:
+  preset: standard
+  backend: cuda
+  physics_tier: flow
+  domain_mm: [80, 40, 25]
+  dx_mm: 0.4
+  enable_vof: true
+  enable_csf_tension: true
+  enable_wetting: true
+  enable_hydrostatic_gravity: true
+  enable_bead_freeze: true
+  enable_droplet_impact_pressure: true
+  enable_recoil: false
+  use_recoil_clausius_clapeyron: false
+  enable_lorentz: false
+  enable_gas_shear: false
+  enable_enthalpy_cap: true
+  arc_surface_weighting: true
+
+plate:
+  thickness_mm: 8.0
+  size_mm: [50, 20]
+
+material: materials/validated/ER70S-6.v1.yaml
+calibration: null
+torch_path_csv: jobs/paths/bead_calibrate.csv
+
+heat_source: goldak
+goldak:
+  ff: 0.6
+  fr: 1.4
+  a_front_mm: 2.2
+  a_rear_mm: 4.2
+  b_mm: 3.0
+  c_mm: 1.5
+
+arc_physics:
+  sigma_mm: 2.0
+  penetration_mm: 2.1
+  T_vapor_cap_K: 3200.0
+  surface_weighting: true
+  pressure_model: constant
+  pressure_pa: 150.0
+
+process:
+  current_A: 100
+  voltage_V: 15
+  arc_efficiency: 0.72
+  travel_speed_mm_s: 6.5
+  wire_feed_m_min: 3.2
+  wire_diameter_mm: 1.2
+  droplet_length_mm: 3.0
+  T_ambient_K: 293
+  stickout_mm: 12.0
+  ctwd_mm: 15.0
+  transfer_mode: auto
+  droplet_size_jitter: 0.05
+  impact_lead_angle_deg: 5.0
+
+deposition:
+  superheat_K: 400.0
+  footprint_sigma_scale: 1.0
+  trailing_solidify_lookback_mm: 6.0
+  trailing_solidify_temp_margin_K: 10.0
+
+surface_wetting:
+  contact_angle_deg: 80.0
+
+heat_loss:
+  convection: true
+  radiation: true
+  h_conv: 35.0
+
+reference:
+  pool_width_mm: 7.0
+  pool_depth_mm: 3.0
+  source: macrograph_ER70S-6_bead_on_plate
+
+model_reference:
+  pool_width_mm: 6.8
+  pool_depth_mm: 3.2
+  n_steps: 8000

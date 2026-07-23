@@ -12,23 +12,26 @@ from waam_twin import WAAMTwin
 from waam_twin.benchmark import bead_error_pct, measure_bead_metrics
 from waam_twin.job import load_job_config
 from waam_twin.platform import init_taichi
-from waam_twin.validation.bead_helpers import run_bead_travel
+from waam_twin.validation.bead_helpers import plan_linear_bead_run, run_bead_travel
 
 
 def run(threshold_pct: float | None = None) -> float:
-    init_taichi(backend="cpu")
+    init_taichi(backend=os.environ.get("WAAM_BACKEND", "cuda"))
     if threshold_pct is None:
         threshold_pct = float(os.environ.get("WAAM_BEAD_TOLERANCE_PCT", "40"))
 
-    job = load_job_config("jobs/examples/bead_on_plate.yaml")
+    job = load_job_config("jobs/examples/bead_calibrate.yaml")
     ref = job.get("reference", {})
     W_ref = float(ref.get("pool_width_mm", 7.0))
-    D_ref = float(ref.get("pool_depth_mm", 2.8))
+    D_ref = float(ref.get("pool_depth_mm", 3.0))
 
-    twin = WAAMTwin.from_job("jobs/examples/bead_on_plate.yaml", preset_override="standard")
+    twin = WAAMTwin.from_job("jobs/examples/bead_calibrate.yaml", preset_override="standard")
     twin.reset()
-    n_steps = int(os.environ.get("WAAM_BEAD_STEPS", "3500"))
-    run_bead_travel(twin, n_steps)
+    n_steps_env = os.environ.get("WAAM_BEAD_STEPS")
+    n_steps, x_start, y_m, dir_x = plan_linear_bead_run(
+        twin, job, n_steps=int(n_steps_env) if n_steps_env else None
+    )
+    run_bead_travel(twin, n_steps, x_start_m=x_start, y_m=y_m, direction_x=dir_x)
 
     m = measure_bead_metrics(twin)
     err = bead_error_pct(m, W_ref, D_ref)

@@ -6,7 +6,14 @@ import numpy as np
 
 
 def measure_pool_mm(twin) -> tuple[float, float, int]:
-    """Return (width_mm, depth_mm, n_liquid_cells) from liquid fraction > 0.5."""
+    """Return (width_mm, depth_mm, n_liquid_cells) from liquid fraction > 0.5.
+
+    Width is the transverse (y) extent at the x-slice through the pool
+    centroid; depth is penetration below the substrate top surface. This is
+    the standard macrograph W/D definition and matches
+    ``WAAMTwin.get_telemetry`` (the previous x/z bounding box measured pool
+    LENGTH as width and included the bead crown in depth).
+    """
     g = twin.grid
     fl_np = g.f_l.to_numpy()
     liquid_mask = fl_np > 0.5
@@ -14,10 +21,16 @@ def measure_pool_mm(twin) -> tuple[float, float, int]:
     if not np.any(liquid_mask):
         return 0.0, 0.0, 0
 
-    x_idx = np.where(liquid_mask.any(axis=(1, 2)))[0]
-    z_idx = np.where(liquid_mask.any(axis=(0, 1)))[0]
-    W_mm = (x_idx[-1] - x_idx[0] + 1) * g.dx * 1000.0
-    D_mm = (z_idx[-1] - z_idx[0] + 1) * g.dx * 1000.0
+    xs = np.nonzero(liquid_mask)[0]
+    i_c = int(round(float(xs.mean())))
+    sect = liquid_mask[i_c]
+    if not sect.any():
+        return 0.0, 0.0, n_liq
+    y_idx = np.where(sect.any(axis=1))[0]
+    z_idx = np.where(sect.any(axis=0))[0]
+    W_mm = (y_idx[-1] - y_idx[0] + 1) * g.dx * 1000.0
+    nz_solid = int(getattr(twin, "nz_solid", 0))
+    D_mm = max(0, nz_solid - z_idx[0]) * g.dx * 1000.0
     return float(W_mm), float(D_mm), n_liq
 
 

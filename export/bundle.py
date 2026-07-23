@@ -86,10 +86,17 @@ def export_research_bundle(
     return paths
 
 
-def write_pvd(collection_path: str | pathlib.Path, vti_paths: list[str]) -> None:
+def write_pvd(
+    collection_path: str | pathlib.Path,
+    vti_paths: list[str],
+    times_s: list[float] | None = None,
+) -> None:
     """Write a ParaView PVD file referencing time-series VTI snapshots.
 
     Paths in the PVD are relative to the PVD file's directory (VTK convention).
+    ``times_s`` gives the physical simulation time [s] of each snapshot; if
+    omitted the frame index is used (ParaView's time axis then shows frame
+    count, not seconds).
     """
     collection_path = pathlib.Path(collection_path).resolve()
     pvd_dir = collection_path.parent
@@ -104,7 +111,8 @@ def write_pvd(collection_path: str | pathlib.Path, vti_paths: list[str]) -> None
             rel = vti_p.relative_to(pvd_dir)
         except ValueError:
             rel = pathlib.Path(vti_p.name)
-        lines.append(f'    <DataSet timestep="{i}" file="{rel.as_posix()}"/>')
+        t = times_s[i] if times_s is not None and i < len(times_s) else float(i)
+        lines.append(f'    <DataSet timestep="{t:.9g}" file="{rel.as_posix()}"/>')
     lines.extend(["  </Collection>", "</VTKFile>"])
     collection_path.write_text("\n".join(lines))
     print(f"[export] PVD collection → {collection_path}")
@@ -131,6 +139,7 @@ def export_research_sequence(
         torch_y_m = (g.ny // 2) * g.dx
 
     vti_paths: list[str] = []
+    frame_times_s: list[float] = []
     frame = 0
     for step_i in range(n_steps):
         twin.step(torch_x_m, torch_y_m, is_welding=is_welding)
@@ -153,8 +162,9 @@ def export_research_sequence(
             after_frame(frame, sub, paths)
         if "volume" in paths:
             vti_paths.append(paths["volume"])
+            frame_times_s.append(twin._step_n * g.dt)
         frame += 1
 
     if vti_paths:
-        write_pvd(out_dir / "sequence.pvd", vti_paths)
+        write_pvd(out_dir / "sequence.pvd", vti_paths, times_s=frame_times_s)
     return vti_paths

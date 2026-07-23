@@ -34,26 +34,26 @@ import taichi as ti
 MAX_KNOTS = 8
 
 # ──────────────────────────────────────────────────────────────────────────────
-#  D3Q19 velocity-set constants (module-level ti.field refs set by grid.py)
+#  D3Q19 velocity-set constants
 # ──────────────────────────────────────────────────────────────────────────────
-# These are set by WAAMGrid after field allocation so that kernels share the
-# same constant arrays without copying.  They are module-level so any kernel
-# can reference them without closures.
+# Compile-time Python tuples: indexed inside ti.static loops these fold to
+# immediates in the generated PTX (no global-memory reads per direction).
 
-EX  = None  # ti.field(int,  shape=(19,))
-EY  = None
-EZ  = None
-W   = None  # ti.field(f32, shape=(19,))
-OPP = None  # ti.field(int,  shape=(19,))
+EX = ( 0, 1,-1, 0, 0, 0, 0, 1,-1, 1,-1, 1,-1, 1,-1, 0, 0, 0, 0)
+EY = ( 0, 0, 0, 1,-1, 0, 0, 1,-1,-1, 1, 0, 0, 0, 0, 1,-1, 1,-1)
+EZ = ( 0, 0, 0, 0, 0, 1,-1, 0, 0, 0, 0, 1,-1,-1, 1, 1,-1,-1, 1)
+W = (
+    1.0/3.0,
+    1.0/18.0, 1.0/18.0, 1.0/18.0, 1.0/18.0, 1.0/18.0, 1.0/18.0,
+    1.0/36.0, 1.0/36.0, 1.0/36.0, 1.0/36.0, 1.0/36.0, 1.0/36.0,
+    1.0/36.0, 1.0/36.0, 1.0/36.0, 1.0/36.0, 1.0/36.0, 1.0/36.0,
+)
+OPP = (0, 2,1, 4,3, 6,5, 8,7, 10,9, 12,11, 14,13, 16,15, 18,17)
+
 
 def bind_velocity_set(grid):
-    """Bind module-level velocity set fields from the allocated grid."""
-    global EX, EY, EZ, W, OPP
-    EX  = grid.ex
-    EY  = grid.ey
-    EZ  = grid.ez
-    W   = grid.w
-    OPP = grid.opp
+    """Kept for API compatibility — velocity set is now compile-time constant."""
+    return None
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -75,18 +75,24 @@ def init_grid(
     rho0:      ti.f32,
     cp_rho:    ti.f32,      # rho * cp  [J/(m³·K)]
     nz_solid:  ti.i32,      # Number of z-layers that are solid substrate
+    plate_i0:  ti.i32,      # Plate footprint [i0,i1) × [j0,j1)
+    plate_i1:  ti.i32,
+    plate_j0:  ti.i32,
+    plate_j1:  ti.i32,
     FLAG_FLUID: ti.i32,
     FLAG_SOLID: ti.i32,
     FLAG_GAS:   ti.i32,
 ):
     """
-    Fill the entire grid with a quiescent, ambient-temperature initial state.
-    Bottom `nz_solid` layers are set as solid substrate.
-    Top layers above the liquid are gas cells.
+    Quiescent ambient initial state.
+
+    Substrate occupies k < nz_solid only inside [plate_i0, plate_i1) ×
+    [plate_j0, plate_j1). Outside that XY footprint those layers are gas
+    so coupon side faces can convect/radiate. nz_solid < 0 → all-fluid test.
     """
-    for q, i, j, k in f:
-        w_q = W[q]
-        f[q, i, j, k] = w_q * rho0   # Equilibrium at rest → f_eq = w * rho
+    for i, j, k in rho:
+        for q in ti.static(range(19)):
+            f[q, i, j, k] = W[q] * rho0   # Equilibrium at rest → f_eq = w * rho
 
     for i, j, k in rho:
         rho[i, j, k] = rho0
@@ -102,10 +108,15 @@ def init_grid(
             phi[i, j, k] = 1.0
             f_l[i, j, k] = 1.0
         else:
-            phi[i, j, k] = 1.0 if k < nz_solid else 0.0
-            if k < nz_solid:
+            in_plate = (
+                i >= plate_i0 and i < plate_i1
+                and j >= plate_j0 and j < plate_j1
+            )
+            if in_plate and k < nz_solid:
+                phi[i, j, k] = 1.0
                 flags[i, j, k] = FLAG_SOLID
             else:
+                phi[i, j, k] = 0.0
                 flags[i, j, k] = FLAG_GAS
 
 
@@ -192,6 +203,10 @@ def feed_wire(
     Deposit one wire droplet: convert gas cells to liquid until ``target_vol``
     is reached (ṁ / f_drop / ρ). Search uses the nominal sphere plus a taller
     column above the pool when the pool intersects the drop volume.
+
+    Volume budget uses reserve-then-commit atomics: a thread first reserves
+    cell_vol on the accumulator and only converts the cell if the reservation
+    fit inside target_vol, so concurrent threads cannot overshoot the budget.
     """
     search_r = ti.max(droplet_radius * 2.5, droplet_radius + 2.0)
     i_min = ti.max(0, ti.cast(arc_i - search_r, ti.i32))
@@ -213,15 +228,18 @@ def feed_wire(
         in_sphere = r2 <= droplet_radius * droplet_radius
         in_column = r_ij2 <= search_r * search_r and ti.f32(k) >= arc_k + 1.0
         if (in_sphere or in_column) and flags[i, j, k] == FLAG_GAS:
-            flags[i, j, k] = FLAG_FLUID
-            f_l[i, j, k] = 1.0
-            phi[i, j, k] = 1.0
-            T[i, j, k] = T_drop
-            H[i, j, k] = cp_rho * T_drop + L_rho
-            rho[i, j, k] = rho0
-            ti.atomic_add(vol_acc[None], cell_vol)
-            for q in ti.static(range(19)):
-                f_src[q, i, j, k] = W[q] * rho0
+            reserved = ti.atomic_add(vol_acc[None], cell_vol)
+            if reserved >= target_vol:
+                ti.atomic_sub(vol_acc[None], cell_vol)
+            else:
+                flags[i, j, k] = FLAG_FLUID
+                f_l[i, j, k] = 1.0
+                phi[i, j, k] = 1.0
+                T[i, j, k] = T_drop
+                H[i, j, k] = cp_rho * T_drop + L_rho
+                rho[i, j, k] = rho0
+                for q in ti.static(range(19)):
+                    f_src[q, i, j, k] = W[q] * rho0
 
 
 @ti.func
@@ -277,6 +295,7 @@ def feed_wire_surface(
     L_rho: ti.f32,
     rho0: ti.f32,
     vol_acc: ti.template(),
+    real_acc: ti.template(),
     cell_vol: ti.f32,
     FLAG_GAS: ti.i32,
     FLAG_FLUID: ti.i32,
@@ -290,14 +309,19 @@ def feed_wire_surface(
 
     Gas cells must be 6-connected to existing metal and lie within a horizontal
     footprint around the arc; vertical extent is limited to ~footprint above arc_k.
+
+    ``vol_acc`` is the shared reserve-then-commit budget (bounds total work);
+    ``real_acc`` counts only genuinely converted gas→fluid volume, so the pass-3
+    thermal top-up on already-liquid cells is NOT booked as deposited mass.
     """
     search_r = ti.max(footprint_r, droplet_radius)
     i_min = ti.max(0, ti.cast(arc_i - search_r, ti.i32))
     i_max = ti.min(nx, ti.cast(arc_i + search_r, ti.i32) + 1)
     j_min = ti.max(0, ti.cast(arc_j - search_r, ti.i32))
     j_max = ti.min(ny, ti.cast(arc_j + search_r, ti.i32) + 1)
-    k_lo = ti.max(0, ti.cast(arc_k, ti.i32))
-    k_hi = ti.min(nz, ti.cast(arc_k + droplet_radius + 2.0, ti.i32) + 1)
+    k_lo = ti.max(0, ti.cast(arc_k - 1.0, ti.i32))
+    k_span = ti.max(droplet_radius + 3.0, 4.0)
+    k_hi = ti.min(nz, ti.cast(arc_k + k_span, ti.i32) + 1)
     drop_cz = arc_k + droplet_radius + 0.5
     r_drop2 = droplet_radius * droplet_radius
     foot2 = search_r * search_r
@@ -317,15 +341,19 @@ def feed_wire_surface(
         r_ij2 = di * di + dj * dj
         if r_ij2 > foot2 and r2 > r_drop2:
             continue
-        flags[i, j, k] = FLAG_FLUID
-        f_l[i, j, k] = 1.0
-        phi[i, j, k] = 1.0
-        T[i, j, k] = T_drop
-        H[i, j, k] = cp_rho * T_drop + L_rho
-        rho[i, j, k] = rho0
-        ti.atomic_add(vol_acc[None], cell_vol)
-        for q in ti.static(range(19)):
-            f_src[q, i, j, k] = W[q] * rho0
+        reserved = ti.atomic_add(vol_acc[None], cell_vol)
+        if reserved >= target_vol:
+            ti.atomic_sub(vol_acc[None], cell_vol)
+        else:
+            flags[i, j, k] = FLAG_FLUID
+            f_l[i, j, k] = 1.0
+            phi[i, j, k] = 1.0
+            T[i, j, k] = T_drop
+            H[i, j, k] = cp_rho * T_drop + L_rho
+            rho[i, j, k] = rho0
+            ti.atomic_add(real_acc[None], cell_vol)
+            for q in ti.static(range(19)):
+                f_src[q, i, j, k] = W[q] * rho0
 
     # Pass 2: widen footprint if volume short (still no vertical column)
     for i, j, k in ti.ndrange((i_min, i_max), (j_min, j_max), (k_lo, k_hi)):
@@ -340,20 +368,24 @@ def feed_wire_surface(
         r_ij2 = di * di + dj * dj
         if r_ij2 > foot2 * 1.44:
             continue
-        flags[i, j, k] = FLAG_FLUID
-        f_l[i, j, k] = 1.0
-        phi[i, j, k] = 1.0
-        T[i, j, k] = T_drop
-        H[i, j, k] = cp_rho * T_drop + L_rho
-        rho[i, j, k] = rho0
-        ti.atomic_add(vol_acc[None], cell_vol)
-        for q in ti.static(range(19)):
-            f_src[q, i, j, k] = W[q] * rho0
+        reserved = ti.atomic_add(vol_acc[None], cell_vol)
+        if reserved >= target_vol:
+            ti.atomic_sub(vol_acc[None], cell_vol)
+        else:
+            flags[i, j, k] = FLAG_FLUID
+            f_l[i, j, k] = 1.0
+            phi[i, j, k] = 1.0
+            T[i, j, k] = T_drop
+            H[i, j, k] = cp_rho * T_drop + L_rho
+            rho[i, j, k] = rho0
+            ti.atomic_add(real_acc[None], cell_vol)
+            for q in ti.static(range(19)):
+                f_src[q, i, j, k] = W[q] * rho0
 
-    # Pass 3: top-up molten pool cells when the footprint is already liquid
+    # Pass 3: thermal top-up of already-liquid footprint cells. Does NOT consume
+    # the deposit budget — previously it filled vol_acc and starved gas→fluid
+    # conversion / outer radius retries, driving mass_balance ≪ 1.
     for i, j, k in ti.ndrange((i_min, i_max), (j_min, j_max), (k_lo, k_hi)):
-        if vol_acc[None] >= target_vol:
-            continue
         if flags[i, j, k] != FLAG_FLUID or f_l[i, j, k] < 0.45:
             continue
         di = ti.f32(i) - arc_i
@@ -364,7 +396,6 @@ def feed_wire_surface(
         T[i, j, k] = T_drop
         H[i, j, k] = cp_rho * T_drop + L_rho
         rho[i, j, k] = rho0
-        ti.atomic_add(vol_acc[None], cell_vol)
         for q in ti.static(range(19)):
             f_src[q, i, j, k] = W[q] * rho0
 
@@ -415,6 +446,7 @@ def inject_arc_heat(
     flags: ti.template(),
     phi:   ti.template(),
     f_l:   ti.template(),
+    norm_buf: ti.template(),  # 0-d scratch: Σ of Gaussian weights over heated cells
     # Arc parameters (all in lattice units)
     arc_i: ti.f32,   # torch x-position [cells]
     arc_j: ti.f32,   # torch y-position [cells]
@@ -430,16 +462,16 @@ def inject_arc_heat(
     FLAG_GAS:   ti.i32,
 ):
     """
-    Distribute arc heat via a 2D Gaussian flux profile on the free surface.
+    Distribute arc heat via a Gaussian weight profile, energy-normalized.
 
-    Energy is injected into the enthalpy field H (not T directly), ensuring
-    that phase-change latent heat is correctly absorbed before T rises.
-
-    Gaussian: q(r) = Q·η / (2π·σ²) · exp(-r² / (2σ²))
-    Total energy added per timestep to a cell: ΔH = q(r) · dt / dx³
+    Pass 1 accumulates the total Gaussian×deposition weight over all heated
+    cells; pass 2 injects ΔH = η·Q·dt · w_cell / (Σw · dx³). This guarantees
+    exactly η·Q·dt joules enter the domain per step regardless of how much of
+    the analytic profile is intercepted by metal (the old closed-form 2D
+    surface normalization over-injected when the weight extended into depth).
     """
     inv2s2 = 1.0 / (2.0 * sigma * sigma)
-    norm   = Q_w * eta / (2.0 * ti.math.pi * sigma * sigma)
+    norm_buf[None] = 0.0
 
     for i, j, k in H:
         if flags[i, j, k] == FLAG_GAS:
@@ -454,8 +486,63 @@ def inject_arc_heat(
         dj = ti.f32(j) - arc_j
         dk = ti.f32(k) - arc_k
         r2 = di * di + dj * dj + dk * dk * 0.25
-        flux = norm * ti.math.exp(-r2 * inv2s2) * w_dep
-        H[i, j, k] += flux * dt / dx3
+        ti.atomic_add(norm_buf[None], ti.math.exp(-r2 * inv2s2) * w_dep)
+
+    # Struct-fors must sit at the kernel's outermost scope (Taichi offload
+    # restriction) — guard w_total inside the loop instead of around it.
+    w_total = norm_buf[None]
+    energy_per_weight = 0.0
+    if w_total > 1e-9:
+        energy_per_weight = Q_w * eta * dt / (w_total * dx3)
+    for i, j, k in H:
+        if energy_per_weight <= 0.0 or flags[i, j, k] == FLAG_GAS:
+            continue
+        w_dep = arc_deposition_weight(
+            i, j, k, arc_i, arc_j, arc_k,
+            f_l[i, j, k], penetration_cells, enable_surface_weight,
+        )
+        if w_dep < 1e-6:
+            continue
+        di = ti.f32(i) - arc_i
+        dj = ti.f32(j) - arc_j
+        dk = ti.f32(k) - arc_k
+        r2 = di * di + dj * dj + dk * dk * 0.25
+        H[i, j, k] += energy_per_weight * ti.math.exp(-r2 * inv2s2) * w_dep
+
+
+@ti.func
+def _goldak_pdf_weight(
+    di: ti.f32,
+    dj: ti.f32,
+    dk: ti.f32,
+    travel_sign: ti.f32,
+    ff: ti.f32,
+    fr: ti.f32,
+    a_front: ti.f32,
+    a_rear: ti.f32,
+    b_axis: ti.f32,
+    c_axis: ti.f32,
+) -> ti.f32:
+    """
+    Goldak (1984) spatial factor (relative):
+
+        f_{f,r} exp(-3 x²/a_{f,r}² - 3 y²/b² - 3 z²/c²)
+
+    Absolute 6√3/(π√π a b c) amplitude is absorbed by energy renormalization.
+    x is along travel (travel_sign·di ≥ 0 ⇒ front).
+    """
+    eps = 1e-6
+    x_travel = di * travel_sign
+    is_front = x_travel >= 0.0
+    a_axis = ti.select(is_front, a_front, a_rear)
+    frac = ti.select(is_front, ff, fr)
+    return frac * ti.math.exp(
+        -3.0 * (
+            (x_travel * x_travel) / (a_axis * a_axis + eps)
+            + (dj * dj) / (b_axis * b_axis + eps)
+            + (dk * dk) / (c_axis * c_axis + eps)
+        )
+    )
 
 
 @ti.kernel
@@ -464,32 +551,35 @@ def inject_goldak_heat(
     flags: ti.template(),
     phi: ti.template(),
     f_l: ti.template(),
+    norm_buf: ti.template(),
     arc_i: ti.f32,
     arc_j: ti.f32,
     arc_k: ti.f32,
     Q_w: ti.f32,
-    sigma: ti.f32,
     dt: ti.f32,
     dx3: ti.f32,
     eta: ti.f32,
     travel_sign: ti.f32,
     ff: ti.f32,
     fr: ti.f32,
-    depth_front: ti.f32,
-    depth_rear: ti.f32,
+    a_front: ti.f32,
+    a_rear: ti.f32,
+    b_axis: ti.f32,
+    c_axis: ti.f32,
     penetration_cells: ti.f32,
     enable_surface_weight: ti.i32,
     FLAG_SOLID: ti.i32,
     FLAG_GAS: ti.i32,
 ):
     """
-    Goldak double-ellipsoid heat source (simplified 3D).
+    Goldak (1984) double-ellipsoid heat source, energy-normalized.
 
-    Leading (front) and trailing (rear) ellipsoids share transverse semi-axes
-    σ but differ in depth.  travel_sign = +1 when torch moves +x.
+    Semi-axes a_front / a_rear (travel), b (transverse), c (depth) in cells.
+    Requires f_f + f_r = 2 in the loader (relative split still works under
+    renormalization). Pass 1 sums weights on metal; pass 2 deposits exactly
+    η·Q·dt joules.
     """
-    eps = 1e-6
-    inv2s2 = 1.0 / (2.0 * sigma * sigma + eps)
+    norm_buf[None] = 0.0
 
     for i, j, k in H:
         if flags[i, j, k] == FLAG_GAS:
@@ -503,17 +593,33 @@ def inject_goldak_heat(
         di = ti.f32(i) - arc_i
         dj = ti.f32(j) - arc_j
         dk = ti.f32(k) - arc_k
-        r2_xy = di * di + dj * dj
+        w = _goldak_pdf_weight(
+            di, dj, dk, travel_sign, ff, fr,
+            a_front, a_rear, b_axis, c_axis,
+        )
+        ti.atomic_add(norm_buf[None], w * w_dep)
 
-        is_front = (di * travel_sign) >= 0.0
-        depth = ti.select(is_front, depth_front, depth_rear)
-        frac = ti.select(is_front, ff, fr)
-        dk_eff = dk / (depth + eps)
-        r2 = r2_xy + dk_eff * dk_eff * 4.0
-
-        norm = Q_w * eta * frac / (2.0 * ti.math.pi * sigma * sigma + eps)
-        flux = norm * ti.math.exp(-r2 * inv2s2) * w_dep
-        H[i, j, k] += flux * dt / dx3
+    w_total = norm_buf[None]
+    energy_per_weight = 0.0
+    if w_total > 1e-9:
+        energy_per_weight = Q_w * eta * dt / (w_total * dx3)
+    for i, j, k in H:
+        if energy_per_weight <= 0.0 or flags[i, j, k] == FLAG_GAS:
+            continue
+        w_dep = arc_deposition_weight(
+            i, j, k, arc_i, arc_j, arc_k,
+            f_l[i, j, k], penetration_cells, enable_surface_weight,
+        )
+        if w_dep < 1e-6:
+            continue
+        di = ti.f32(i) - arc_i
+        dj = ti.f32(j) - arc_j
+        dk = ti.f32(k) - arc_k
+        w = _goldak_pdf_weight(
+            di, dj, dk, travel_sign, ff, fr,
+            a_front, a_rear, b_axis, c_axis,
+        )
+        H[i, j, k] += energy_per_weight * w * w_dep
 
 
 @ti.kernel
@@ -631,6 +737,10 @@ def _correct_normal_contact_angle(
     ty = ny_n - dot * wy
     tz = nz_n - dot * wz
     tmag = ti.sqrt(tx * tx + ty * ty + tz * tz)
+    # Taichi requires names defined on all branches before use.
+    nx_c = 0.0
+    ny_c = 0.0
+    nz_c = 0.0
     if tmag > 1e-8:
         nx_c = cos_t * wx + sin_t * tx / tmag
         ny_c = cos_t * wy + sin_t * ty / tmag
@@ -656,6 +766,95 @@ def _correct_normal_contact_angle(
     return nx_c, ny_c, nz_c
 
 
+@ti.func
+def _phi_unit_normal_at(
+    phi: ti.template(),
+    i: ti.i32,
+    j: ti.i32,
+    k: ti.i32,
+    nx: ti.i32,
+    ny: ti.i32,
+    nz: ti.i32,
+    eps: ti.f32,
+):
+    """
+    Unit interface normal n̂ = ∇φ / |∇φ| and |∇φ| (lattice units).
+
+    Returns (nx, ny, nz, gmag). gmag < eps ⇒ normal is undefined (zeros).
+    """
+    dpx = 0.5 * (phi[ti.min(i + 1, nx - 1), j, k] - phi[ti.max(i - 1, 0), j, k])
+    dpy = 0.5 * (phi[i, ti.min(j + 1, ny - 1), k] - phi[i, ti.max(j - 1, 0), k])
+    dpz = 0.5 * (phi[i, j, ti.min(k + 1, nz - 1)] - phi[i, j, ti.max(k - 1, 0)])
+    gmag = ti.sqrt(dpx * dpx + dpy * dpy + dpz * dpz)
+    nx_n = 0.0
+    ny_n = 0.0
+    nz_n = 0.0
+    if gmag >= eps:
+        nx_n = dpx / gmag
+        ny_n = dpy / gmag
+        nz_n = dpz / gmag
+    return nx_n, ny_n, nz_n, gmag
+
+
+@ti.func
+def _brackbill_curvature_at(
+    phi: ti.template(),
+    i: ti.i32,
+    j: ti.i32,
+    k: ti.i32,
+    nx: ti.i32,
+    ny: ti.i32,
+    nz: ti.i32,
+    eps: ti.f32,
+):
+    """
+    Brackbill CSF curvature κ = -∇·n̂ in lattice units (per cell).
+
+    n̂ is evaluated at neighbour cells so the divergence is of the unit normal,
+    not a second difference of φ.
+    """
+    nx0, ny0, nz0, g0 = _phi_unit_normal_at(phi, i, j, k, nx, ny, nz, eps)
+    kappa = 0.0
+    # Taichi: no early return inside dynamic if — compute only when |∇φ| is usable.
+    if g0 >= eps:
+        nxp, _, _, gp = _phi_unit_normal_at(
+            phi, ti.min(i + 1, nx - 1), j, k, nx, ny, nz, eps,
+        )
+        nxm, _, _, gm = _phi_unit_normal_at(
+            phi, ti.max(i - 1, 0), j, k, nx, ny, nz, eps,
+        )
+        _, nyp, _, gp2 = _phi_unit_normal_at(
+            phi, i, ti.min(j + 1, ny - 1), k, nx, ny, nz, eps,
+        )
+        _, nym, _, gm2 = _phi_unit_normal_at(
+            phi, i, ti.max(j - 1, 0), k, nx, ny, nz, eps,
+        )
+        _, _, nzp, gp3 = _phi_unit_normal_at(
+            phi, i, j, ti.min(k + 1, nz - 1), nx, ny, nz, eps,
+        )
+        _, _, nzm, gm3 = _phi_unit_normal_at(
+            phi, i, j, ti.max(k - 1, 0), nx, ny, nz, eps,
+        )
+
+        # Fall back to centre normal where the neighbour has no interface gradient.
+        if gp < eps:
+            nxp = nx0
+        if gm < eps:
+            nxm = nx0
+        if gp2 < eps:
+            nyp = ny0
+        if gm2 < eps:
+            nym = ny0
+        if gp3 < eps:
+            nzp = nz0
+        if gm3 < eps:
+            nzm = nz0
+
+        div_n = 0.5 * (nxp - nxm) + 0.5 * (nyp - nym) + 0.5 * (nzp - nzm)
+        kappa = -div_n
+    return kappa, g0
+
+
 @ti.kernel
 def compute_csf_tension(
     phi: ti.template(),
@@ -673,78 +872,58 @@ def compute_csf_tension(
     theta_rad: ti.f32,
 ):
     """
-    Balanced-force CSF surface tension: F = γ κ ∇φ with κ = -∇·n̂.
+    Brackbill CSF surface tension (additive):
 
-    When enable_wetting=1, wall-adjacent cells use contact-angle curvature
-    κ_wall = 2 cos(θ) (dx_cell = 1 lattice unit) plus lateral triple-line drive
-    on horizontal substrates (∝ sin θ).
+        n̂ = ∇φ / |∇φ|,   κ = -∇·n̂,   F = γ κ ∇φ
+
+    Wetting: when enable_wetting and a solid neighbour exists, replace n̂ with
+    the contact-angle-corrected normal (Young / Brackbill wall BC) for the
+    force direction. Curvature still uses the φ field (ghost-φ BC should be
+    applied before this kernel). No empirical sinθ lateral drive.
     """
     eps = 1e-6
     for i, j, k in Fx:
         if flags[i, j, k] == FLAG_SOLID or flags[i, j, k] == FLAG_GAS:
             continue
 
-        dpx = 0.5 * (phi[ti.min(i + 1, nx - 1), j, k] - phi[ti.max(i - 1, 0), j, k])
-        dpy = 0.5 * (phi[i, ti.min(j + 1, ny - 1), k] - phi[i, ti.max(j - 1, 0), k])
-        dpz = 0.5 * (phi[i, j, ti.min(k + 1, nz - 1)] - phi[i, j, ti.max(k - 1, 0)])
-        gmag = ti.sqrt(dpx * dpx + dpy * dpy + dpz * dpz)
-
-        wx, wy, wz, has_wall = _solid_wall_normal(
-            flags, i, j, k, FLAG_SOLID, nx, ny, nz,
-        )
-
-        if enable_wetting != 0 and has_wall != 0 and phi[i, j, k] > 0.05:
-            cos_t = ti.cos(theta_rad)
-            sin_t = ti.sin(theta_rad)
-            if gmag < eps:
-                dpx = wx * 0.35
-                dpy = wy * 0.35
-                dpz = wz * 0.35
-                gmag = 0.35
-            kappa = 2.0 * cos_t
-            scale = gamma_lu * kappa * gmag
-            Fx[i, j, k] += scale * dpx
-            Fy[i, j, k] += scale * dpy
-            Fz[i, j, k] += scale * dpz
-            # Lateral triple-line drive on horizontal substrate (spread ∝ sin θ)
-            if wz > 0.7:
-                lat = gamma_lu * sin_t * ti.max(gmag, 0.12)
-                if i > 0 and phi[i - 1, j, k] < phi[i, j, k] - 0.05:
-                    Fx[i, j, k] -= lat
-                if i < nx - 1 and phi[i + 1, j, k] < phi[i, j, k] - 0.05:
-                    Fx[i, j, k] += lat
-                if j > 0 and phi[i, j - 1, k] < phi[i, j, k] - 0.05:
-                    Fy[i, j, k] -= lat
-                if j < ny - 1 and phi[i, j + 1, k] < phi[i, j, k] - 0.05:
-                    Fy[i, j, k] += lat
+        # Full ±1 stencil for neighbour normals; skip domain rim.
+        if (
+            i < 1 or j < 1 or k < 1
+            or i > nx - 2 or j > ny - 2 or k > nz - 2
+        ):
             continue
 
+        kappa, gmag = _brackbill_curvature_at(phi, i, j, k, nx, ny, nz, eps)
         if gmag < eps:
             continue
 
-        nx_n = dpx / gmag
-        ny_n = dpy / gmag
-        nz_n = dpz / gmag
+        dpx = 0.5 * (phi[ti.min(i + 1, nx - 1), j, k] - phi[ti.max(i - 1, 0), j, k])
+        dpy = 0.5 * (phi[i, ti.min(j + 1, ny - 1), k] - phi[i, ti.max(j - 1, 0), k])
+        dpz = 0.5 * (phi[i, j, ti.min(k + 1, nz - 1)] - phi[i, j, ti.max(k - 1, 0)])
 
-        div_n = (
-            0.5 * (
-                (phi[ti.min(i + 1, nx - 1), j, k] - phi[ti.max(i - 1, 0), j, k])
-                - (phi[ti.max(i - 1, 0), j, k] - phi[ti.max(i - 2, 0), j, k])
+        fx = gamma_lu * kappa * dpx
+        fy = gamma_lu * kappa * dpy
+        fz = gamma_lu * kappa * dpz
+
+        if enable_wetting != 0:
+            wx, wy, wz, has_wall = _solid_wall_normal(
+                flags, i, j, k, FLAG_SOLID, nx, ny, nz,
             )
-            + 0.5 * (
-                (phi[i, ti.min(j + 1, ny - 1), k] - phi[i, ti.max(j - 1, 0), k])
-                - (phi[i, ti.max(j - 1, 0), k] - phi[i, ti.max(j - 2, 0), k])
-            )
-            + 0.5 * (
-                (phi[i, j, ti.min(k + 1, nz - 1)] - phi[i, j, ti.max(k - 1, 0)])
-                - (phi[i, j, ti.max(k - 1, 0)] - phi[i, j, ti.max(k - 2, 0)])
-            )
-        )
-        kappa = -div_n / (gmag + eps)
-        scale = gamma_lu * kappa * gmag
-        Fx[i, j, k] += scale * dpx
-        Fy[i, j, k] += scale * dpy
-        Fz[i, j, k] += scale * dpz
+            if has_wall != 0:
+                nx_n = dpx / gmag
+                ny_n = dpy / gmag
+                nz_n = dpz / gmag
+                nx_c, ny_c, nz_c = _correct_normal_contact_angle(
+                    nx_n, ny_n, nz_n, wx, wy, wz, theta_rad,
+                )
+                # F = γ κ n̂_corr |∇φ|  (same magnitude, Young-consistent direction)
+                fx = gamma_lu * kappa * nx_c * gmag
+                fy = gamma_lu * kappa * ny_c * gmag
+                fz = gamma_lu * kappa * nz_c * gmag
+
+        Fx[i, j, k] += fx
+        Fy[i, j, k] += fy
+        Fz[i, j, k] += fz
 
 
 # Alias for BEAD_GEOMETRY_PHYSICS_SPEC (wall CSF is integrated in compute_csf_tension).
@@ -878,12 +1057,18 @@ def apply_vapor_recoil_clausius_clapeyron(
     T_boil_K: ti.f32,
     L_vapor_J_kg: ti.f32,
     R_spec_J_kgK: ti.f32,
+    C_acc: ti.f32,
     dt: ti.f32,
     dx: ti.f32,
     rho_ref: ti.f32,
     FLAG_SOLID: ti.i32,
     FLAG_GAS: ti.i32,
 ):
+    """
+    Vapor recoil via Clausius–Clapeyron: p = C_acc · P_sat(T).
+
+    C_acc ≈ 0.54 (Anisimov / Knight accommodation). Force is zero for T ≤ T_boil.
+    """
     eps = 1e-6
     inv2s2 = 1.0 / (2.0 * sigma * sigma + eps)
     for i, j, k in Fz:
@@ -897,7 +1082,7 @@ def apply_vapor_recoil_clausius_clapeyron(
             continue
         exponent = (L_vapor_J_kg / (R_spec_J_kgK + eps)) * (1.0 / (T_boil_K + eps) - 1.0 / (Tc + eps))
         exponent = ti.min(exponent, 12.0)
-        P_vap = P_ref_Pa * ti.math.exp(exponent)
+        P_vap = C_acc * P_ref_Pa * ti.math.exp(exponent)
         F_peak_lu = _wf_pressure_to_Fz_lu(P_vap, dt, dx, rho_ref)
         di = ti.f32(i) - arc_i
         dj = ti.f32(j) - arc_j
@@ -990,6 +1175,8 @@ def apply_droplet_impact_pressure(
 
 @ti.kernel
 def feed_wire_momentum_impact(
+    f_src: ti.template(),
+    rho: ti.template(),
     ux: ti.template(),
     uy: ti.template(),
     uz: ti.template(),
@@ -1007,6 +1194,12 @@ def feed_wire_momentum_impact(
     ny: ti.i32,
     nz: ti.i32,
 ):
+    """Impose droplet impact velocity on the LBM state itself.
+
+    Writing only ux/uy/uz would be overwritten by the next moment extraction;
+    the momentum must live in the distributions. Cells in the impact region
+    are reset to the equilibrium at (rho_local, v_drop).
+    """
     i_min = ti.max(0, ti.cast(arc_i - droplet_radius * 2.5, ti.i32))
     i_max = ti.min(nx, ti.cast(arc_i + droplet_radius * 2.5, ti.i32) + 1)
     j_min = ti.max(0, ti.cast(arc_j - droplet_radius * 2.5, ti.i32))
@@ -1014,6 +1207,7 @@ def feed_wire_momentum_impact(
     k_min = ti.max(0, ti.cast(arc_k, ti.i32))
     k_max = ti.min(nz, ti.cast(arc_k + droplet_radius * 3.0, ti.i32) + 1)
     drop_cz = arc_k + droplet_radius + 1.0
+    u2 = vx_lu * vx_lu + vy_lu * vy_lu + vz_lu * vz_lu
     for i, j, k in ti.ndrange((i_min, i_max), (j_min, j_max), (k_min, k_max)):
         if flags[i, j, k] == FLAG_GAS:
             continue
@@ -1028,9 +1222,15 @@ def feed_wire_momentum_impact(
             r_ij2 <= droplet_radius * droplet_radius and ti.f32(k) >= arc_k + 1.0
         )
         if in_drop:
+            r_loc = rho[i, j, k]
             ux[i, j, k] = vx_lu
             uy[i, j, k] = vy_lu
             uz[i, j, k] = vz_lu
+            for q in ti.static(range(19)):
+                eu = EX[q] * vx_lu + EY[q] * vy_lu + EZ[q] * vz_lu
+                f_src[q, i, j, k] = W[q] * r_loc * (
+                    1.0 + 3.0 * eu + 4.5 * eu * eu - 1.5 * u2
+                )
 
 
 @ti.kernel
@@ -1184,35 +1384,95 @@ def elec_compute_J(
 
 
 @ti.kernel
-def elec_compute_B_from_J(
+def elec_l1_diff(
+    a: ti.template(),
+    b: ti.template(),
+    diff_buf: ti.template(),
+    norm_buf: ti.template(),
+):
+    """L1 norm of (a - b) and of b — for Jacobi convergence monitoring."""
+    diff_buf[None] = 0.0
+    norm_buf[None] = 0.0
+    for I in ti.grouped(a):
+        ti.atomic_add(diff_buf[None], ti.abs(a[I] - b[I]))
+        ti.atomic_add(norm_buf[None], ti.abs(b[I]))
+
+
+@ti.kernel
+def elec_bin_axial_current(
+    Jz: ti.template(),
+    bins: ti.template(),   # ti.field shape (nz, n_bins)
+    arc_i: ti.f32,
+    arc_j: ti.f32,
+    dx: ti.f32,
+    bin_dr_cells: ti.f32,
+    n_bins: ti.i32,
+    nz: ti.i32,
+):
+    """Radial histogram of axial current Jz·dA per z-slab around the arc axis."""
+    for k, b in ti.ndrange(nz, n_bins):
+        bins[k, b] = 0.0
+    for i, j, k in Jz:
+        di = ti.f32(i) - arc_i
+        dj = ti.f32(j) - arc_j
+        r = ti.sqrt(di * di + dj * dj)
+        b = ti.min(ti.cast(r / bin_dr_cells, ti.i32), n_bins - 1)
+        ti.atomic_add(bins[k, b], Jz[i, j, k] * dx * dx)
+
+
+@ti.kernel
+def elec_prefix_bins(
+    bins: ti.template(),
+    n_bins: ti.i32,
+    nz: ti.i32,
+):
+    """In-place radial prefix sum: bins[k, b] ← I_enc(r ≤ (b+1)·Δr, k)."""
+    for k in range(nz):
+        acc = 0.0
+        for b in range(n_bins):
+            acc += bins[k, b]
+            bins[k, b] = acc
+
+
+@ti.kernel
+def elec_B_axisymmetric(
     Bx: ti.template(),
     By: ti.template(),
     Bz: ti.template(),
-    Jx: ti.template(),
-    Jy: ti.template(),
-    Jz: ti.template(),
+    bins: ti.template(),
+    arc_i: ti.f32,
+    arc_j: ti.f32,
     dx: ti.f32,
+    bin_dr_cells: ti.f32,
     mu0: ti.f32,
-    nx: ti.i32,
-    ny: ti.i32,
+    n_bins: ti.i32,
     nz: ti.i32,
 ):
+    """
+    Self-magnetic field of the welding current (axisymmetric Ampère law):
+
+        B_θ(r, z) = μ0 · I_enc(r, z) / (2π r)
+
+    with I_enc the axial current enclosed within radius r at height z.
+    This is the standard GTAW/GMAW electromagnetic pool model (Kou) and
+    replaces the previous local μ0·∇×J estimate, which is not a solution
+    of ∇×B = μ0·J and had the wrong magnitude and structure.
+    """
     for i, j, k in Bx:
-        im = ti.max(i - 1, 0)
-        ip = ti.min(i + 1, nx - 1)
-        jm = ti.max(j - 1, 0)
-        jp = ti.min(j + 1, ny - 1)
-        km = ti.max(k - 1, 0)
-        kp = ti.min(k + 1, nz - 1)
-        dJy_dz = (Jy[i, j, kp] - Jy[i, j, km]) / (2.0 * dx)
-        dJz_dy = (Jz[i, jp, k] - Jz[i, jm, k]) / (2.0 * dx)
-        dJz_dx = (Jz[ip, j, k] - Jz[im, j, k]) / (2.0 * dx)
-        dJx_dz = (Jx[i, j, kp] - Jx[i, j, km]) / (2.0 * dx)
-        dJx_dy = (Jx[i, jp, k] - Jx[i, jm, k]) / (2.0 * dx)
-        dJy_dx = (Jy[ip, j, k] - Jy[im, j, k]) / (2.0 * dx)
-        Bx[i, j, k] = mu0 * (dJy_dz - dJz_dy)
-        By[i, j, k] = mu0 * (dJz_dx - dJx_dz)
-        Bz[i, j, k] = mu0 * (dJx_dy - dJy_dx)
+        di = ti.f32(i) - arc_i
+        dj = ti.f32(j) - arc_j
+        r_cells = ti.sqrt(di * di + dj * dj)
+        Bx[i, j, k] = 0.0
+        By[i, j, k] = 0.0
+        Bz[i, j, k] = 0.0
+        if r_cells > 1e-3:
+            b = ti.min(ti.cast(r_cells / bin_dr_cells, ti.i32), n_bins - 1)
+            I_enc = bins[k, b]
+            r_m = r_cells * dx
+            B_theta = mu0 * I_enc / (2.0 * ti.math.pi * r_m)
+            # θ̂ = ẑ × r̂ = (−dj, di, 0)/r
+            Bx[i, j, k] = -B_theta * dj / r_cells
+            By[i, j, k] = B_theta * di / r_cells
 
 
 @ti.kernel
@@ -1297,8 +1557,57 @@ def update_phase(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-#  KERNEL 4 — Thermal Advection-Diffusion (Upwind Scheme)
+#  KERNEL 4 — Thermal Advection-Diffusion
+#  Enthalpy advection (latent heat is carried by the flow), central-difference
+#  diffusion, minmod-limited 2nd-order upwind, solid conduction, adiabatic
+#  gas faces (radiation/convection losses are handled separately).
 # ──────────────────────────────────────────────────────────────────────────────
+@ti.func
+def _minmod(a: ti.f32, b: ti.f32) -> ti.f32:
+    """minmod limiter: smaller-magnitude argument when signs agree, else 0."""
+    out = 0.0
+    if a * b > 0.0:
+        out = ti.select(ti.abs(a) < ti.abs(b), a, b)
+    return out
+
+
+@ti.func
+def _masked_at(
+    fld: ti.template(),
+    flags: ti.template(),
+    i: ti.i32, j: ti.i32, k: ti.i32,
+    fallback: ti.f32,
+    FLAG_GAS: ti.i32,
+    nx: ti.i32, ny: ti.i32, nz: ti.i32,
+) -> ti.f32:
+    """Field value at clamped (i,j,k); gas cells return `fallback` (adiabatic)."""
+    ii = ti.max(0, ti.min(i, nx - 1))
+    jj = ti.max(0, ti.min(j, ny - 1))
+    kk = ti.max(0, ti.min(k, nz - 1))
+    val = fld[ii, jj, kk]
+    if flags[ii, jj, kk] == FLAG_GAS:
+        val = fallback
+    return val
+
+
+@ti.func
+def _limited_upwind_grad(
+    u: ti.f32,
+    q_mm: ti.f32, q_m: ti.f32, q_c: ti.f32, q_p: ti.f32, q_pp: ti.f32,
+) -> ti.f32:
+    """Minmod-limited 2nd-order upwind derivative of q along one axis (Δ=1)."""
+    g = 0.0
+    if u > 0.0:
+        d1 = q_c - q_m
+        d2 = 0.5 * (3.0 * q_c - 4.0 * q_m + q_mm)
+        g = _minmod(d1, d2)
+    else:
+        d1 = q_p - q_c
+        d2 = 0.5 * (-3.0 * q_c + 4.0 * q_p - q_pp)
+        g = _minmod(d1, d2)
+    return g
+
+
 @ti.kernel
 def advect_diffuse_temperature(
     H:    ti.template(),    # Updated in-place
@@ -1317,44 +1626,60 @@ def advect_diffuse_temperature(
     nz: ti.i32,
 ):
     """
-    Solve ∂H/∂t + u·∇H = α·∇²H in lattice units.
+    Solve ∂H/∂t + u·∇H = ∇·(k∇T) in lattice units.
 
-    Uses a first-order upwind scheme for advection (TVD is TODO).
-    Diffusion uses central differences.
+    - Advection acts on H (the conserved variable): latent heat is transported
+      with the melt, not just sensible heat.
+    - SOLID cells conduct (no advection) — the substrate/frozen bead is a real
+      heat sink instead of an insulator.
+    - GAS neighbours are adiabatic: previously they acted as fixed ambient-T
+      conductors, an unphysical heat sink at the free surface.
+    - Advection is minmod-limited 2nd-order upwind (less numerical smearing of
+      the fusion front than the previous 1st-order scheme).
     """
     for i, j, k in H:
-        if flags[i, j, k] == FLAG_SOLID or flags[i, j, k] == FLAG_GAS:
+        flag = flags[i, j, k]
+        if flag == FLAG_GAS:
             continue
 
-        T_c  = T[i, j, k]
-        u    = ux[i, j, k]
-        v    = uy[i, j, k]
-        w    = uz[i, j, k]
+        T_c = T[i, j, k]
+        H_c = H[i, j, k]
 
-        # --- Upwind advection (ti.select avoids kernel name errors) ---
-        T_im = T[ti.max(i-1, 0), j, k]
-        T_ip = T[ti.min(i+1, nx-1), j, k]
-        T_jm = T[i, ti.max(j-1, 0), k]
-        T_jp = T[i, ti.min(j+1, ny-1), k]
-        T_km = T[i, j, ti.max(k-1, 0)]
-        T_kp = T[i, j, ti.min(k+1, nz-1)]
+        # --- Diffusion: central differences on T, gas faces adiabatic ---
+        T_im = _masked_at(T, flags, i - 1, j, k, T_c, FLAG_GAS, nx, ny, nz)
+        T_ip = _masked_at(T, flags, i + 1, j, k, T_c, FLAG_GAS, nx, ny, nz)
+        T_jm = _masked_at(T, flags, i, j - 1, k, T_c, FLAG_GAS, nx, ny, nz)
+        T_jp = _masked_at(T, flags, i, j + 1, k, T_c, FLAG_GAS, nx, ny, nz)
+        T_km = _masked_at(T, flags, i, j, k - 1, T_c, FLAG_GAS, nx, ny, nz)
+        T_kp = _masked_at(T, flags, i, j, k + 1, T_c, FLAG_GAS, nx, ny, nz)
+        lap = T_ip + T_im + T_jp + T_jm + T_kp + T_km - 6.0 * T_c
 
-        dTdx = ti.select(u > 0.0, T_c - T_im, T_ip - T_c)
-        dTdy = ti.select(v > 0.0, T_c - T_jm, T_jp - T_c)
-        dTdz = ti.select(w > 0.0, T_c - T_km, T_kp - T_c)
+        dH = cp_rho * alpha_lu * lap * dt
 
-        advection = u * dTdx + v * dTdy + w * dTdz
+        if flag != FLAG_SOLID:
+            u = ux[i, j, k]
+            v = uy[i, j, k]
+            w = uz[i, j, k]
 
-        # --- Central-difference diffusion ---
-        lap = (
-            T_ip + T_im +
-            T_jp + T_jm +
-            T_kp + T_km -
-            6.0 * T_c
-        )
+            H_im = _masked_at(H, flags, i - 1, j, k, H_c, FLAG_GAS, nx, ny, nz)
+            H_ip = _masked_at(H, flags, i + 1, j, k, H_c, FLAG_GAS, nx, ny, nz)
+            H_imm = _masked_at(H, flags, i - 2, j, k, H_im, FLAG_GAS, nx, ny, nz)
+            H_ipp = _masked_at(H, flags, i + 2, j, k, H_ip, FLAG_GAS, nx, ny, nz)
+            H_jm = _masked_at(H, flags, i, j - 1, k, H_c, FLAG_GAS, nx, ny, nz)
+            H_jp = _masked_at(H, flags, i, j + 1, k, H_c, FLAG_GAS, nx, ny, nz)
+            H_jmm = _masked_at(H, flags, i, j - 2, k, H_jm, FLAG_GAS, nx, ny, nz)
+            H_jpp = _masked_at(H, flags, i, j + 2, k, H_jp, FLAG_GAS, nx, ny, nz)
+            H_km = _masked_at(H, flags, i, j, k - 1, H_c, FLAG_GAS, nx, ny, nz)
+            H_kp = _masked_at(H, flags, i, j, k + 1, H_c, FLAG_GAS, nx, ny, nz)
+            H_kmm = _masked_at(H, flags, i, j, k - 2, H_km, FLAG_GAS, nx, ny, nz)
+            H_kpp = _masked_at(H, flags, i, j, k + 2, H_kp, FLAG_GAS, nx, ny, nz)
 
-        dT = (-advection + alpha_lu * lap) * dt
-        H[i, j, k] += cp_rho * dT
+            gx = _limited_upwind_grad(u, H_imm, H_im, H_c, H_ip, H_ipp)
+            gy = _limited_upwind_grad(v, H_jmm, H_jm, H_c, H_jp, H_jpp)
+            gz = _limited_upwind_grad(w, H_kmm, H_km, H_c, H_kp, H_kpp)
+            dH -= (u * gx + v * gy + w * gz) * dt
+
+        H[i, j, k] += dH
 
 
 @ti.func
@@ -1464,32 +1789,51 @@ def advect_diffuse_temperature_variable(
     ny: ti.i32,
     nz: ti.i32,
 ):
+    """Variable-property version of advect_diffuse_temperature (same scheme)."""
     for i, j, k in H:
-        if flags[i, j, k] == FLAG_SOLID or flags[i, j, k] == FLAG_GAS:
+        flag = flags[i, j, k]
+        if flag == FLAG_GAS:
             continue
 
         T_c = T[i, j, k]
+        H_c = H[i, j, k]
         alpha_lu = alpha_lu_field[i, j, k]
         cp_rho = cp_rho_field[i, j, k]
-        u = ux[i, j, k]
-        v = uy[i, j, k]
-        w = uz[i, j, k]
 
-        T_im = T[ti.max(i - 1, 0), j, k]
-        T_ip = T[ti.min(i + 1, nx - 1), j, k]
-        T_jm = T[i, ti.max(j - 1, 0), k]
-        T_jp = T[i, ti.min(j + 1, ny - 1), k]
-        T_km = T[i, j, ti.max(k - 1, 0)]
-        T_kp = T[i, j, ti.min(k + 1, nz - 1)]
-
-        dTdx = ti.select(u > 0.0, T_c - T_im, T_ip - T_c)
-        dTdy = ti.select(v > 0.0, T_c - T_jm, T_jp - T_c)
-        dTdz = ti.select(w > 0.0, T_c - T_km, T_kp - T_c)
-        advection = u * dTdx + v * dTdy + w * dTdz
-
+        T_im = _masked_at(T, flags, i - 1, j, k, T_c, FLAG_GAS, nx, ny, nz)
+        T_ip = _masked_at(T, flags, i + 1, j, k, T_c, FLAG_GAS, nx, ny, nz)
+        T_jm = _masked_at(T, flags, i, j - 1, k, T_c, FLAG_GAS, nx, ny, nz)
+        T_jp = _masked_at(T, flags, i, j + 1, k, T_c, FLAG_GAS, nx, ny, nz)
+        T_km = _masked_at(T, flags, i, j, k - 1, T_c, FLAG_GAS, nx, ny, nz)
+        T_kp = _masked_at(T, flags, i, j, k + 1, T_c, FLAG_GAS, nx, ny, nz)
         lap = T_ip + T_im + T_jp + T_jm + T_kp + T_km - 6.0 * T_c
-        dT = (-advection + alpha_lu * lap) * dt
-        H[i, j, k] += cp_rho * dT
+
+        dH = cp_rho * alpha_lu * lap * dt
+
+        if flag != FLAG_SOLID:
+            u = ux[i, j, k]
+            v = uy[i, j, k]
+            w = uz[i, j, k]
+
+            H_im = _masked_at(H, flags, i - 1, j, k, H_c, FLAG_GAS, nx, ny, nz)
+            H_ip = _masked_at(H, flags, i + 1, j, k, H_c, FLAG_GAS, nx, ny, nz)
+            H_imm = _masked_at(H, flags, i - 2, j, k, H_im, FLAG_GAS, nx, ny, nz)
+            H_ipp = _masked_at(H, flags, i + 2, j, k, H_ip, FLAG_GAS, nx, ny, nz)
+            H_jm = _masked_at(H, flags, i, j - 1, k, H_c, FLAG_GAS, nx, ny, nz)
+            H_jp = _masked_at(H, flags, i, j + 1, k, H_c, FLAG_GAS, nx, ny, nz)
+            H_jmm = _masked_at(H, flags, i, j - 2, k, H_jm, FLAG_GAS, nx, ny, nz)
+            H_jpp = _masked_at(H, flags, i, j + 2, k, H_jp, FLAG_GAS, nx, ny, nz)
+            H_km = _masked_at(H, flags, i, j, k - 1, H_c, FLAG_GAS, nx, ny, nz)
+            H_kp = _masked_at(H, flags, i, j, k + 1, H_c, FLAG_GAS, nx, ny, nz)
+            H_kmm = _masked_at(H, flags, i, j, k - 2, H_km, FLAG_GAS, nx, ny, nz)
+            H_kpp = _masked_at(H, flags, i, j, k + 2, H_kp, FLAG_GAS, nx, ny, nz)
+
+            gx = _limited_upwind_grad(u, H_imm, H_im, H_c, H_ip, H_ipp)
+            gy = _limited_upwind_grad(v, H_jmm, H_jm, H_c, H_jp, H_jpp)
+            gz = _limited_upwind_grad(w, H_kmm, H_km, H_c, H_kp, H_kpp)
+            dH -= (u * gx + v * gy + w * gz) * dt
+
+        H[i, j, k] += dH
 
 
 @ti.kernel
@@ -1539,34 +1883,39 @@ def apply_thermal_boundary_losses_variable(
     ny: ti.i32,
     nz: ti.i32,
 ):
+    """Convective/radiative loss on gas-exposed metal (fluid AND solid).
+
+    Surface flux q [W/m²] over one cell face removes q·dt/dx [J/m³] of
+    enthalpy. (A previous version multiplied by ρ·cp as well, overweighting
+    losses by ~six orders of magnitude.)
+    """
     for i, j, k in H:
-        if flags[i, j, k] == FLAG_SOLID or flags[i, j, k] == FLAG_GAS:
+        if flags[i, j, k] == FLAG_GAS:
             continue
 
-        exposed = False
+        n_exposed = 0
         if k + 1 < nz and flags[i, j, k + 1] == FLAG_GAS:
-            exposed = True
+            n_exposed += 1
         if j + 1 < ny and flags[i, j + 1, k] == FLAG_GAS:
-            exposed = True
+            n_exposed += 1
         if j - 1 >= 0 and flags[i, j - 1, k] == FLAG_GAS:
-            exposed = True
+            n_exposed += 1
         if i + 1 < nx and flags[i + 1, j, k] == FLAG_GAS:
-            exposed = True
+            n_exposed += 1
         if i - 1 >= 0 and flags[i - 1, j, k] == FLAG_GAS:
-            exposed = True
+            n_exposed += 1
 
-        if not exposed:
+        if n_exposed == 0:
             continue
 
         T_c = T[i, j, k]
         T_eff = ti.min(T_c, 2500.0)
-        cp_rho = cp_rho_field[i, j, k]
         q_loss = 0.0
         if enable_conv == 1:
             q_loss += h_conv * (T_eff - T_amb)
         if enable_rad == 1:
             q_loss += eps_rad * sigma_sb * (T_eff ** 4 - T_amb ** 4)
-        H[i, j, k] -= q_loss * dt / dx * cp_rho
+        H[i, j, k] -= q_loss * ti.f32(n_exposed) * dt / dx
 
 
 @ti.kernel
@@ -1612,15 +1961,22 @@ def clamp_enthalpy_ceiling_scalar(
     L_rho: ti.f32,
     FLAG_GAS: ti.i32,
 ):
-    """Cap enthalpy at vaporization ceiling (prevents runaway superheat)."""
-    h_liq = cp_rho * T_liquidus + L_rho
-    h_cap_liquid = h_liq + cp_rho * (T_vapor_cap - T_liquidus)
+    """Cap enthalpy so recovered T ≤ T_vapor_cap (matches update_phase).
+
+    Phase recovery uses H_liq = cp·T_solidus + L (not cp·T_liquidus + L).
+    Ceiling must be H_liq + cp·(T_cap − T_liquidus), otherwise T overshoots
+    the vapor cap by ~(T_liquidus − T_solidus) ≈ 45 K and the HUD sticks at
+    ~2977 °C whenever the hotspot saturates.
+    """
+    H_sol = cp_rho * T_solidus
+    H_liq = H_sol + L_rho
+    h_cap_liquid = H_liq + cp_rho * (T_vapor_cap - T_liquidus)
     h_cap_solid = cp_rho * T_vapor_cap
     for i, j, k in H:
         if flags[i, j, k] == FLAG_GAS:
             continue
         h = H[i, j, k]
-        if h > h_liq:
+        if h > H_liq:
             if h > h_cap_liquid:
                 H[i, j, k] = h_cap_liquid
         else:
@@ -1633,20 +1989,20 @@ def clamp_enthalpy_ceiling_variable_cp(
     H: ti.template(),
     flags: ti.template(),
     cp_rho_field: ti.template(),
+    H_liq: ti.f32,
     T_liquidus: ti.f32,
     T_vapor_cap: ti.f32,
-    L_rho: ti.f32,
     FLAG_GAS: ti.i32,
 ):
+    """Cap H using the same H_liq as update_phase_variable_cp."""
     for i, j, k in H:
         if flags[i, j, k] == FLAG_GAS:
             continue
         cp_r = cp_rho_field[i, j, k]
-        h_liq = cp_r * T_liquidus + L_rho
-        h_cap_liquid = h_liq + cp_r * (T_vapor_cap - T_liquidus)
+        h_cap_liquid = H_liq + cp_r * (T_vapor_cap - T_liquidus)
         h_cap_solid = cp_r * T_vapor_cap
         h = H[i, j, k]
-        if h > h_liq:
+        if h > H_liq:
             if h > h_cap_liquid:
                 H[i, j, k] = h_cap_liquid
         else:
@@ -1691,24 +2047,28 @@ def apply_thermal_boundary_losses(
     ny: ti.i32,
     nz: ti.i32,
 ):
-    """Convective/radiative heat loss on cells adjacent to gas."""
+    """Convective/radiative loss on gas-exposed metal (fluid AND solid).
+
+    See apply_thermal_boundary_losses_variable for the flux-to-enthalpy
+    conversion note (no ρ·cp factor — q·dt/dx is already J/m³).
+    """
     for i, j, k in H:
-        if flags[i, j, k] == FLAG_SOLID or flags[i, j, k] == FLAG_GAS:
+        if flags[i, j, k] == FLAG_GAS:
             continue
 
-        exposed = False
+        n_exposed = 0
         if k + 1 < nz and flags[i, j, k + 1] == FLAG_GAS:
-            exposed = True
+            n_exposed += 1
         if j + 1 < ny and flags[i, j + 1, k] == FLAG_GAS:
-            exposed = True
+            n_exposed += 1
         if j - 1 >= 0 and flags[i, j - 1, k] == FLAG_GAS:
-            exposed = True
+            n_exposed += 1
         if i + 1 < nx and flags[i + 1, j, k] == FLAG_GAS:
-            exposed = True
+            n_exposed += 1
         if i - 1 >= 0 and flags[i - 1, j, k] == FLAG_GAS:
-            exposed = True
+            n_exposed += 1
 
-        if not exposed:
+        if n_exposed == 0:
             continue
 
         T_c = T[i, j, k]
@@ -1719,7 +2079,7 @@ def apply_thermal_boundary_losses(
         if enable_rad == 1:
             q_loss += eps_rad * sigma_sb * (T_eff ** 4 - T_amb ** 4)
 
-        H[i, j, k] -= q_loss * dt / dx * cp_rho
+        H[i, j, k] -= q_loss * ti.f32(n_exposed) * dt / dx
 
 
 @ti.kernel
@@ -1762,16 +2122,18 @@ def init_poiseuille_channel(
         else:
             ux[i, j, k] = 0.0
 
-    for q, i, j, k in f:
+    for i, j, k in rho:
         if flags[i, j, k] != FLAG_FLUID:
-            f[q, i, j, k] = W[q] * rho0
-            continue
-        uxv = ux[i, j, k]
-        uyv = uy[i, j, k]
-        uzv = uz[i, j, k]
-        u2 = uxv * uxv + uyv * uyv + uzv * uzv
-        eu = EX[q] * uxv + EY[q] * uyv + EZ[q] * uzv
-        f[q, i, j, k] = W[q] * rho0 * (1.0 + 3.0 * eu + 4.5 * eu * eu - 1.5 * u2)
+            for q in ti.static(range(19)):
+                f[q, i, j, k] = W[q] * rho0
+        else:
+            uxv = ux[i, j, k]
+            uyv = uy[i, j, k]
+            uzv = uz[i, j, k]
+            u2 = uxv * uxv + uyv * uyv + uzv * uzv
+            for q in ti.static(range(19)):
+                eu = EX[q] * uxv + EY[q] * uyv + EZ[q] * uzv
+                f[q, i, j, k] = W[q] * rho0 * (1.0 + 3.0 * eu + 4.5 * eu * eu - 1.5 * u2)
 
 
 @ti.kernel
@@ -1802,8 +2164,8 @@ def compute_marangoni_force(
     Fy:   ti.template(),
     Fz:   ti.template(),
     flags: ti.template(),
-    dgamma_dT: ti.f32,      # dγ/dT  [N/(m·K)] in LBM units
-    dx:        ti.f32,      # Cell size [m] (for force scaling)
+    dgamma_dT: ti.f32,      # dγ/dT already in lattice force units
+    dx:        ti.f32,      # unused; kept for API stability
     FLAG_SOLID: ti.i32,
     FLAG_GAS:   ti.i32,
     nx: ti.i32,
@@ -1811,61 +2173,48 @@ def compute_marangoni_force(
     nz: ti.i32,
 ):
     """
-    Continuum Surface Force (CSF) Marangoni formulation.
+    Continuum Surface Force (CSF) Marangoni formulation (additive).
 
-    The Marangoni shear stress at the free surface is:
-      τ_M = (dγ/dT) · ∇_s T   [N/m²]
+    τ_M = (dγ/dT) · ∇_s T
+    F_M = (dγ/dT) · (I - n̂⊗n̂) · ∇T · |∇φ|
 
-    Translated to a CSF body force:
-      F_M = (dγ/dT) · (I - n̂⊗n̂) · ∇T · |∇φ|
-
-    where n̂ = ∇φ / |∇φ| is the interface normal from the VOF field.
-
-    For simplicity at this stage, we apply a surface-tangential
-    temperature gradient force to cells near the interface (|∇φ| > ε).
+    Must use += so isotropic CSF / arc pressure / droplet loads survive.
+    Never zeros F — only clear_forces may reset the force field.
     """
     eps = 1e-6
+    fl_min = 0.05
 
     for i, j, k in Fx:
         if flags[i, j, k] == FLAG_SOLID or flags[i, j, k] == FLAG_GAS:
-            Fx[i, j, k] = 0.0
-            Fy[i, j, k] = 0.0
-            Fz[i, j, k] = 0.0
+            continue
+        if f_l[i, j, k] < fl_min:
             continue
 
-        # VOF gradient (interface normal direction)
         dphi_x = 0.5 * (phi[ti.min(i+1,nx-1), j, k] - phi[ti.max(i-1,0), j, k])
         dphi_y = 0.5 * (phi[i, ti.min(j+1,ny-1), k] - phi[i, ti.max(j-1,0), k])
         dphi_z = 0.5 * (phi[i, j, ti.min(k+1,nz-1)] - phi[i, j, ti.max(k-1,0)])
         grad_phi_mag = ti.sqrt(dphi_x**2 + dphi_y**2 + dphi_z**2)
 
         if grad_phi_mag < eps:
-            Fx[i, j, k] = 0.0
-            Fy[i, j, k] = 0.0
-            Fz[i, j, k] = 0.0
             continue
 
-        # Interface normal
         nx_n = dphi_x / grad_phi_mag
         ny_n = dphi_y / grad_phi_mag
         nz_n = dphi_z / grad_phi_mag
 
-        # Temperature gradient
         dT_x = 0.5 * (T[ti.min(i+1,nx-1), j, k] - T[ti.max(i-1,0), j, k])
         dT_y = 0.5 * (T[i, ti.min(j+1,ny-1), k] - T[i, ti.max(j-1,0), k])
         dT_z = 0.5 * (T[i, j, ti.min(k+1,nz-1)] - T[i, j, ti.max(k-1,0)])
 
-        # Project ∇T onto the interface tangent plane: ∇_s T = (I - n̂⊗n̂)·∇T
         n_dot_gradT = nx_n*dT_x + ny_n*dT_y + nz_n*dT_z
         dTs_x = dT_x - n_dot_gradT * nx_n
         dTs_y = dT_y - n_dot_gradT * ny_n
         dTs_z = dT_z - n_dot_gradT * nz_n
 
-        # CSF body force: F = (dγ/dT) · ∇_s T · |∇φ|
         scale = dgamma_dT * grad_phi_mag
-        Fx[i, j, k] = scale * dTs_x
-        Fy[i, j, k] = scale * dTs_y
-        Fz[i, j, k] = scale * dTs_z
+        Fx[i, j, k] += scale * dTs_x
+        Fy[i, j, k] += scale * dTs_y
+        Fz[i, j, k] += scale * dTs_z
 
 
 @ti.kernel
@@ -1884,13 +2233,13 @@ def compute_marangoni_force_variable(
     ny: ti.i32,
     nz: ti.i32,
 ):
-    """CSF Marangoni with per-cell dγ/dT from material tables."""
+    """CSF Marangoni with per-cell dγ/dT from material tables (additive)."""
     eps = 1e-6
+    fl_min = 0.05
     for i, j, k in Fx:
         if flags[i, j, k] == FLAG_SOLID or flags[i, j, k] == FLAG_GAS:
-            Fx[i, j, k] = 0.0
-            Fy[i, j, k] = 0.0
-            Fz[i, j, k] = 0.0
+            continue
+        if f_l[i, j, k] < fl_min:
             continue
 
         dphi_x = 0.5 * (phi[ti.min(i + 1, nx - 1), j, k] - phi[ti.max(i - 1, 0), j, k])
@@ -1899,9 +2248,6 @@ def compute_marangoni_force_variable(
         grad_phi_mag = ti.sqrt(dphi_x ** 2 + dphi_y ** 2 + dphi_z ** 2)
 
         if grad_phi_mag < eps:
-            Fx[i, j, k] = 0.0
-            Fy[i, j, k] = 0.0
-            Fz[i, j, k] = 0.0
             continue
 
         nx_n = dphi_x / grad_phi_mag
@@ -1918,14 +2264,59 @@ def compute_marangoni_force_variable(
         dTs_z = dT_z - n_dot_gradT * nz_n
 
         scale = dgamma_lu_field[i, j, k] * grad_phi_mag
-        Fx[i, j, k] = scale * dTs_x
-        Fy[i, j, k] = scale * dTs_y
-        Fz[i, j, k] = scale * dTs_z
+        Fx[i, j, k] += scale * dTs_x
+        Fy[i, j, k] += scale * dTs_y
+        Fz[i, j, k] += scale * dTs_z
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 #  VOF — Phase field advection & flag update (Phase 2)
 # ──────────────────────────────────────────────────────────────────────────────
+@ti.func
+def _vof_face_flux(
+    phi_src: ti.template(),
+    vel: ti.template(),
+    flags: ti.template(),
+    i0: ti.i32, j0: ti.i32, k0: ti.i32,   # donor-side cell
+    i1: ti.i32, j1: ti.i32, k1: ti.i32,   # receiver-side cell
+    FLAG_SOLID: ti.i32,
+    FLAG_GAS: ti.i32,
+    nx: ti.i32, ny: ti.i32, nz: ti.i32,
+) -> ti.f32:
+    """Upwind volume flux through the face between (i0,j0,k0)→(i1,j1,k1).
+
+    Face velocity is the average of the two adjacent cells, with SOLID and
+    GAS cell velocities treated as zero (their stored u is stale/meaningless).
+    No flux crosses a solid face. x wraps periodically (matching the LBM
+    stream kernel) — clamping instead piled volume onto the outflow column
+    where the [0,1] clamp deleted it (~5% loss over 80 steps at u=0.02).
+    """
+    flux = 0.0
+    # Periodic in x, clamped (no-flux) in y/z — same BCs as `stream`.
+    ii0 = (i0 + nx) % nx
+    ii1 = (i1 + nx) % nx
+    in0 = j0 >= 0 and k0 >= 0 and j0 < ny and k0 < nz
+    in1 = j1 >= 0 and k1 >= 0 and j1 < ny and k1 < nz
+    if in0 and in1:
+        i0 = ii0
+        i1 = ii1
+        fl0 = flags[i0, j0, k0]
+        fl1 = flags[i1, j1, k1]
+        if fl0 != FLAG_SOLID and fl1 != FLAG_SOLID:
+            u0 = 0.0
+            u1 = 0.0
+            if fl0 != FLAG_GAS:
+                u0 = vel[i0, j0, k0]
+            if fl1 != FLAG_GAS:
+                u1 = vel[i1, j1, k1]
+            u_face = 0.5 * (u0 + u1)
+            if u_face > 0.0:
+                flux = u_face * phi_src[i0, j0, k0]
+            else:
+                flux = u_face * phi_src[i1, j1, k1]
+    return flux
+
+
 @ti.kernel
 def advect_phi(
     phi_dst: ti.template(),
@@ -1940,26 +2331,34 @@ def advect_phi(
     ny: ti.i32,
     nz: ti.i32,
 ):
-    """Donor-cell (first-order) VOF advection in lattice units."""
+    """Conservative donor-cell (upwind flux-form) VOF advection.
+
+    φ_new = φ − Σ_faces(out − in). Unlike the previous semi-Lagrangian
+    round-to-nearest-cell pull (a no-op for |u| < 0.5 lu — i.e. always at
+    melt-pool velocities), fractional volume moves every step and total metal
+    volume is conserved to round-off away from domain boundaries. Gas cells
+    may receive flux, becoming interface cells on the next flag update.
+    """
     for i, j, k in phi_src:
         flag = flags[i, j, k]
         if flag == FLAG_SOLID:
             phi_dst[i, j, k] = phi_src[i, j, k]
             continue
-        if flag == FLAG_GAS:
-            phi_dst[i, j, k] = 0.0
-            continue
 
-        u = ux[i, j, k]
-        v = uy[i, j, k]
-        w = uz[i, j, k]
-        ib = ti.cast(ti.round(ti.f32(i) - u), ti.i32)
-        jb = ti.cast(ti.round(ti.f32(j) - v), ti.i32)
-        kb = ti.cast(ti.round(ti.f32(k) - w), ti.i32)
-        ib = ti.max(0, ti.min(ib, nx - 1))
-        jb = ti.max(0, ti.min(jb, ny - 1))
-        kb = ti.max(0, ti.min(kb, nz - 1))
-        phi_dst[i, j, k] = phi_src[ib, jb, kb]
+        f_e = _vof_face_flux(phi_src, ux, flags, i, j, k, i + 1, j, k,
+                             FLAG_SOLID, FLAG_GAS, nx, ny, nz)
+        f_w = _vof_face_flux(phi_src, ux, flags, i - 1, j, k, i, j, k,
+                             FLAG_SOLID, FLAG_GAS, nx, ny, nz)
+        f_n = _vof_face_flux(phi_src, uy, flags, i, j, k, i, j + 1, k,
+                             FLAG_SOLID, FLAG_GAS, nx, ny, nz)
+        f_s = _vof_face_flux(phi_src, uy, flags, i, j - 1, k, i, j, k,
+                             FLAG_SOLID, FLAG_GAS, nx, ny, nz)
+        f_t = _vof_face_flux(phi_src, uz, flags, i, j, k, i, j, k + 1,
+                             FLAG_SOLID, FLAG_GAS, nx, ny, nz)
+        f_b = _vof_face_flux(phi_src, uz, flags, i, j, k - 1, i, j, k,
+                             FLAG_SOLID, FLAG_GAS, nx, ny, nz)
+
+        phi_dst[i, j, k] = phi_src[i, j, k] - (f_e - f_w) - (f_n - f_s) - (f_t - f_b)
 
 
 @ti.kernel
@@ -1970,13 +2369,23 @@ def reinitialize_phi(
     FLAG_GAS: ti.i32,
     FLAG_FLUID: ti.i32,
 ):
-    """Clamp φ to [0,1] and enforce gas/solid values."""
+    """Clamp φ to [0,1] and enforce solid values.
+
+    Gas cells KEEP incoming φ: the donor-cell flux uses zero velocity on the
+    gas side, so φ cannot spread past the first gas layer, and any scrub
+    threshold deletes exactly the volume advection just delivered (measured
+    as a ~0.06%/step mass leak at melt-pool velocities). Only float noise
+    (< 1e-6) is zeroed.
+    """
     for i, j, k in phi:
         flag = flags[i, j, k]
         if flag == FLAG_SOLID:
             phi[i, j, k] = 1.0
         elif flag == FLAG_GAS:
-            phi[i, j, k] = 0.0
+            if phi[i, j, k] < 1e-6:
+                phi[i, j, k] = 0.0
+            else:
+                phi[i, j, k] = ti.min(1.0, phi[i, j, k])
         else:
             p = phi[i, j, k]
             phi[i, j, k] = ti.max(0.0, ti.min(1.0, p))
@@ -2150,8 +2559,9 @@ def solidify_trailing_pool(
         if T[i, j, k] >= T_freeze:
             continue
         cp_r = cp_rho_field[i, j, k]
-        H[i, j, k] = cp_r * T_solidus
-        T[i, j, k] = T_solidus
+        # 1 K below solidus so HAZ time-above-solidus stops accumulating
+        H[i, j, k] = cp_r * (T_solidus - 1.0)
+        T[i, j, k] = T_solidus - 1.0
         f_l[i, j, k] = 0.0
         phi[i, j, k] = 1.0
         flags[i, j, k] = FLAG_SOLID
@@ -2197,8 +2607,8 @@ def solidify_trailing_pool_scalar(
             continue
         if T[i, j, k] >= T_freeze:
             continue
-        H[i, j, k] = cp_rho * T_solidus
-        T[i, j, k] = T_solidus
+        H[i, j, k] = cp_rho * (T_solidus - 1.0)
+        T[i, j, k] = T_solidus - 1.0
         f_l[i, j, k] = 0.0
         phi[i, j, k] = 1.0
         flags[i, j, k] = FLAG_SOLID
@@ -2245,10 +2655,15 @@ def shift_simulation_window_x(
     ny: ti.i32,
     nz: ti.i32,
 ):
-    """Shift all fields left by n_shift cells; reset right strip to ambient substrate/gas."""
+    """Shift all fields left by n_shift cells; reset right strip to ambient substrate/gas.
+
+    The serial inner loop MUST run ascending in i: cell i reads from
+    si = i + n_shift (> i), which is only unwritten if lower indices are
+    filled first. (A previous descending order re-read already-shifted cells,
+    double-shifting ~2/3 of the domain on every window move.)
+    """
     for j, k in ti.ndrange(ny, nz):
-        for ii in range(nx - n_shift):
-            i = nx - 1 - n_shift - ii
+        for i in range(nx - n_shift):
             si = i + n_shift
             T[i, j, k] = T[si, j, k]
             H[i, j, k] = H[si, j, k]
@@ -2325,15 +2740,17 @@ def add_buoyancy(
     FLAG_GAS:   ti.i32,
 ):
     """
-    Boussinesq buoyancy: F_z = -ρ·g·β·(T - T_ref) for liquid cells only.
-    Positive z is upward; hot liquid rises.
+    Boussinesq buoyancy: F_z = +ρ_lu·g·β·(T − T_ref) for liquid cells.
+    Positive z is upward: hotter-than-reference liquid is lighter and must be
+    pushed UP (the previous negative sign drove hot liquid down, inverting the
+    convection cell). rho_ref is the lattice reference density (≈1).
     """
     for i, j, k in Fz:
         if flags[i, j, k] == FLAG_SOLID or flags[i, j, k] == FLAG_GAS:
             continue
         fl = f_l[i, j, k]
         if fl > 0.0:
-            Fz[i, j, k] += -rho_ref * g_lu * beta * (T[i, j, k] - T_ref) * fl
+            Fz[i, j, k] += rho_ref * g_lu * beta * (T[i, j, k] - T_ref) * fl
 
 
 @ti.kernel
@@ -2446,13 +2863,15 @@ def collide_srt(
             # Equilibrium distribution
             feq = w_q * r * (1.0 + 3.0*eu + 4.5*eu*eu - 1.5*u2)
 
-            # Guo forcing term
+            # Guo forcing term. F is the lattice force density (ρ_lu ≈ 1 by
+            # convention); the standard Guo source has NO 1/ρ factor — the
+            # previous ·inv_r silently rescaled all body forces by 1/ρ_lu.
             F_dot_e = ex_q*fx + ey_q*fy + ez_q*fz
             S_q = w_q * (1.0 - 0.5*omega) * (
                 3.0*(F_dot_e) +
                 9.0*(eu * F_dot_e) -
                 3.0*(ux_f*fx + uy_f*fy + uz_f*fz)
-            ) * inv_r
+            )
 
             # Post-collision distribution (BGK + forcing)
             f_dst[q, i, j, k] = f_src[q, i, j, k] - omega * (
@@ -2535,7 +2954,7 @@ def collide_srt_variable_tau(
                 3.0 * F_dot_e
                 + 9.0 * (eu * F_dot_e)
                 - 3.0 * (ux_f * fx + uy_f * fy + uz_f * fz)
-            ) * inv_r
+            )
             f_dst[q, i, j, k] = f_src[q, i, j, k] - omega * (
                 f_src[q, i, j, k] - feq
             ) + S_q
@@ -2566,31 +2985,29 @@ def stream(
 
     Solid boundaries: bounce-back rule (no-slip condition).
     Gas cells: free-slip (zero-gradient) — Neumann BC.
+    x-axis is periodic (required by the Poiseuille validation channel);
+    y/z clamp (zero-gradient).
     """
-    for q, i, j, k in f_src:
+    for i, j, k in flags:
         flag = flags[i, j, k]
-
-        ni = i - EX[q]
-        nj = j - EY[q]
-        nk = k - EZ[q]
-
-        ni_p = (ni + nx) % nx
-        nj_p = ti.max(0, ti.min(nj, ny - 1))
-        nk_p = ti.max(0, ti.min(nk, nz - 1))
-
-        src_flag = flags[ni_p, nj_p, nk_p]
-
         if flag == FLAG_SOLID:
             continue
 
-        if flag == FLAG_GAS:
-            f_dst[q, i, j, k] = f_src[q, ni_p, nj_p, nk_p]
-            continue
+        for q in ti.static(range(19)):
+            ni = i - EX[q]
+            nj = j - EY[q]
+            nk = k - EZ[q]
 
-        if src_flag == FLAG_SOLID:
-            f_dst[q, i, j, k] = f_src[OPP[q], i, j, k]
-        else:
-            f_dst[q, i, j, k] = f_src[q, ni_p, nj_p, nk_p]
+            ni_p = (ni + nx) % nx
+            nj_p = ti.max(0, ti.min(nj, ny - 1))
+            nk_p = ti.max(0, ti.min(nk, nz - 1))
+
+            if flag == FLAG_GAS:
+                f_dst[q, i, j, k] = f_src[q, ni_p, nj_p, nk_p]
+            elif flags[ni_p, nj_p, nk_p] == FLAG_SOLID:
+                f_dst[q, i, j, k] = f_src[OPP[q], i, j, k]
+            else:
+                f_dst[q, i, j, k] = f_src[q, ni_p, nj_p, nk_p]
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -2867,6 +3284,58 @@ def update_time_above_T(
 
 
 @ti.kernel
+def clamp_body_force_magnitude(
+    Fx: ti.template(),
+    Fy: ti.template(),
+    Fz: ti.template(),
+    flags: ti.template(),
+    F_max_lu: ti.f32,
+    FLAG_SOLID: ti.i32,
+    FLAG_GAS: ti.i32,
+):
+    """Limit |F| so Guo forcing cannot drive Ma ≫ 0.1 in one step."""
+    eps = 1e-12
+    for i, j, k in Fx:
+        if flags[i, j, k] == FLAG_SOLID or flags[i, j, k] == FLAG_GAS:
+            continue
+        fx = Fx[i, j, k]
+        fy = Fy[i, j, k]
+        fz = Fz[i, j, k]
+        mag = ti.sqrt(fx * fx + fy * fy + fz * fz)
+        if mag > F_max_lu:
+            s = F_max_lu / (mag + eps)
+            Fx[i, j, k] = fx * s
+            Fy[i, j, k] = fy * s
+            Fz[i, j, k] = fz * s
+
+
+@ti.kernel
+def clamp_velocity_mach(
+    ux: ti.template(),
+    uy: ti.template(),
+    uz: ti.template(),
+    flags: ti.template(),
+    u_max_lu: ti.f32,
+    FLAG_SOLID: ti.i32,
+    FLAG_GAS: ti.i32,
+):
+    """Cap macroscopic lattice velocity (keeps VOF / telemetry physical)."""
+    eps = 1e-12
+    for i, j, k in ux:
+        if flags[i, j, k] == FLAG_SOLID or flags[i, j, k] == FLAG_GAS:
+            continue
+        vx = ux[i, j, k]
+        vy = uy[i, j, k]
+        vz = uz[i, j, k]
+        mag = ti.sqrt(vx * vx + vy * vy + vz * vz)
+        if mag > u_max_lu:
+            s = u_max_lu / (mag + eps)
+            ux[i, j, k] = vx * s
+            uy[i, j, k] = vy * s
+            uz[i, j, k] = vz * s
+
+
+@ti.kernel
 def snapshot_forces(
     Fx: ti.template(),
     Fy: ti.template(),
@@ -2891,33 +3360,20 @@ def compute_curvature_field(
     ny: ti.i32,
     nz: ti.i32,
 ):
-    """VOF curvature κ = -∇·n̂ (same convention as compute_csf_tension)."""
+    """VOF curvature κ = -∇·n̂ (Brackbill; same as compute_csf_tension)."""
     eps = 1e-6
     for i, j, k in kappa_out:
         kappa_out[i, j, k] = 0.0
         if flags[i, j, k] == FLAG_GAS:
             continue
-        dpx = 0.5 * (phi[ti.min(i + 1, nx - 1), j, k] - phi[ti.max(i - 1, 0), j, k])
-        dpy = 0.5 * (phi[i, ti.min(j + 1, ny - 1), k] - phi[i, ti.max(j - 1, 0), k])
-        dpz = 0.5 * (phi[i, j, ti.min(k + 1, nz - 1)] - phi[i, j, ti.max(k - 1, 0)])
-        gmag = ti.sqrt(dpx * dpx + dpy * dpy + dpz * dpz)
-        if gmag < eps:
+        if (
+            i < 1 or j < 1 or k < 1
+            or i > nx - 2 or j > ny - 2 or k > nz - 2
+        ):
             continue
-        div_n = (
-            0.5 * (
-                (phi[ti.min(i + 1, nx - 1), j, k] - phi[ti.max(i - 1, 0), j, k])
-                - (phi[ti.max(i - 1, 0), j, k] - phi[ti.max(i - 2, 0), j, k])
-            )
-            + 0.5 * (
-                (phi[i, ti.min(j + 1, ny - 1), k] - phi[i, ti.max(j - 1, 0), k])
-                - (phi[i, ti.max(j - 1, 0), k] - phi[i, ti.max(j - 2, 0), k])
-            )
-            + 0.5 * (
-                (phi[i, j, ti.min(k + 1, nz - 1)] - phi[i, j, ti.max(k - 1, 0)])
-                - (phi[i, j, ti.max(k - 1, 0)] - phi[i, j, ti.max(k - 2, 0)])
-            )
-        )
-        kappa_out[i, j, k] = -div_n / (gmag + eps)
+        kappa, gmag = _brackbill_curvature_at(phi, i, j, k, nx, ny, nz, eps)
+        if gmag >= eps:
+            kappa_out[i, j, k] = kappa
 
 
 @ti.kernel
@@ -2934,8 +3390,12 @@ def compute_vorticity_magnitude(
     ny: ti.i32,
     nz: ti.i32,
 ):
-    """|∇×u| in physical units [1/s] from lattice velocity."""
-    scale = 1.0 / (dx + 1e-12) / (dt + 1e-12)
+    """|∇×u| in physical units [1/s] from lattice velocity.
+
+    du_phys/dl_phys = (Δu_lu · dx/dt) / (Δcells · dx) = Δu_lu / (dt · Δcells)
+    → the scale is 1/dt (the previous 1/(dx·dt) overstated vorticity by 1/dx).
+    """
+    scale = 1.0 / (dt + 1e-12)
     for i, j, k in vort_out:
         vort_out[i, j, k] = 0.0
         if flags[i, j, k] == FLAG_GAS:
@@ -2956,3 +3416,89 @@ def compute_vorticity_magnitude(
         wy = (dux_dz - duz_dx) * scale
         wz = (duy_dx - dux_dy) * scale
         vort_out[i, j, k] = ti.sqrt(wx * wx + wy * wy + wz * wz)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  Telemetry reductions + φ ↔ f_l consistency
+# ──────────────────────────────────────────────────────────────────────────────
+@ti.kernel
+def telemetry_pool_reduce(
+    T: ti.template(),
+    f_l: ti.template(),
+    phi: ti.template(),
+    dT_dt: ti.template(),
+    ux: ti.template(),
+    uy: ti.template(),
+    uz: ti.template(),
+    n_buf: ti.template(),
+    T_peak_buf: ti.template(),
+    cool_buf: ti.template(),
+    u2_buf: ti.template(),
+    i_sum_buf: ti.template(),
+    i_min_buf: ti.template(),
+    i_max_buf: ti.template(),
+    T_global_buf: ti.template(),
+):
+    """GPU-side pool aggregates — avoids copying entire volumes for telemetry.
+
+    Peak cooling rate uses all metal (φ > 0.05), not only liquid — otherwise
+    it stays 0 after the bead freezes even while the HAZ is still cooling.
+    """
+    n_buf[None] = 0
+    T_peak_buf[None] = 0.0
+    cool_buf[None] = 0.0
+    u2_buf[None] = 0.0
+    i_sum_buf[None] = 0.0
+    i_min_buf[None] = 1.0e9
+    i_max_buf[None] = -1.0e9
+    T_global_buf[None] = 0.0
+    for i, j, k in T:
+        Tc = T[i, j, k]
+        ti.atomic_max(T_global_buf[None], Tc)
+        if phi[i, j, k] > 0.05:
+            # Positive while cooling (metallurgical sign).
+            ti.atomic_max(cool_buf[None], -dT_dt[i, j, k])
+        if f_l[i, j, k] > 0.5:
+            ti.atomic_add(n_buf[None], 1)
+            ti.atomic_max(T_peak_buf[None], Tc)
+            u2 = ux[i, j, k] * ux[i, j, k] + uy[i, j, k] * uy[i, j, k] + uz[i, j, k] * uz[i, j, k]
+            ti.atomic_max(u2_buf[None], u2)
+            ti.atomic_add(i_sum_buf[None], ti.f32(i))
+            ti.atomic_min(i_min_buf[None], ti.f32(i))
+            ti.atomic_max(i_max_buf[None], ti.f32(i))
+
+
+@ti.kernel
+def extract_fl_yz_slice(
+    f_l: ti.template(),
+    out: ti.template(),
+    i_slice: ti.i32,
+    ny: ti.i32,
+    nz: ti.i32,
+):
+    """Copy one y–z face of f_l for host-side pool W/D measurement."""
+    for j, k in ti.ndrange(ny, nz):
+        out[j, k] = f_l[i_slice, j, k]
+
+
+@ti.kernel
+def sync_phi_liquid_fraction(
+    phi: ti.template(),
+    f_l: ti.template(),
+    flags: ti.template(),
+    FLAG_GAS: ti.i32,
+    FLAG_SOLID: ti.i32,
+):
+    """Keep φ (metal presence) and f_l (melt state) from drifting apart.
+
+    - Pure gas (φ < 0.05 or FLAG_GAS): f_l must be 0 — no liquid fraction in air.
+    - Solid metal (FLAG_SOLID): f_l forced to 0 (already solidified).
+    - Metal with φ ≥ 0.55 and f_l < 0 but T-driven melt may set f_l later;
+      here we only clear contradictory liquid-in-gas.
+    """
+    for i, j, k in phi:
+        fl = flags[i, j, k]
+        if fl == FLAG_GAS or phi[i, j, k] < 0.05:
+            f_l[i, j, k] = 0.0
+        elif fl == FLAG_SOLID:
+            f_l[i, j, k] = 0.0

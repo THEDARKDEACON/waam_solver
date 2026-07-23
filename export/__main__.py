@@ -35,7 +35,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         g = twin.grid
         twin.probe_recorder = ProbeRecorder()
-        twin.probe_recorder.add_grid(g.nx // 3, g.ny // 2, twin.nz_solid, "substrate")
+        twin.probe_recorder.add_grid(g.nx // 3, g.ny // 2, twin.nz_solid, twin, "substrate")
 
     tiers = tuple(int(x.strip()) for x in args.tiers.split(",") if x.strip())
     export_research_sequence(

@@ -127,15 +127,35 @@ def _runtime_is_live() -> bool:
 
 
 def init_taichi(backend: str | None = None) -> PlatformProfile:
-    """Initialize Taichi once: CUDA → Vulkan → CPU."""
+    """Initialize Taichi once: CUDA → Vulkan → CPU.
+
+    Backend selection priority:
+      1. ``WAAM_FORCE_BACKEND`` — sticky override (survives tests that mutate
+         ``WAAM_BACKEND``, e.g. backend_smoke)
+      2. ``WAAM_BACKEND`` — overrides hardcoded ``backend="cpu"`` in tests
+      3. ``backend`` argument / ``auto``
+    """
     global _taichi_initialized, _profile
     if _taichi_initialized and not _runtime_is_live():
         _taichi_initialized = False
         _profile = None
-    if _taichi_initialized and _profile is not None:
-        return _profile
 
-    requested = (backend or os.environ.get("WAAM_BACKEND", "auto")).lower()
+    force = (os.environ.get("WAAM_FORCE_BACKEND") or "").strip().lower()
+    env_backend = (os.environ.get("WAAM_BACKEND") or "").strip().lower()
+    if force in ("cpu", "cuda", "vulkan", "auto"):
+        requested = force
+    elif env_backend in ("cpu", "cuda", "vulkan", "auto"):
+        requested = env_backend
+    else:
+        requested = (backend or "auto").lower()
+
+    # Re-init if caller/env asks for a different device than the live runtime.
+    if _taichi_initialized and _profile is not None:
+        if requested != "auto" and _profile.backend != requested:
+            reset_taichi()
+        else:
+            return _profile
+
     arch = None
     backend_used = "cpu"
 

@@ -102,23 +102,21 @@ def extract_melt_pool(
             ])
             Tc = T[i, j, k]
             T_peak = T_max[i, j, k]
-            # Cold substrate plate (initial nz_solid layers)
-            if k < nz_solid:
-                col_arr[idx] = ti.Vector([0.22, 0.24, 0.30])
-            elif f_l[i, j, k] > 0.05:
+            T_show = ti.max(Tc, T_peak)
+            # Melt / hot metal first — including remelted substrate (was forced
+            # gray for all k < nz_solid, which hid surface heating mid-plate).
+            if f_l[i, j, k] > 0.05:
                 col_arr[idx] = _temperature_color(Tc, T_solidus, T_liquidus)
+            elif T_show > T_solidus + 80.0:
+                col_arr[idx] = _temperature_color(T_show, T_solidus, T_liquidus)
+            elif T_show > T_solidus:
+                col_arr[idx] = ti.Vector([0.85, 0.55, 0.25])
+            elif k < nz_solid:
+                # Cold original substrate
+                col_arr[idx] = ti.Vector([0.22, 0.24, 0.30])
             elif flags[i, j, k] == FLAG_SOLID:
-                # Frozen bead / HAZ: show peak or current temperature
-                T_show = ti.max(Tc, T_peak)
-                if T_show > T_solidus + 80.0:
-                    col_arr[idx] = _temperature_color(T_show, T_solidus, T_liquidus)
-                elif T_show > T_solidus:
-                    col_arr[idx] = ti.Vector([0.85, 0.55, 0.25])
-                elif k >= nz_solid:
-                    # Deposited metal (bead crown), cooled
-                    col_arr[idx] = ti.Vector([0.55, 0.48, 0.40])
-                else:
-                    col_arr[idx] = ti.Vector([0.35, 0.35, 0.40])
+                # Deposited bead crown, cooled
+                col_arr[idx] = ti.Vector([0.55, 0.48, 0.40])
             elif flags[i, j, k] == FLAG_FLUID:
                 col_arr[idx] = ti.Vector([0.45, 0.45, 0.50])
             else:
@@ -170,9 +168,11 @@ def extract_haz(
             ])
             if f_l[i, j, k] >= 0.01:
                 col_arr[idx] = ti.Vector([1.0, 0.5, 0.0])
-            elif T_max[i, j, k] > 800.0:
+            # HAZ band starts at 800 °C = 1073.15 K (T_max is in Kelvin —
+            # comparing against 800 K = 527 °C overextended the shown HAZ).
+            elif T_max[i, j, k] > 1073.15:
                 intensity = ti.max(0.0, ti.min(1.0,
-                    (T_max[i, j, k] - 800.0) / (T_solidus - 800.0 + 1e-6)
+                    (T_max[i, j, k] - 1073.15) / (T_solidus - 1073.15 + 1e-6)
                 ))
                 col_arr[idx] = ti.Vector([intensity * 0.8, 0.1, 1.0 - intensity * 0.6])
             else:
@@ -288,11 +288,28 @@ def extract_torch_marker(
     torch_z_mm: ti.f32,
     max_out: ti.i32,
 ):
-    """Single bright particle at the arc / torch position."""
+    """Yellow contact-tip marker (surface + CTWD)."""
     idx = ti.atomic_add(count[None], 1)
     if idx < max_out:
         pos_arr[idx] = ti.Vector([torch_x_mm, torch_y_mm, torch_z_mm])
         col_arr[idx] = ti.Vector([1.0, 0.95, 0.2])
+
+
+@ti.kernel
+def extract_arc_attach_marker(
+    pos_arr: ti.template(),
+    col_arr: ti.template(),
+    count: ti.template(),
+    x_mm: ti.f32,
+    y_mm: ti.f32,
+    z_mm: ti.f32,
+    max_out: ti.i32,
+):
+    """Cyan marker at the free-surface arc attachment (where heat is injected)."""
+    idx = ti.atomic_add(count[None], 1)
+    if idx < max_out:
+        pos_arr[idx] = ti.Vector([x_mm, y_mm, z_mm])
+        col_arr[idx] = ti.Vector([0.15, 0.95, 1.0])
 
 
 @ti.kernel

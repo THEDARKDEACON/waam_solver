@@ -11,7 +11,9 @@ from waam_twin import WAAMTwin
 from waam_twin import kernels
 
 
-def run(n_steps: int = 80, threshold_pct: float = 2.0) -> float:
+def run(n_steps: int = 80, threshold_pct: float = 0.5) -> float:
+    # Gate tightened 2% → 0.5%: the flux-form advection conserves φ to
+    # round-off (measured drift 0.00%).
     init_taichi(backend="cpu")
     twin = WAAMTwin(nx=32, ny=32, nz=16, dx=3e-4, C_darcy=0.0, max_tracers=10, enable_vof=True)
     twin.reset(test_fluid_domain=True)

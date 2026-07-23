@@ -18,12 +18,12 @@ def run(min_rows: int = 5) -> None:
     twin = WAAMTwin(nx=16, ny=10, nz=10, dx=3e-4, max_tracers=5)
     twin.reset()
     twin.probe_recorder = ProbeRecorder()
-    twin.probe_recorder.add_grid(4, 5, 3, "sub")
+    twin.probe_recorder.add_grid(4, 5, 3, twin, "sub")
 
     for _ in range(min_rows):
         twin.step(0.002, 0.002, is_welding=True)
 
-    twin.probe_recorder.add_grid(6, 5, 4, "torch_1")
+    twin.probe_recorder.add_grid(6, 5, 4, twin, "torch_1")
     for _ in range(3):
         twin.step(0.002, 0.002, is_welding=True)
 

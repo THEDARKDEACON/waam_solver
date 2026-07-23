@@ -1,0 +1,405 @@
+# =============================================================================
+# WAAM Twin — annotated job schema (copy / edit / run)
+# =============================================================================
+# Loader: waam_twin/job.py → WAAMTwin.from_job(...) / viewer --job ...
+#
+#   python3 -m waam_twin.viewer --job jobs/examples/example.yaml
+#   python3 -m waam_twin.viewer --job jobs/examples/example.yaml --preset minimal
+#
+# Rules of thumb:
+#   • Keys omitted → twin / preset defaults
+#   • simulation.* flags AFTER physics_tier override the tier defaults
+#   • Units: *_mm = millimetres, *_m_s / *_m_min = SI as named, temps in kelvin
+#     unless the key ends in _C (none here) or HUD shows °C
+#   • Paths are relative to the waam_twin package root unless absolute
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# simulation:  grid + solver feature flags
+# -----------------------------------------------------------------------------
+simulation:
+  # Grid / memory tier from config/presets.yaml
+  # Options: minimal | standard | high | ultra
+  #   minimal  ~ dx 0.5 mm, thin plate (~3 mm) — fast, deep melt looks dramatic
+  #   standard ~ dx 0.3 mm — usual development / viewer default
+  #   high     ~ finer dx, more VRAM, MRT collision
+  #   ultra    ~ finest, 16 GB-class budget
+  # CLI --preset overrides this value for one run.
+  preset: standard
+
+  # Preferred GPU/CPU hint for notebooks/docs. Runtime still follows
+  # WAAM_BACKEND / init_taichi (auto | cpu | cuda | vulkan).
+  # Options: auto | cpu | cuda | vulkan
+  backend: cuda
+
+  # Named physics bundle (PHYSICS_FORCE_CORRECTNESS_SPEC §4.3).
+  # Options: thermal | flow | full
+  #   thermal — conduction/arc only; no VOF / CSF / MHD / recoil / gas shear
+  #   flow    — VOF + CSF + wetting + gravity + bead freeze + droplet impact;
+  #             no Lorentz / gas shear; arc pressure = constant
+  #   full    — flow + Lorentz + gas shear; arc pressure = lin_eagar;
+  #             recoil still OFF unless enable_recoil: true
+  # Aliases "base"/"default" → flow (with warning). Unknown → full (with warning).
+  physics_tier: full
+
+  # Abort on Lorentz non-convergence, NaN force diagnostics, or bad mass balance.
+  # Also set by env WAAM_STRICT=1.  Options: true | false
+  strict_mode: false
+
+  # --- Feature flags (bool). Applied after physics_tier; use to override tier. ---
+
+  # Volume-of-fluid free surface (metal/gas). Needs VOF buffers.
+  enable_vof: true
+
+  # Continuum surface force (Brackbill CSF) capillary term.
+  enable_csf_tension: true
+
+  # Young contact-angle wetting at solid/liquid/gas triple line.
+  enable_wetting: true
+
+  # Hydrostatic ρg body force (pool flattening / sag).
+  enable_hydrostatic_gravity: true
+
+  # Freeze cooled deposited metal behind the arc → solid bead crown.
+  enable_bead_freeze: true
+
+  # Remelt / grow solid substrate when hot (multi-layer studies).
+  enable_substrate_growth: false
+
+  # Shift domain with torch for long beads (moving window).
+  enable_moving_window: false
+
+  # Vapor recoil pressure on the free surface (excavates / can splash).
+  # Keep false for conduction-mode WAAM bead-on-plate.
+  enable_recoil: false
+
+  # Recoil saturation model when enable_recoil: true
+  #   true  → Clausius–Clapeyron (CCCC)
+  #   false → Anisimov / recoil-pressure (RR) style
+  use_recoil_clausius_clapeyron: false
+
+  # Electromagnetic J×B body force (needs Lorentz fields + Jacobi solve).
+  enable_lorentz: true
+
+  # Shielding-gas surface traction (uses advanced_physics.gas_*).
+  enable_gas_shear: true
+
+  # Instantaneous droplet impact momentum / pressure pulse.
+  enable_droplet_impact_pressure: true
+
+  # Clamp enthalpy so T cannot run away above the vapor ceiling.
+  enable_enthalpy_cap: true
+
+  # Bias arc heat toward the top free surface (vs pure volumetric dump).
+  # Also settable under arc_physics.surface_weighting.
+  arc_surface_weighting: true
+
+  # Stick-out I²R wire preheat from CTWD / stickout (open-loop).
+  enable_ctwd: false
+
+  # Use torch path / robot TCP Z + CTWD to set arc height (KRL/CSV/KRC stream).
+  # Alias: enable_torch_z: true
+  # Leave false when path z_mm is only a substrate datum (often 0).
+  use_torch_z: false
+  # enable_torch_z: false
+
+  # Optional grid overrides (else from config/presets.yaml via preset:):
+  # domain_mm: [80, 40, 30]   # X,Y,Z mm — Z must exceed plate thickness
+  # dx_mm: 0.3
+  # plate_thickness_mm: 10.0  # alias; prefer top-level plate: block
+  # plate_size_mm: [50, 25]
+  # plate_origin_mm: [15, 7.5]
+  # plate_length_mm: 50
+  # plate_width_mm: 25
+  # substrate_thickness_mm: 10.0
+
+
+# -----------------------------------------------------------------------------
+# plate:  substrate coupon (can be smaller than domain → side air / edge cooling)
+# -----------------------------------------------------------------------------
+plate:
+  thickness_mm: 5.0
+  size_mm: [100, 75]          # L×W; default centered in domain XY
+  # origin_mm: [15, 7.5]     # optional lower-left instead of centering
+  # length_mm: 50            # alias pair instead of size_mm
+  # width_mm: 25
+  # domain_mm: [80, 40, 30]  # optional; same meaning as simulation.domain_mm
+  # dx_mm: 0.3
+
+
+# -----------------------------------------------------------------------------
+# material / calibration
+# -----------------------------------------------------------------------------
+# Path to material card (status: calibrated | placeholder).
+# Bundled: materials/validated/ER70S-6.v1.yaml
+#          materials/validated/SS316L.v1.yaml
+# Surfactant model (heiple | sahoo) lives INSIDE the material YAML, not here.
+material: materials/validated/ER70S-6.v1.yaml
+
+# Optional calibration overlay after material load, or null.
+# Example: materials/calibration/ER70S-6.bead_on_plate.yaml
+calibration: null
+
+
+# -----------------------------------------------------------------------------
+# Coordinate frame (robot / table ↔ sim)
+# -----------------------------------------------------------------------------
+# Optional path to jobs/frames/*.yaml  (or WAAM_FRAME env).
+# Keys in that file: name, origin_mm.{x,y,z}, substrate_z_mm,
+#                    sim_origin_offset_m.{x,y,z}
+# frame: jobs/frames/weld_table.yaml
+
+
+# -----------------------------------------------------------------------------
+# Torch path  (choose ONE of torch_path_csv OR torch_path)
+# -----------------------------------------------------------------------------
+# CSV columns: x_mm,y_mm,z_mm  — world / table mm. z_mm=0 is usually plate datum,
+# NOT contact-tip height (unless use_torch_z: true and z is robot TCP).
+torch_path_csv: jobs/paths/bead_line.csv
+
+# Inline waypoints (metres internally; enter mm here). Ignored if CSV is set.
+# torch_path:
+#   - {x_mm: 5.0, y_mm: 10.0, z_mm: 0.0}
+#   - {x_mm: 30.0, y_mm: 10.0, z_mm: 0.0}
+
+
+# -----------------------------------------------------------------------------
+# Heat source model
+# -----------------------------------------------------------------------------
+# Options (aliases in parentheses):
+#   gaussian2d              — surface Gaussian (default if omitted)
+#   goldak | goldak3d | doubleellipsoid — Goldak double-ellipsoid volume
+#   conical | conicalvolume | cone      — conical volume source
+heat_source: goldak
+
+# Required / used when heat_source is goldak-family. Semi-axes in mm.
+# Constraint: ff + fr must equal 2 (loader normalizes if not).
+goldak:
+  # Front / rear heat fraction weights (Goldak f_f, f_r)
+  ff: 0.6
+  fr: 1.4
+  # Travel-direction semi-axes (front / rear)
+  a_front_mm: 2.0
+  a_rear_mm: 4.0
+  # Transverse semi-axis
+  b_mm: 2.0
+  # Depth semi-axis — larger → more substrate penetration
+  c_mm: 1.2
+  # Legacy (optional): used as c if c_mm omitted
+  # depth_front_mm: 2.0
+  # depth_rear_mm: 4.0
+  # If axes omitted: scale a,b from arc σ. Default 1.0
+  # sigma_scale: 1.0
+
+# Used only when heat_source: conical | cone | conicalvolume
+# conical:
+#   sigma_scale: 1.2
+
+
+# -----------------------------------------------------------------------------
+# arc_physics:  penetration, vapor ceiling, surface pressure model
+# -----------------------------------------------------------------------------
+arc_physics:
+  # Optional Gaussian σ override (mm). Also: process.arc_sigma_mm
+  # sigma_mm: 2.0
+
+  # Exponential attenuation depth of arc heat in solid (mm).
+  # Larger → deeper substrate melting for the same power.
+  penetration_mm: 2.0
+
+  # Soft temperature / enthalpy ceiling (kelvin). HUD warns if T_peak exceeds this.
+  T_vapor_cap_K: 3200.0
+
+  # Same meaning as simulation.arc_surface_weighting
+  surface_weighting: true
+
+  # Arc pressure amplitude model on the free surface.
+  # Options: lin_eagar | constant
+  #   lin_eagar — Lin & Eagar: p0 ∝ μ0 I² / σ_p²  (physics_tier full default)
+  #   constant  — use pressure_pa below
+  pressure_model: lin_eagar
+
+  # Peak pressure (Pa) when pressure_model: constant
+  # pressure_pa: 500.0
+
+  # Pressure footprint σ (mm). null / omit → use arc heat σ
+  # pressure_sigma_mm: null
+
+
+# -----------------------------------------------------------------------------
+# advanced_physics:  MHD, gas jet, vapor / recoil constants
+# -----------------------------------------------------------------------------
+advanced_physics:
+  # Shielding-gas jet speed (m/s) for gas-shear traction
+  gas_jet_velocity_m_s: 12.0
+  # Dimensionless scale on gas-shear force
+  gas_shear_coeff: 1.0
+
+  # Electrical conductivity (S/m) for Lorentz J solve
+  sigma_liquid_Sm: 1.0e6
+  sigma_solid_Sm: 1.0e5
+  # Jacobi iterations for Lorentz potential (raise if viewer warns non-converge)
+  lorentz_jacobi_iters: 200
+
+  # Recoil / vapor model (used when enable_recoil: true)
+  T_boiling_K: 3100.0
+  L_vapor_J_kg: 6.0e6
+  R_spec_vapor_J_kgK: 450.0
+  # Accommodation factor C_acc in p_recoil = C_acc * P_sat  (typical ≈ 0.54)
+  # recoil_accommodation: 0.54
+
+
+# -----------------------------------------------------------------------------
+# process:  weld schedule / process sheet
+# -----------------------------------------------------------------------------
+# Arc thermal power ≈ current_A × voltage_V × power_factor × duty_cycle × arc_efficiency
+process:
+  current_A: 120                 # amperes (average / RMS-equivalent)
+  voltage_V: 18                  # volts
+  # Optional AC / pulse electrical factors (default 1.0 if omitted)
+  # power_factor: 1.0             # real-power correction for AC
+  # duty_cycle: 1.0               # arc-on fraction (pulsed)
+
+  # Fraction of electrical power that becomes heat in the workpiece (0–1)
+  arc_efficiency: 0.70
+
+  # Optional arc Gaussian radius (mm); overrides default ~2 mm
+  # arc_sigma_mm: 2.0
+
+  travel_speed_mm_s: 8           # torch speed along path (mm/s)
+  wire_feed_m_min: 2.5           # wire feed (m/min) → deposition mass rate
+  wire_diameter_mm: 1.2          # filler diameter (mm)
+  # Characteristic wire length per droplet when freq is inferred:
+  #   f ≈ (wire_feed_m_min/60) / (droplet_length_mm/1000)
+  droplet_length_mm: 3.0
+
+  T_ambient_K: 293               # ambient / initial plate temperature (K)
+
+  stickout_mm: 12.0              # exposed wire stick-out (mm); CTWD preheat
+  ctwd_mm: 15.0                  # contact-tip-to-work distance (mm)
+
+  # Droplet transfer heuristic.
+  # Options: auto | globular | spray | pulsed
+  #   auto     — pick from current / WFS heuristics
+  #   globular — larger, slower drops
+  #   spray    — finer, faster
+  #   pulsed   — uses pulse_frequency_hz
+  transfer_mode: auto
+  # Alias accepted: droplet_transfer_mode: ...
+
+  # Explicit detachment rate (Hz). If set, overrides wire_feed / length inference.
+  #droplet_freq_hz: 44.0
+  # Used when transfer_mode: pulsed
+  #pulse_frequency_hz: 90.0
+  # Deterministic ± size modulation factor (0 = none)
+  droplet_size_jitter: 0.12
+  # Forward tilt of impact relative to travel (degrees)
+  impact_lead_angle_deg: 8.0
+
+
+# -----------------------------------------------------------------------------
+# deposition:  how wire metal is placed and frozen into a bead
+# -----------------------------------------------------------------------------
+deposition:
+  # Temperature excess of deposited droplets above liquidus (K)
+  superheat_K: 500.0
+  # Gaussian footprint width scale. Lower → taller / narrower crown.
+  # Typical ~0.8–1.5; very low (e.g. 0.6) stacks unrealistically.
+  footprint_sigma_scale: 1.2
+  # Distance behind arc (mm) scanned for trailing solidification
+  trailing_solidify_lookback_mm: 6.0
+  # Freeze when T < liquidus + this margin (K)
+  trailing_solidify_temp_margin_K: 10.0
+
+
+# -----------------------------------------------------------------------------
+# surface_wetting
+# -----------------------------------------------------------------------------
+surface_wetting:
+  # Static contact angle (degrees). 0 = perfect wetting, 90 = neutral, >90 = non-wetting.
+  # Needs simulation.enable_wetting: true
+  contact_angle_deg: 75.0
+
+
+# -----------------------------------------------------------------------------
+# heat_loss:  free-surface / boundary cooling
+# -----------------------------------------------------------------------------
+heat_loss:
+  convection: true               # Newton's law cooling
+  radiation: true                # Stefan–Boltzmann
+  h_conv: 35.0                   # W/(m²·K) convective coefficient
+  # eps_rad: 0.4                 # emissivity (0–1); omit → twin default
+
+
+# -----------------------------------------------------------------------------
+# electrical:  stick-out resistive heating (with enable_ctwd)
+# -----------------------------------------------------------------------------
+# electrical:
+#   rho_e_ohm_m: 1.0e-6         # wire electrical resistivity (Ω·m)
+#   eta_stick: 0.5               # fraction of I²R stick-out heat retained in wire
+
+
+# -----------------------------------------------------------------------------
+# Multi-layer / interpass
+# -----------------------------------------------------------------------------
+# Nominal Z rise per layer (mm) for multi-pass jobs
+# layer_height_mm: 1.2
+
+# interpass:
+#   cooling_steps: 80            # idle physics steps between passes
+#   travel_speed_mm_s: 20        # non-welding reposition speed (mm/s)
+
+
+# -----------------------------------------------------------------------------
+# reference:  experimental / macrograph targets (docs & reporting; not enforced)
+# -----------------------------------------------------------------------------
+reference:
+  pool_width_mm: 7.0
+  pool_depth_mm: 3.0
+  source: macrograph_ER70S-6_bead_on_plate
+  # Optional HAZ bounds (K) used by some reports
+  # haz_T_peak_min_K: 600
+  # haz_T_peak_max_K: 3200
+
+
+# -----------------------------------------------------------------------------
+# model_reference:  expected simulator envelope for CI / regression
+# -----------------------------------------------------------------------------
+model_reference:
+  # Optional grid identity for the check
+  grid: [88, 44, 44]
+  dx_mm: 0.0003                  # metres in some jobs historically; prefer documenting dx
+  n_steps: 2000
+  pool_width_mm: 4.2
+  pool_depth_mm: 5.4
+
+
+# -----------------------------------------------------------------------------
+# probes:  named sample points (mm) recorded during the run
+# -----------------------------------------------------------------------------
+probes:
+  - name: substrate_behind_arc
+    x_mm: 8.0
+    y_mm: 20.0
+    z_mm: 1.5
+  # - name: pool_center
+  #   x_mm: 15.0
+  #   y_mm: 10.0
+  #   z_mm: 2.0
+
+
+# =============================================================================
+# Quick “what changes melt depth?” cheat sheet
+# =============================================================================
+# Deeper melt:  ↑ current_A / voltage_V / arc_efficiency
+#               ↑ goldak.c_mm / arc_physics.penetration_mm
+#               ↓ travel_speed_mm_s
+#               thicker heat dump (disable arc_surface_weighting)
+# Shallower:    opposite; use preset: standard (thicker plate than minimal);
+#               lower deposition.superheat_K; enable_recoil only if intentional
+# Bead shape:   footprint_sigma_scale, contact_angle_deg, wire_feed_m_min,
+#               enable_bead_freeze / trailing_solidify_*
+# Stability:    enable_enthalpy_cap, T_vapor_cap_K, lorentz_jacobi_iters,
+#               physics_tier: flow (fewer forces) for debugging
+# =============================================================================

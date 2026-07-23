@@ -34,8 +34,8 @@ def run(n_steps_layer1: int = 400, n_steps_layer2: int = 400, min_delta_liq: int
     # Layer 2 return pass at raised z (third waypoint in two_layer.yaml path)
     for step in range(n_steps_layer2):
         x = 25e-3 - step * twin.travel_speed_m_s * g.dt
-        z = 1.2e-3
-        twin.step(x, cy, is_welding=True)
+        z = 1.2e-3  # layer-2 torch height (was computed but never passed)
+        twin.step(x, cy, is_welding=True, torch_z_m=z)
 
     fl_after_l2 = int((g.f_l.to_numpy() > 0.5).sum())
     T_max = float(g.T_max.to_numpy().max())

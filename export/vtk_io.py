@@ -66,6 +66,7 @@ def _prepare_derived(twin: "WAAMTwin", tiers: Sequence[int]) -> None:
     if TIER_DERIVED not in tiers:
         return
     g = twin.grid
+    g.ensure_export_buffers()
     kernels.compute_curvature_field(
         g.phi, g.flags, g.kappa_field,
         g.FLAG_GAS, g.nx, g.ny, g.nz,
@@ -113,7 +114,13 @@ def export_volume(
         grid_pv.cell_data["Cell_Flags"] = g.flags.to_numpy().ravel(order="F")
         grid_pv.cell_data["T_max_K"] = g.T_max.to_numpy().ravel(order="F")
         grid_pv.cell_data["T_prev_K"] = g.T_prev.to_numpy().ravel(order="F")
-        grid_pv.cell_data["Cooling_Rate_Ks"] = g.dT_dt.to_numpy().ravel(order="F")
+        # dT_dt is (T − T_prev)/dt, i.e. positive while HEATING. The cooling
+        # rate (positive while cooling, the metallurgically meaningful sign)
+        # is its negation — previously the raw signal was exported under the
+        # cooling-rate name, flipping the sign of every reported CCT value.
+        dT_dt_np = g.dT_dt.to_numpy()
+        grid_pv.cell_data["dTdt_Ks"] = dT_dt_np.ravel(order="F")
+        grid_pv.cell_data["Cooling_Rate_Ks"] = (-dT_dt_np).ravel(order="F")
         grid_pv.cell_data["Enthalpy_Jm3"] = g.H.to_numpy().ravel(order="F")
         grid_pv.cell_data["Time_above_800C_s"] = g.time_above_800_s.to_numpy().ravel(order="F")
         grid_pv.cell_data["Time_above_1100C_s"] = g.time_above_1100_s.to_numpy().ravel(order="F")
@@ -124,8 +131,10 @@ def export_volume(
         grid_pv.cell_data["Speed_ms"] = speed.ravel(order="F")
         grid_pv.cell_data["Density_lu"] = g.rho.to_numpy().ravel(order="F")
         cs2 = 1.0 / 3.0
-        p_pa = g.rho.to_numpy() * cs2 * g.mat.rho * (g.dx / g.dt) ** 2
-        grid_pv.cell_data["Pressure_Pa"] = p_pa.ravel(order="F")
+        # Gauge pressure: p = cs²·(ρ_lu − 1)·ρ_phys·(dx/dt)². Using the raw
+        # ρ_lu gave a huge constant offset that swamped the dynamic signal.
+        p_pa = (g.rho.to_numpy() - 1.0) * cs2 * g.mat.rho * (g.dx / g.dt) ** 2
+        grid_pv.cell_data["Pressure_Pa_gauge"] = p_pa.ravel(order="F")
 
     if TIER_MATERIAL in tiers and twin.use_material_tables:
         grid_pv.cell_data["RhoCp_Jm3K"] = g.cp_rho_field.to_numpy().ravel(order="F")
@@ -143,6 +152,7 @@ def export_volume(
         fmag = np.sqrt(fx ** 2 + fy ** 2 + fz ** 2)
         grid_pv.cell_data["BodyForce_mag_ms2"] = fmag.ravel(order="F")
         if twin.enable_lorentz:
+            g.ensure_lorentz_fields()
             grid_pv.cell_data["CurrentDensity_X_Am2"] = g.Jx.to_numpy().ravel(order="F")
             grid_pv.cell_data["CurrentDensity_Y_Am2"] = g.Jy.to_numpy().ravel(order="F")
             grid_pv.cell_data["CurrentDensity_Z_Am2"] = g.Jz.to_numpy().ravel(order="F")
@@ -181,6 +191,7 @@ def export_surface(
 
     g = twin.grid
     if include_kappa:
+        g.ensure_export_buffers()
         kernels.compute_curvature_field(
             g.phi, g.flags, g.kappa_field,
             g.FLAG_GAS, g.nx, g.ny, g.nz,
@@ -199,7 +210,11 @@ def export_surface(
 
     point_grid = grid_pv.cell_data_to_point_data()
     surf = None
-    for scalar in ("Liquid_Fraction", "phi"):
+    # φ=0.5 is the metal/gas free surface (the bead profile). Liquid_Fraction
+    # =0.5 is the melt front — only used as fallback when VOF is disabled and
+    # phi carries no interface. (Previously f_l was tried first, so the
+    # "bead_surface" export was silently the melt front.)
+    for scalar in ("phi", "Liquid_Fraction"):
         try:
             candidate = point_grid.contour([0.5], scalars=scalar)
         except Exception:

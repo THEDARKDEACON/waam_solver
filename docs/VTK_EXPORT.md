@@ -52,7 +52,8 @@ These are **live GPU fields** on `WAAMGrid`, updated each LBM timestep in [`solv
 | `Cell_Flags` | `flags` | bitmask | `0` fluid, `1` solid (substrate/walls), `2` gas, `4` interface (VOF). Updated from φ when VOF is on. |
 | `T_max_K` | `T_max` | K | Running maximum of `T` per cell (HAZ envelope). Updated after thermal step; gas cells skipped. [`kernels.update_T_max`] |
 | `T_prev_K` | `T_prev` | K | Temperature at the **previous** timestep (used internally for cooling rate). |
-| `Cooling_Rate_Ks` | `dT_dt` | K/s | `(T − T_prev) / dt` each step; then `T_prev ← T`. Gas cells skipped. [`kernels.update_cooling_rate`] |
+| `dTdt_Ks` | `dT_dt` | K/s | Raw `(T − T_prev) / dt` (positive while heating). Gas cells skipped. [`kernels.update_cooling_rate`] |
+| `Cooling_Rate_Ks` | derived | K/s | `−dT_dt`: positive while **cooling** (metallurgical sign convention for CCT comparisons). |
 | `Enthalpy_Jm3` | `H` | J/m³ | Primary thermal conserved variable. Advected/diffused; incremented by arc heat, droplet deposition, boundary losses. |
 | `Time_above_800C_s` | `time_above_800_s` | s | Cumulative time `T ≥ 1073.15 K` (800 °C). [`kernels.update_time_above_T`] |
 | `Time_above_1100C_s` | `time_above_1100_s` | s | Cumulative time `T ≥ 1373.15 K` (1100 °C). |
@@ -62,7 +63,7 @@ These are **live GPU fields** on `WAAMGrid`, updated each LBM timestep in [`solv
 | `Velocity_Z_ms` | `uz` | m/s | Same conversion. |
 | `Speed_ms` | derived | m/s | `√(ux² + uy² + uz²)` in m/s at export. |
 | `Density_lu` | `rho` | lu | LBM density from distribution moments (≈ 1 in fluid). |
-| `Pressure_Pa` | derived | Pa | Ideal-gas estimate from LBM density: `P = ρ_lu × cs² × ρ_phys × (dx/dt)²`, `cs² = 1/3`. Illustrative, not a full compressible solver. |
+| `Pressure_Pa_gauge` | derived | Pa | Gauge pressure from LBM density: `P = (ρ_lu − 1) × cs² × ρ_phys × (dx/dt)²`, `cs² = 1/3`. Illustrative, not a full compressible solver. |
 
 ### Thermal / phase pipeline (where Tier 0 fields come from)
 
@@ -119,7 +120,7 @@ Lorentz fields (only if `enable_lorentz`):
 | `CurrentDensity_X_Am2` | `Jx` | A/m² | **J** = −σ∇φ_e from solved electric potential in the weld pool [`kernels.elec_compute_J`] |
 | `CurrentDensity_Y_Am2` | `Jy` | A/m² | Same. |
 | `CurrentDensity_Z_Am2` | `Jz` | A/m² | Same. |
-| `MagneticField_X_T` | `Bx` | T | **B** = μ₀ ∇×**J** (central differences) [`kernels.elec_compute_B_from_J`] |
+| `MagneticField_X_T` | `Bx` | T | Axisymmetric Ampère model: `B_θ = μ₀ I_enc(r, z) / 2πr` from radially binned axial current [`kernels.elec_B_axisymmetric`] |
 | `MagneticField_Y_T` | `By` | T | Same. |
 | `MagneticField_Z_T` | `Bz` | T | Same. |
 
@@ -143,8 +144,9 @@ Computed in Taichi/NumPy when Tier 3 is requested; not stored on GPU between ste
 
 1. Sample `phi`, `Liquid_Fraction`, `Temperature_K`, optional `Curvature_kappa` on the volume grid.
 2. Convert cell data → point data.
-3. Contour at **0.5** on `Liquid_Fraction` first; if empty, try `phi = 0.5`.
-4. Save the resulting mesh (bead crown / pool boundary).
+3. Contour at **`phi = 0.5`** (the metal/gas free surface — the bead profile);
+   if empty (VOF disabled), fall back to `Liquid_Fraction = 0.5` (melt front).
+4. Save the resulting mesh (bead crown / free surface).
 
 Requires `enable_vof` and a visible metal–gas interface. Empty surface → export skipped with a log message.
 

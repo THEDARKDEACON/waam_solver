@@ -25,14 +25,18 @@ def tcp_mm_to_sim_m(
     tcp_xyz_mm: list[float] | np.ndarray,
     frame: WeldFrame | None = None,
 ) -> tuple[float, float, float]:
-    """Convert KUKA TCP [mm] to simulation metres using weld-table frame."""
+    """Convert KUKA TCP [mm] to world metres using the weld-table origin.
+
+    NOTE: sim_origin_offset_m is intentionally NOT applied here —
+    ``WAAMTwin.step()`` subtracts it (single authority). Applying it in both
+    places shifted the torch by twice the configured offset.
+    """
     frame = frame or load_weld_frame()
     arr = np.asarray(tcp_xyz_mm, dtype=np.float64)
     ox, oy, oz = frame.origin_mm
-    sx, sy, _ = frame.sim_origin_offset_m
     return (
-        (float(arr[0]) - ox) / 1000.0 - sx,
-        (float(arr[1]) - oy) / 1000.0 - sy,
+        (float(arr[0]) - ox) / 1000.0,
+        (float(arr[1]) - oy) / 1000.0,
         (float(arr[2]) - oz) / 1000.0,
     )
 

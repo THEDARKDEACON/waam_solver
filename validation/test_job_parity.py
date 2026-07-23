@@ -53,7 +53,7 @@ def _run_job(n_steps: int, preset: str | None, grid: tuple[int, int, int, float]
     return W_mm, D_mm
 
 
-def run(n_steps: int = 800, threshold_pct: float = 70.0) -> float:
+def run(n_steps: int = 800, threshold_pct: float = 50.0) -> float:
     init_taichi(backend=os.environ.get("WAAM_BACKEND", "cpu"))
     w_min, d_min = _run_job(n_steps, "minimal", None)
     w_std, d_std = _run_job(n_steps, None, (88, 44, 44, 3.0e-4))

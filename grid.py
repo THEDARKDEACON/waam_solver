@@ -73,11 +73,18 @@ class WAAMGrid:
         dx: float,                  # Physical cell size [m]
         mat: MaterialProps,
         max_tracers: int = 50_000,
+        allocate_lorentz: bool = False,
+        allocate_vof: bool = False,
+        allocate_export: bool = False,
     ):
         self.nx, self.ny, self.nz = nx, ny, nz
         self.dx = dx
         self.mat = mat
         self.max_tracers = max_tracers
+        self._has_lorentz = False
+        self._has_vof_buf = False
+        self._has_export = False
+        self._n_optional_volume = 0
 
         # ── LBM non-dimensionalisation ────────────────────────────────────
         # We target Ma ≈ 0.05 for stability with molten steel velocities.
@@ -94,13 +101,36 @@ class WAAMGrid:
 
         # Thermal diffusivity in lattice units
         alpha_lu = mat.alpha * self.dt / (dx ** 2)
+        self.alpha_lu = alpha_lu
         self.tau_T = 3.0 * alpha_lu + 0.5  # Thermal relaxation time
 
         print(f"[WAAMGrid] Domain: {nx}×{ny}×{nz}  |  dx={dx*1000:.3f}mm  "
               f"dt={self.dt*1e6:.3f}µs  τ={self.tau:.4f}  τ_T={self.tau_T:.4f}")
 
+        # ── Stability checks (previously printed but never enforced) ─────
+        if self.tau <= 0.5:
+            raise ValueError(
+                f"LBM unstable: τ={self.tau:.4f} ≤ 0.5 "
+                f"(ν_lu={nu_lu:.3e}). Reduce dx or increase viscosity."
+            )
+        if self.tau < 0.505:
+            print(f"[WAAMGrid] WARNING: τ={self.tau:.4f} is marginally stable (< 0.505)")
+        # Explicit FTCS diffusion limit for the finite-difference thermal step:
+        # alpha_lu ≤ 1/6 in 3D.
+        if alpha_lu > 1.0 / 6.0:
+            raise ValueError(
+                f"Thermal step unstable: α_lu={alpha_lu:.4f} > 1/6 "
+                f"(explicit 3D diffusion limit). Reduce dx or dt ratio."
+            )
+        if alpha_lu > 0.15:
+            print(f"[WAAMGrid] WARNING: α_lu={alpha_lu:.4f} close to the 1/6 stability limit")
+
         # ── GPU field allocation (strict SoA) ────────────────────────────
+        # Core fields always; Lorentz / VOF scratch / export are optional and
+        # can be allocated lazily via ensure_* (jobs often flip flags after
+        # construction).
         shape3 = (nx, ny, nz)
+        self._shape3 = shape3
 
         # Distribution functions — two full sets for ping-pong streaming
         self.f_a = ti.field(dtype=ti.f32, shape=(Q, nx, ny, nz))
@@ -117,33 +147,30 @@ class WAAMGrid:
         self.alpha_lu_field = ti.field(dtype=ti.f32, shape=shape3) # α_lu per cell
         self.dgamma_lu_field = ti.field(dtype=ti.f32, shape=shape3)  # dγ/dT in LBM units
         self.tau_field = ti.field(dtype=ti.f32, shape=shape3)        # per-cell SRT τ
-        self.phi_tmp = ti.field(dtype=ti.f32, shape=shape3)    # VOF advection buffer
         self.dT_dt = ti.field(dtype=ti.f32, shape=shape3)   # Cooling rate [K/s]
         self.T_prev = ti.field(dtype=ti.f32, shape=shape3)  # Previous-step T
         # Time-at-temperature integrals [s] (HAZ research)
         self.time_above_800_s = ti.field(dtype=ti.f32, shape=shape3)
         self.time_above_1100_s = ti.field(dtype=ti.f32, shape=shape3)
         self.time_above_solidus_s = ti.field(dtype=ti.f32, shape=shape3)
-        # Export / diagnostics buffers (filled on demand)
-        self.kappa_field = ti.field(dtype=ti.f32, shape=shape3)
-        self.vorticity_mag = ti.field(dtype=ti.f32, shape=shape3)
         # End-of-step body-force snapshot for VTK [lu/ts²]
         self.Fx_snap = ti.field(dtype=ti.f32, shape=shape3)
         self.Fy_snap = ti.field(dtype=ti.f32, shape=shape3)
         self.Fz_snap = ti.field(dtype=ti.f32, shape=shape3)
-        # Electromagnetic (Lorentz) fields
-        self.phi_elec = ti.field(dtype=ti.f32, shape=shape3)
-        self.phi_elec_tmp = ti.field(dtype=ti.f32, shape=shape3)
-        self.sigma_elec = ti.field(dtype=ti.f32, shape=shape3)
-        self.elec_source = ti.field(dtype=ti.f32, shape=shape3)
-        self.Jx = ti.field(dtype=ti.f32, shape=shape3)
-        self.Jy = ti.field(dtype=ti.f32, shape=shape3)
-        self.Jz = ti.field(dtype=ti.f32, shape=shape3)
-        self.Bx = ti.field(dtype=ti.f32, shape=shape3)
-        self.By = ti.field(dtype=ti.f32, shape=shape3)
-        self.Bz = ti.field(dtype=ti.f32, shape=shape3)
         self.surface_k_buf = ti.field(dtype=ti.f32, shape=())  # arc height query
-        self.deposit_vol_buf = ti.field(dtype=ti.f32, shape=())  # last droplet volume [m³]
+        self.deposit_vol_buf = ti.field(dtype=ti.f32, shape=())   # droplet budget accumulator [m³]
+        self.deposit_real_buf = ti.field(dtype=ti.f32, shape=())  # actually-converted volume [m³]
+        self.arc_norm_buf = ti.field(dtype=ti.f32, shape=())      # arc Gaussian weight sum
+        # Telemetry reduction scratch (host reads a few scalars, not volumes)
+        self.telem_n = ti.field(dtype=ti.i32, shape=())
+        self.telem_T_peak = ti.field(dtype=ti.f32, shape=())
+        self.telem_cool = ti.field(dtype=ti.f32, shape=())
+        self.telem_u2 = ti.field(dtype=ti.f32, shape=())
+        self.telem_i_sum = ti.field(dtype=ti.f32, shape=())
+        self.telem_i_min = ti.field(dtype=ti.f32, shape=())
+        self.telem_i_max = ti.field(dtype=ti.f32, shape=())
+        self.telem_T_global = ti.field(dtype=ti.f32, shape=())
+        self.telem_fl_slice = ti.field(dtype=ti.f32, shape=(ny, nz))
 
         # Tracer particles for porosity tracking
         self.porosity_pos    = ti.Vector.field(3, dtype=ti.f32, shape=self.max_tracers)
@@ -178,10 +205,61 @@ class WAAMGrid:
         self.w.from_numpy(np.array(_W,   dtype=np.float32))
         self.opp.from_numpy(np.array(_OPP, dtype=np.int32))
 
+        # Core volume count: 24 f32 3D + flags (count flags as 1 volume slot)
+        # rho T T_max H f_l phi cp alpha dgamma tau dTdt Tprev ×3 HAZ Fxsnap×3 ux uy uz Fx Fy Fz = 24
+        self._n_core_volume = 24
+
+        if allocate_vof:
+            self.ensure_vof_buffers()
+        if allocate_lorentz:
+            self.ensure_lorentz_fields()
+        if allocate_export:
+            self.ensure_export_buffers()
+
         # ── Pointer swap state ───────────────────────────────────────────
         # We swap src/dst each step to avoid copying distribution data.
         self._read_buf  = self.f_a
         self._write_buf = self.f_b
+
+    # ──────────────────────────────────────────────────────────────────────
+    #  Optional field allocation (lazy; jobs may enable features post-init)
+    # ──────────────────────────────────────────────────────────────────────
+
+    def ensure_vof_buffers(self) -> None:
+        if self._has_vof_buf:
+            return
+        self.phi_tmp = ti.field(dtype=ti.f32, shape=self._shape3)
+        self._has_vof_buf = True
+        self._n_optional_volume += 1
+
+    def ensure_lorentz_fields(self) -> None:
+        if self._has_lorentz:
+            return
+        shape3 = self._shape3
+        self.phi_elec = ti.field(dtype=ti.f32, shape=shape3)
+        self.phi_elec_tmp = ti.field(dtype=ti.f32, shape=shape3)
+        self.sigma_elec = ti.field(dtype=ti.f32, shape=shape3)
+        self.elec_source = ti.field(dtype=ti.f32, shape=shape3)
+        self.Jx = ti.field(dtype=ti.f32, shape=shape3)
+        self.Jy = ti.field(dtype=ti.f32, shape=shape3)
+        self.Jz = ti.field(dtype=ti.f32, shape=shape3)
+        self.Bx = ti.field(dtype=ti.f32, shape=shape3)
+        self.By = ti.field(dtype=ti.f32, shape=shape3)
+        self.Bz = ti.field(dtype=ti.f32, shape=shape3)
+        self.n_elec_bins = 64
+        self.elec_rad_bins = ti.field(dtype=ti.f32, shape=(self.nz, self.n_elec_bins))
+        self.elec_res_buf = ti.field(dtype=ti.f32, shape=())
+        self.elec_norm_buf = ti.field(dtype=ti.f32, shape=())
+        self._has_lorentz = True
+        self._n_optional_volume += 10
+
+    def ensure_export_buffers(self) -> None:
+        if self._has_export:
+            return
+        self.kappa_field = ti.field(dtype=ti.f32, shape=self._shape3)
+        self.vorticity_mag = ti.field(dtype=ti.f32, shape=self._shape3)
+        self._has_export = True
+        self._n_optional_volume += 2
 
     # ──────────────────────────────────────────────────────────────────────
     #  Public helpers
@@ -200,10 +278,12 @@ class WAAMGrid:
         return self._write_buf
 
     def estimated_vram_mb(self) -> float:
-        """Rough VRAM estimate based on field shapes."""
+        """VRAM estimate counting every currently allocated full-volume field."""
         n = self.nx * self.ny * self.nz
-        dist = 2 * Q * n * 4          # f_a, f_b
-        scalar = 30 * n * 4            # rho..EM fields + HAZ time + export buffers
-        vector = 6 * n * 4            # ux,uy,uz,Fx,Fy,Fz
-        tracers = self.max_tracers * (3 * 4 + 4) # pos(vec3) + active(int)
-        return (dist + scalar + vector + tracers) / (1024 ** 2)
+        dist = 2 * Q * n * 4
+        n_vol = self._n_core_volume + self._n_optional_volume + 1  # +flags
+        volume = n_vol * n * 4
+        bins = self.nz * getattr(self, "n_elec_bins", 0) * 4 if self._has_lorentz else 0
+        slice_buf = self.ny * self.nz * 4
+        tracers = self.max_tracers * (3 * 4 + 4)
+        return (dist + volume + bins + slice_buf + tracers) / (1024 ** 2)

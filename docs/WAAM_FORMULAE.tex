@@ -1,0 +1,798 @@
+% WAAM Digital Twin — Formula Reference
+% Compile: pdflatex WAAM_FORMULAE.tex  (run twice for TOC)
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=25mm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{bm}
+
+\title{WAAM Digital Twin --- Formula Reference}
+\author{waam\_twin project}
+\date{\today}
+
+\newcommand{\dd}{\mathrm{d}}
+\newcommand{\vect}[1]{\mathbf{#1}}
+\newcommand{\unit}[1]{\hat{\vect{#1}}}
+\newcommand{\fref}[1]{\par\smallskip\noindent\textit{References:} #1\par}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Consolidated LaTeX formulae for the WAAM (Wire Arc Additive Manufacturing) digital twin study.
+Equations are grouped by physics domain and aligned with the \texttt{waam\_twin} implementation
+(Taichi LBM + enthalpy--porosity + VOF), platform architecture, and validation references.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+%=============================================================================
+\section{Process inputs and energy balance}
+%=============================================================================
+
+\subsection{Electrical arc power}
+\begin{align}
+  P &= IV \label{eq:arc-power}\\
+  Q_{\mathrm{eff}} &= \eta\, IV \label{eq:qeff}
+\end{align}
+where $I$ is arc current [A], $V$ arc voltage [V], and $\eta$ arc thermal efficiency.
+\fref{\cite{Kou2003,Incropera2007,Radaj2003}}
+
+\subsection{Wire mass feed}
+Wire cross-sectional area $A_w = \pi d_w^2/4$:
+\begin{align}
+  \dot{m} &= \rho\, A_w\, v_{\mathrm{wire}}
+           = \rho\,\frac{\pi d_w^2}{4}\, v_{\mathrm{wire}} \label{eq:mdot}
+\end{align}
+with wire diameter $d_w$ [m], feed speed $v_{\mathrm{wire}}$ [m/s], density $\rho$ [kg/m$^3$].
+\fref{\cite{Wang2003,Lancaster1986,waam_twin2025}}
+
+\subsection{Droplet mass and volume}
+For droplet frequency $f_{\mathrm{drop}}$ [Hz] and interval $\Delta t_{\mathrm{drop}}$:
+\begin{align}
+  m_{\mathrm{drop}} &= \dot{m}\,\Delta t_{\mathrm{drop}}
+                    = \frac{\dot{m}}{f_{\mathrm{drop}}} \label{eq:mdrop}\\
+  V_{\mathrm{drop}} &= \frac{m_{\mathrm{drop}}}{\rho} \label{eq:vdrop}
+\end{align}
+\fref{\cite{Wang2003,Lancaster1986,waam_twin2025}}
+Equivalent spherical radius in grid cells (volume $V$, cell size $\Delta x$):
+\begin{equation}
+  r_{\mathrm{cells}} = \left(\frac{3V}{4\pi\,\Delta x^3}\right)^{1/3}
+\end{equation}
+\fref{\cite{Wang2003,waam_twin2025}}
+
+\subsection{Travel speed and heat input per unit length}
+\begin{equation}
+  q_{\mathrm{line}} = \frac{Q_{\mathrm{eff}}}{v_{\mathrm{travel}}}
+\end{equation}
+\fref{\cite{Rosenthal1946,Goldak1984,Kou2003}}
+
+%=============================================================================
+\section{Governing conservation equations}
+%=============================================================================
+
+\subsection{Continuity}
+\begin{equation}
+  \frac{\partial \rho}{\partial t} + \nabla\cdot(\rho\vect{u}) = 0
+\end{equation}
+In the incompressible LBM liquid region, $\rho \approx \rho_0$.
+\fref{\cite{Batchelor1967,Kruger2017}}
+
+\subsection{Momentum (Navier--Stokes)}
+\begin{equation}
+  \rho\left(\frac{\partial \vect{u}}{\partial t} + \vect{u}\cdot\nabla\vect{u}\right)
+  = -\nabla p + \nabla\cdot\bigl[\mu(\nabla\vect{u} + \nabla\vect{u}^{\mathsf T})\bigr]
+  + \rho\vect{g} + \vect{F}_{\mathrm{body}}
+  \label{eq:ns}
+\end{equation}
+Body-force contributions $\vect{F}_{\mathrm{body}}$ include Marangoni, Lorentz, buoyancy, recoil, gas shear, and droplet impact (Sections~\ref{sec:forces}--\ref{sec:droplet}).
+\fref{\cite{Oreper1984,Kou2003,Incropera2007}}
+
+\subsection{Energy / enthalpy}
+Primary conserved variable is volumetric enthalpy $H$ [J/m$^3$]:
+\begin{equation}
+  \frac{\partial H}{\partial t} + \vect{u}\cdot\nabla H = \nabla\cdot(k\nabla T) + \dot{q}_{\mathrm{arc}}
+  \label{eq:enthalpy-transport}
+\end{equation}
+with $k = \rho c_p \alpha$ and temperature $T$ recovered from $H$ (Section~\ref{sec:phase}).
+\fref{\cite{Voller1987,Incropera2007,Brent1988}}
+
+%=============================================================================
+\section{Heat sources}
+%=============================================================================
+
+\subsection{Gaussian surface flux}
+Two-dimensional Gaussian distribution on the pool surface (implementation in \texttt{inject\_arc\_heat}):
+\begin{align}
+  q(r) &= \frac{Q\,\eta}{2\pi\sigma^2}\,
+         \exp\!\left(-\frac{r^2}{2\sigma^2}\right) \label{eq:gaussian-flux}\\
+  \Delta H_{ijk} &= q(r)\,\frac{\Delta t}{\Delta x^3}
+\end{align}
+where $r$ is distance from arc centre and $\sigma$ is the Gaussian radius.
+\fref{\cite{Rykalin1951,Goldak1984,waam_twin2025}}
+
+\subsection{Goldak double-ellipsoid source}
+Classical Goldak (1984) form for front ($f$) and rear ($r$) ellipsoids:
+\begin{equation}
+  q(\xi,y,z) = \frac{6\sqrt{3}\,f\,Q}{\pi\sqrt{\pi}\,a\,b\,c}
+  \exp\!\left(-\frac{3\xi^2}{a^2} - \frac{3y^2}{b^2} - \frac{3z^2}{c^2}\right)
+\end{equation}
+with partition fractions $f_f + f_r = 1$ and semi-axes $(a,b,c)$.
+\fref{\cite{Goldak1984,Goldak1984b}}
+
+\textbf{Simplified 3D implementation} (\texttt{inject\_goldak\_heat}): transverse radius $\sigma$, depth scales $d_f$, $d_r$, travel direction sign $s$:
+\begin{align}
+  r_{xy}^2 &= (x-x_0)^2 + (y-y_0)^2 \\
+  \xi_{\mathrm{eff}} &= \frac{z-z_0}{d_{f/r}} \\
+  r^2 &= r_{xy}^2 + 4\,\xi_{\mathrm{eff}}^2 \\
+  q &= \frac{Q\,\eta\,f_{f/r}}{2\pi\sigma^2}
+      \exp\!\left(-\frac{r^2}{2\sigma^2}\right)
+\end{align}
+with $f_{f/r}$ selected by $(x-x_0)\,s \gtrless 0$.
+\fref{\cite{Goldak1984,Goldak1984b,waam_twin2025}}
+
+\subsection{Arc penetration attenuation}
+Below-surface weighting (exponential attenuation over penetration depth $\delta$):
+\begin{equation}
+  w_{\mathrm{dep}}(z) = \exp\!\left(-\frac{\max(0,\, z_{\mathrm{arc}}-z)}{\delta}\right)
+\end{equation}
+\fref{\cite{Goldak1984,Rosenthal1946,waam_twin2025}}
+
+\subsection{Rosenthal validation (2D trailing edge)}
+Analytical far-field reference (\texttt{validation/rosenthal.py}):
+\begin{align}
+  \sigma_R &= \frac{\rho c_p v}{2k} \\
+  T - T_0 &= \frac{\eta Q}{2\pi k}\,\frac{1}{|x|}\,
+            \exp(\sigma_R x), \qquad x < 0 \label{eq:rosenthal}
+\end{align}
+\fref{\cite{Rosenthal1946,waam_twin2025}}
+
+%=============================================================================
+\section{Thermal transport and phase change}
+\label{sec:phase}
+%=============================================================================
+
+\subsection{Fourier conduction}
+\begin{equation}
+  \vect{q} = -k\,\nabla T, \qquad
+  \alpha = \frac{k}{\rho c_p}
+\end{equation}
+\fref{\cite{Incropera2007,Carslaw1959}}
+
+\subsection{Enthalpy--porosity method}
+Define
+\begin{align}
+  H_{\mathrm{sol}} &= \rho c_p\, T_s \\
+  H_{\mathrm{liq}} &= H_{\mathrm{sol}} + \rho L_f
+\end{align}
+where $T_s$, $T_l$ are solidus and liquidus temperatures, $L_f$ specific latent heat.
+
+\textbf{Solid} ($H \le H_{\mathrm{sol}}$):
+\begin{align}
+  f_l &= 0, \qquad T = \frac{H}{\rho c_p}
+\end{align}
+
+\textbf{Mushy zone} ($H_{\mathrm{sol}} < H < H_{\mathrm{liq}}$):
+\begin{align}
+  f_l &= \frac{H - H_{\mathrm{sol}}}{\rho L_f} \\
+  T &= T_s + f_l\,(T_l - T_s)
+\end{align}
+
+\textbf{Liquid} ($H \ge H_{\mathrm{liq}}$):
+\begin{align}
+  f_l &= 1, \qquad T = T_l + \frac{H - H_{\mathrm{liq}}}{\rho c_p}
+\end{align}
+\fref{\cite{Voller1987,Brent1988,waam_twin2025}}
+
+\subsection{Lattice thermal update}
+In lattice units ($\alpha_{\mathrm{lu}} = \alpha\,\Delta t/\Delta x^2$):
+\begin{equation}
+  \frac{\partial H}{\partial t}\Big|_{\mathrm{cell}}
+  = -\vect{u}\cdot\nabla H + \rho c_p\,\alpha_{\mathrm{lu}}\,\nabla^2 T
+\end{equation}
+(first-order upwind advection, central diffusion).
+\fref{\cite{Incropera2007,Patankar1980,waam_twin2025}}
+
+\subsection{Enthalpy ceiling (vaporization cap)}
+\begin{equation}
+  H \le H_{\mathrm{vap}} = \rho c_p\, T_{\mathrm{vap,cap}} + \rho L_{\mathrm{vap}}
+\end{equation}
+\fref{\cite{Matsunawa1997,waam_twin2025}}
+
+\subsection{Stefan solidification benchmark}
+Stefan number and interface position (\texttt{test\_stefan\_solidification}):
+\begin{align}
+  \mathrm{Ste} &= \frac{c_p\,(T_{\mathrm{init}} - T_0)}{L_f} \\
+  \sqrt{\pi}\,\lambda\,\exp(\lambda^2)\,\mathrm{erf}(\lambda) &= \mathrm{Ste} \\
+  s(t) &= 2\lambda\sqrt{\alpha t}
+\end{align}
+\fref{\cite{Carslaw1959,Crank1984,waam_twin2025}}
+
+\subsection{Boundary heat losses}
+On gas-exposed cells:
+\begin{align}
+  q_{\mathrm{loss}} &= h_{\mathrm{conv}}\,(T - T_{\mathrm{amb}})
+                    + \varepsilon\,\sigma_{\mathrm{SB}}\,(T^4 - T_{\mathrm{amb}}^4) \\
+  H &\leftarrow H - q_{\mathrm{loss}}\,\frac{\Delta t}{\Delta x}\,\rho c_p
+\end{align}
+\fref{\cite{Incropera2007,Kou2003,waam_twin2025}}
+
+%=============================================================================
+\section{Lattice Boltzmann numerics}
+%=============================================================================
+
+\subsection{Lattice units}
+\begin{align}
+  \Delta t &= \Delta x\,\frac{u_{\mathrm{ref,lu}}}{u_{\mathrm{ref,phys}}} \\
+  \nu_{\mathrm{lu}} &= \frac{\mu}{\rho}\,\frac{\Delta t}{\Delta x^2}, \qquad
+  \tau = 3\nu_{\mathrm{lu}} + \tfrac{1}{2} \\
+  \alpha_{\mathrm{lu}} &= \alpha\,\frac{\Delta t}{\Delta x^2}, \qquad
+  \tau_T = 3\alpha_{\mathrm{lu}} + \tfrac{1}{2}
+\end{align}
+Target Mach number $\mathrm{Ma} = u_{\mathrm{ref,phys}}\,\Delta t/\Delta x \approx 0.05$.
+\fref{\cite{Kruger2017,Chen1998,waam_twin2025}}
+
+\subsection{D3Q19 equilibrium (SRT)}
+\begin{equation}
+  f_i^{\mathrm{eq}} = w_i\,\rho
+  \left(1 + 3\,\vect{e}_i\cdot\vect{u}
+  + \tfrac{9}{2}(\vect{e}_i\cdot\vect{u})^2
+  - \tfrac{3}{2}\vect{u}^2\right)
+\end{equation}
+\fref{\cite{Qian1992,Kruger2017,Chen1998}}
+
+\subsection{Guo forcing scheme (2002)}
+Velocity shift and forcing source:
+\begin{align}
+  \vect{u}^\ast &= \vect{u} + \frac{\tau}{\rho}\,\vect{F} \\
+  S_i &= w_i\left(1 - \frac{\omega}{2}\right)
+  \left[3\,\vect{e}_i\cdot\vect{F}
+  + 9(\vect{e}_i\cdot\vect{u})(\vect{e}_i\cdot\vect{F})
+  - 3\,\vect{u}\cdot\vect{F}\right]
+\end{align}
+Lattice force scaling: $F_{\mathrm{lu}} = F_{\mathrm{phys}}\,\Delta t^2/(\rho\,\Delta x)$.
+\fref{\cite{Guo2002,Kruger2017,waam_twin2025}}
+
+\subsection{Carman--Kozeny mushy-zone drag}
+Semi-implicit velocity correction before collision:
+\begin{equation}
+  \vect{u}_{\mathrm{final}} = \frac{\vect{u}^\ast}
+  {1 + C_K\,\dfrac{(1-f_l)^2}{f_l^3 + \varepsilon}}
+\end{equation}
+\fref{\cite{Voller1987,Poirier1987,waam_twin2025}}
+
+%=============================================================================
+\section{Free surface (VOF) and surface tension}
+%=============================================================================
+
+\subsection{VOF phase field}
+Volume fraction $\phi \in [0,1]$; interface where $|\nabla\phi| > \varepsilon$.
+\fref{\cite{Hirt1981,Rider2001}}
+
+\subsection{Continuum Surface Force (CSF)}
+Balanced-force surface tension:
+\begin{align}
+  \unit{n} &= \frac{\nabla\phi}{|\nabla\phi|} \\
+  \kappa &= -\nabla\cdot\unit{n} \\
+  \vect{F}_{\mathrm{CSF}} &= \gamma\,\kappa\,\nabla\phi
+\end{align}
+\fref{\cite{Brackbill1992,waam_twin2025}}
+
+\subsection{Marangoni force}
+Surface-tension gradient driven flow ($\mathrm{d}\gamma/\mathrm{d}T < 0$ for pure metals $\Rightarrow$ outward flow):
+\begin{align}
+  \nabla_s T &= (\mathbf{I} - \unit{n}\unit{n}^{\mathsf T})\,\nabla T \\
+  \vect{F}_M &= \frac{\mathrm{d}\gamma}{\mathrm{d}T}\,\nabla_s T\,|\nabla\phi|
+  \label{eq:marangoni}
+\end{align}
+Surface shear stress form (FEM boundary analogue):
+\begin{equation}
+  \tau_M = \frac{\mathrm{d}\gamma}{\mathrm{d}T}\,\nabla_s T
+\end{equation}
+\fref{\cite{Kou2003,Davis1987,Oreper1984,waam_twin2025}}
+
+\subsection{Wetting and contact angle}
+Young's law:
+\begin{equation}
+  \cos\theta = \frac{\gamma_{sv} - \gamma_{sl}}{\gamma_{lv}}
+\end{equation}
+\fref{\cite{deGennes2004,Brackbill1992,Ding2008}}
+Effective interface normal at wall:
+\begin{equation}
+  \unit{n}_{\mathrm{eff}} = \sin\theta\,\unit{n}_{\mathrm{wall}}
+  + \cos\theta\,\unit{t}_{\mathrm{wall}}
+\end{equation}
+Wall capillary curvature approximation:
+\begin{equation}
+  \kappa_{\mathrm{wall}} \approx \frac{2\cos\theta}{\Delta x}
+\end{equation}
+\fref{\cite{Brackbill1992,Ding2008,BEAD2025,waam_twin2025}}
+Capillary length:
+\begin{equation}
+  \lambda_c = \sqrt{\frac{\gamma}{\rho g}}
+\end{equation}
+\fref{\cite{deGennes2004,Ding2008,Brackbill1992,waam_twin2025}}
+
+\subsection{Bond number}
+\begin{equation}
+  \mathrm{Bo} = \frac{\rho g L^2}{\gamma}
+\end{equation}
+\fref{\cite{Batchelor1967,deGennes2004}}
+For steel-scale $L \sim 5\,\mathrm{mm}$, $\mathrm{Bo} \sim 0.1$: gravity is secondary to surface tension but affects crown height.
+\fref{\cite{Batchelor1967,waam_twin2025}}
+
+%=============================================================================
+\section{Weld-pool body forces}
+\label{sec:forces}
+%=============================================================================
+
+\subsection{Lorentz (electromagnetic) force}
+\begin{equation}
+  \vect{F}_{\mathrm{em}} = \vect{J}\times\vect{B}
+  \label{eq:lorentz}
+\end{equation}
+\textbf{Electrical potential} (conductive pool, $\sigma$ electrical conductivity):
+\begin{equation}
+  \nabla\cdot(\sigma\nabla\phi_e) = 0
+\end{equation}
+\textbf{Current density} (Ohm's law):
+\begin{equation}
+  \vect{J} = -\sigma\,\nabla\phi_e
+\end{equation}
+\textbf{Magnetic field} (Amp\`ere's law, magnetostatic approximation):
+\begin{align}
+  B_x &= \mu_0\left(\frac{\partial J_y}{\partial z} - \frac{\partial J_z}{\partial y}\right) \\
+  B_y &= \mu_0\left(\frac{\partial J_z}{\partial x} - \frac{\partial J_x}{\partial z}\right) \\
+  B_z &= \mu_0\left(\frac{\partial J_x}{\partial y} - \frac{\partial J_y}{\partial x}\right)
+\end{align}
+with $\mu_0 = 4\pi\times 10^{-7}\,\mathrm{H/m}$.
+\fref{\cite{Oreper1984,Jackson1986,Griffel1974,waam_twin2025}}
+
+\subsection{Boussinesq thermal buoyancy}
+\begin{equation}
+  F_z = -\rho\,g\,\beta\,(T - T_{\mathrm{ref}})\,f_l
+  \label{eq:boussinesq}
+\end{equation}
+where $\beta$ is volumetric thermal expansion coefficient.
+\fref{\cite{Oreper1984,Kou2003,Incropera2007}}
+
+\subsection{Hydrostatic gravity on liquid}
+\begin{equation}
+  \vect{F}_g = \rho\,\vect{g}\,f_l, \qquad
+  \vect{g} = (0,\,0,\,-g)
+  \label{eq:hydrostatic}
+\end{equation}
+Additive to Boussinesq term (\ref{eq:boussinesq}).
+\fref{\cite{waam_twin2025,BEAD2025}}
+
+\subsection{Vapor recoil pressure}
+\textbf{Constant model:}
+\begin{equation}
+  p_{\mathrm{recoil}} = p_0 \cdot f(T/T_{\mathrm{ref}})
+\end{equation}
+applied as downward surface pressure on the free surface.
+\fref{\cite{Matsunawa1997,waam_twin2025}}
+
+\textbf{Clausius--Clapeyron model} (\texttt{apply\_vapor\_recoil\_clausius\_clapeyron}):
+\begin{equation}
+  P_{\mathrm{vap}}(T) = P_{\mathrm{ref}}\,
+  \exp\!\left[\frac{L_v}{R_v}
+  \left(\frac{1}{T_b} - \frac{1}{T}\right)\right], \qquad T > T_b
+\end{equation}
+where $L_v$ is latent heat of vaporization, $R_v$ specific gas constant, $T_b$ boiling temperature.
+\fref{\cite{Matsunawa1997,Semak1997,waam_twin2025}}
+
+\subsection{Gas-jet shear stress}
+Dynamic shear scale:
+\begin{equation}
+  \tau_{\mathrm{gas}} = \tfrac{1}{2}\,\rho_{\mathrm{gas}}\,v_{\mathrm{jet}}^2\,C_{\tau}
+\end{equation}
+applied tangentially on the pool surface in the radial direction from the arc centre.
+\fref{\cite{Mills2010,Oreper1984,waam_twin2025}}
+
+\subsection{Arc pressure}
+Downward Gaussian pressure distribution on the free surface (magnitude $p_{\mathrm{arc}}$):
+\begin{equation}
+  p_{\mathrm{arc}}(r) = p_0\,\exp\!\left(-\frac{r^2}{2\sigma^2}\right)
+\end{equation}
+\fref{\cite{Oreper1984,Tanaka2006,waam_twin2025}}
+
+%=============================================================================
+\section{Droplet deposition and impact}
+\label{sec:droplet}
+%=============================================================================
+
+\subsection{Wire mass balance}
+Expected deposited mass over simulation time $t$:
+\begin{equation}
+  m_{\mathrm{dep,expected}} = \dot{m}\,t
+\end{equation}
+\fref{\cite{waam_twin2025,Wang2003}}
+Mass balance ratio (validation):
+\begin{equation}
+  \chi_m = \frac{m_{\mathrm{dep,sim}}}{m_{\mathrm{dep,expected}}} \approx 1
+\end{equation}
+\fref{\cite{waam_twin2025,Wang2003}}
+
+\subsection{Droplet impact velocity}
+Combined feed, gravity, and pinch terms (\texttt{droplet\_impact\_velocity\_m\_s}):
+\begin{align}
+  L_{\mathrm{drop}} &\approx \frac{v_{\mathrm{wire}}}{f_{\mathrm{drop}}} \\
+  v_{\mathrm{grav}} &= \sqrt{2g L_{\mathrm{drop}}} \\
+  v_{\mathrm{impact}} &\approx f_{\mathrm{mode}}\,
+  \max\!\left(v_{\mathrm{wire}},\, v_{\mathrm{grav}} + v_{\mathrm{pinch}}\right)
+\end{align}
+with transfer-mode scale $f_{\mathrm{mode}} \in \{0.78,\,1.05,\,1.18\}$ for globular / pulsed / spray.
+\fref{\cite{Wang2003,Lancaster1986,waam_twin2025}}
+
+\subsection{Droplet impact pressure (kinetic)}
+\begin{align}
+  E_{\mathrm{kin}} &= \tfrac{1}{2}\,m_{\mathrm{drop}}\,v_{\mathrm{impact}}^2 \\
+  p_{\mathrm{impact}} &\approx \frac{E_{\mathrm{kin}}}{A_{\mathrm{contact}}}
+  = \frac{\tfrac{1}{2}\,m_{\mathrm{drop}}\,v_{\mathrm{impact}}^2}{\pi r_{\mathrm{contact}}^2}
+\end{align}
+\fref{\cite{Wang2003,Bernhardi2005,waam_twin2025}}
+
+\subsection{Deposition footprint}
+Footprint radius for surface-limited deposition:
+\begin{equation}
+  r_{\mathrm{foot}} = \max\!\left(r_{\mathrm{drop}},\,\frac{w_{\mathrm{pool}}}{2}\right)
+\end{equation}
+\fref{\cite{BEAD2025,waam_twin2025}}
+
+\subsection{Droplet entry enthalpy}
+\begin{equation}
+  H_{\mathrm{drop}} = \rho c_p\, T_{\mathrm{drop}} + \rho L_f
+\end{equation}
+with $T_{\mathrm{drop}} = T_l + \Delta T_{\mathrm{superheat}}$.
+\fref{\cite{Wang2003,Voller1987,waam_twin2025}}
+
+%=============================================================================
+\section{Electrical stick-out and CTWD}
+%=============================================================================
+
+\subsection{Stick-out resistance}
+\begin{align}
+  R_{\mathrm{stick}} &= \frac{\rho_e\,L_{\mathrm{stick}}}{A_w} \\
+  P_{\mathrm{preheat}} &= \eta_{\mathrm{stick}}\,I^2 R_{\mathrm{stick}}
+\end{align}
+\fref{\cite{Klaus2022,Incropera2007,BEAD2025}}
+Wire preheat temperature rise:
+\begin{equation}
+  \Delta T_{\mathrm{preheat}} = \frac{P_{\mathrm{preheat}}}{\dot{m}\,c_p}
+\end{equation}
+\fref{\cite{Klaus2022,BEAD2025,waam_twin2025}}
+
+\subsection{CTWD update (layer drift)}
+\begin{equation}
+  \mathrm{CTWD}_{n+1} = \mathrm{CTWD}_{\mathrm{nominal}}
+  + \left(h_{\mathrm{bead,measured}} - h_{\mathrm{layer,planned}}\right)
+\end{equation}
+\fref{\cite{Klaus2022,BEAD2025,waam_twin2025}}
+
+%=============================================================================
+\section{Material properties and constitutive relations}
+%=============================================================================
+
+\begin{align}
+  c_{p,\rho} &= \rho\,c_p \quad [\mathrm{J/(m^3\,K)}] \\
+  L_\rho &= \rho\,L_f \quad [\mathrm{J/m^3}] \\
+  \gamma(T) &\approx \gamma_0 + \frac{\mathrm{d}\gamma}{\mathrm{d}T}\,(T - T_{\mathrm{ref}}) \\
+  \mu(T),\; k(T),\; c_p(T) &\quad \text{piecewise-linear tables in material YAML}
+\end{align}
+\fref{\cite{Incropera2007,Kou2003,waam_twin2025}}
+
+Surface tension temperature coefficient $\mathrm{d}\gamma/\mathrm{d}T$ drives Marangoni; sign change with surface-active elements (S, O) flips pool circulation direction.
+\fref{\cite{Kou2003,Mills2010,waam_twin2025}}
+
+%=============================================================================
+\section{Bead geometry metrics}
+%=============================================================================
+
+\begin{align}
+  w_{\mathrm{pool}} &= \text{transverse extent of liquid region at surface} \\
+  d_{\mathrm{pool}} &= \text{penetration depth below substrate reference} \\
+  h_{\mathrm{bead}} &= \max z\;\text{of deposited solid above substrate} \\
+  \theta_{\mathrm{toe}} &\approx \text{contact angle at solid--liquid--gas triple line}
+\end{align}
+Aspect ratio and validation:
+\begin{equation}
+  \frac{h}{w},\quad \frac{d}{w}
+\end{equation}
+\fref{\cite{waam_twin2025,Kou2003,BEAD2025}}
+
+%=============================================================================
+\section{Coordinate frames (robot integration)}
+%=============================================================================
+
+KUKA TCP [mm] to simulation metres (\texttt{kuka\_adapter.tcp\_mm\_to\_sim\_m}):
+\begin{align}
+  x_{\mathrm{sim}} &= \frac{x_{\mathrm{TCP,mm}} - x_{\mathrm{origin,mm}}}{1000} - x_{\mathrm{offset,m}} \\
+  y_{\mathrm{sim}} &= \frac{y_{\mathrm{TCP,mm}} - y_{\mathrm{origin,mm}}}{1000} - y_{\mathrm{offset,m}} \\
+  z_{\mathrm{sim}} &= \frac{z_{\mathrm{TCP,mm}} - z_{\mathrm{origin,mm}}}{1000}
+\end{align}
+\fref{\cite{waam_twin2025,KUKA2024}}
+
+%=============================================================================
+\section{Digital twin platform (architecture signals)}
+%=============================================================================
+
+\subsection{Twin input snapshot}
+\begin{equation}
+  \mathcal{U}(t) = \bigl\{t,\, x,\, y,\, z,\, I,\, V,\, \mathrm{WFS},\, \mathrm{is\_welding},\, \mathrm{material\_id}\bigr\}
+\end{equation}
+\fref{\cite{ARCH2025,ISO23247,Grieves2014}}
+
+\subsection{Twin step}
+\begin{equation}
+  \mathcal{S}(t+\Delta t) = \mathrm{WAAMTwin.step}\bigl(\mathcal{U}(t)\bigr)
+\end{equation}
+State outputs: temperature field $T$, liquid fraction $f_l$, VOF $\phi$, bead metrics $(w,h,d)$, telemetry JSON.
+\fref{\cite{waam_twin2025,ARCH2025,Grieves2014}}
+
+\subsection{Supervisory closed-loop deviation}
+\begin{equation}
+  \Delta y = y_{\mathrm{meas}} - y_{\mathrm{twin}}, \qquad
+  y \in \{I,\,V,\,T_{\mathrm{pool}},\,W,\,H\}
+\end{equation}
+\fref{\cite{ARCH2025,Klaus2022,Astrom2008}}
+Bounded setpoint correction (example):
+\begin{equation}
+  I_{\mathrm{new}} = \mathrm{clip}\!\left(I + K_I\,\Delta I,\; I_{\min},\, I_{\max}\right)
+\end{equation}
+\fref{\cite{Klaus2022,ARCH2025,Astrom2008}}
+
+\subsection{Synchronization}
+Pose sample index $n$ aligned to sensor timestamp $t_n$:
+\begin{equation}
+  t_n = t_0 + n\,\Delta t_{\mathrm{sample}}, \qquad
+  \vect{x}_{\mathrm{TCP}}(t_n) \leftrightarrow \mathcal{U}_n
+\end{equation}
+\fref{\cite{ARCH2025,ISO23247,Grieves2014}}
+
+%=============================================================================
+\section{Dimensionless groups (reference)}
+%=============================================================================
+
+\begin{align}
+  \mathrm{Re} &= \frac{\rho U L}{\mu} &
+  \mathrm{Pr} &= \frac{\nu}{\alpha} \\
+  \mathrm{Pe} &= \frac{U L}{\alpha} &
+  \mathrm{Ma} &= \frac{U\,c_s}{a_{\mathrm{sound}}} \approx \frac{u_{\mathrm{ref}}\,\Delta t}{\Delta x} \\
+  \mathrm{We} &= \frac{\rho U^2 L}{\gamma} &
+  \mathrm{Bo} &= \frac{\rho g L^2}{\gamma}
+\end{align}
+\fref{\cite{Batchelor1967,Incropera2007,Kruger2017}}
+
+%=============================================================================
+\section{Coupled timestep order (reference)}
+%=============================================================================
+
+Per-step operator sequence in \texttt{solvers/coupled\_step.py}:
+\begin{enumerate}
+  \item Arc heat injection $\rightarrow$ wire deposition $\rightarrow$ droplet impact
+  \item Thermal advection--diffusion; phase change; optional bead freeze
+  \item VOF advection, reinit, contact-angle BC, flag update
+  \item CSF, Marangoni, hydrostatic gravity, Boussinesq buoyancy
+  \item Lorentz, gas shear, arc pressure, recoil
+  \item LBM collide--stream; tracer advection
+\end{enumerate}
+\fref{\cite{waam_twin2025,Voller1987,Brackbill1992,Guo2002}}
+
+%=============================================================================
+\section{Bibliography}
+%=============================================================================
+
+\begin{thebibliography}{99}
+
+\bibitem{ARCH2025}
+WAAM Digital Twin Architecture (2025).
+\textit{WAAM\_DIGITAL\_TWIN\_ARCHITECTURE.md}, FYP22-01/waam\_twin project.
+
+\bibitem{BEAD2025}
+Bead Geometry Physics Spec (2025).
+\textit{BEAD\_GEOMETRY\_PHYSICS\_SPEC.md}, FYP22-01/waam\_twin project.
+
+\bibitem{waam_twin2025}
+\texttt{waam\_twin} GPU melt-pool digital twin (2024--2025).
+Repository: FYP22-01/waam\_twin; modules \texttt{kernels.py}, \texttt{physics/}, \texttt{solvers/coupled\_step.py}.
+
+\bibitem{Astrom2008}
+{\AA}str\"om, K.~J., and Murray, R.~M. (2008).
+\textit{Feedback Systems: An Introduction for Scientists and Engineers}.
+Princeton University Press.
+
+\bibitem{Batchelor1967}
+Batchelor, G.~K. (1967).
+\textit{An Introduction to Fluid Dynamics}.
+Cambridge University Press.
+
+\bibitem{Bernhardi2005}
+Bernhardi, L., and Duffie, N.~A. (2005).
+Heat transfer and geometry model for gas metal arc welding.
+\textit{Science and Technology of Welding and Joining}, 10(5), 581--587.
+
+\bibitem{Brent1988}
+Brent, A.~D., Voller, V.~R., and Reid, K.~J. (1988).
+Enthalpy--porosity technique for modeling convection-diffusion phase change.
+\textit{Numerical Heat Transfer}, 13(3), 297--318.
+
+\bibitem{Brackbill1992}
+Brackbill, J.~U., Kothe, D.~B., and Zemach, C. (1992).
+A continuum method for modeling surface tension.
+\textit{Journal of Computational Physics}, 100(2), 335--354.
+
+\bibitem{Carslaw1959}
+Carslaw, H.~S., and Jaeger, J.~C. (1959).
+\textit{Conduction of Heat in Solids} (2nd ed.).
+Oxford University Press.
+
+\bibitem{Chen1998}
+Chen, S., and Doolen, G.~D. (1998).
+Lattice Boltzmann method for fluid flows.
+\textit{Annual Review of Fluid Mechanics}, 30, 329--364.
+
+\bibitem{Crank1984}
+Crank, J. (1984).
+\textit{Free and Moving Boundary Problems}.
+Oxford University Press.
+
+\bibitem{Davis1987}
+Davis, S.~H. (1987).
+Thermocapillary flows.
+\textit{Annual Review of Fluid Mechanics}, 19, 403--435.
+
+\bibitem{deGennes2004}
+de~Gennes, P.-G., Brochard-Wyart, F., and Qu\'er\'e, D. (2004).
+\textit{Capillarity and Wetting Phenomena: Drops, Bubbles, Pearls, Waves}.
+Springer.
+
+\bibitem{Ding2008}
+Ding, H., and Spelt, P.~D.~M. (2008).
+Wetting condition in multiphase lattice Boltzmann simulations.
+\textit{Journal of Computational Physics}, 227(11), 5671--5690.
+
+\bibitem{Goldak1984}
+Goldak, J.~A., Chakravarti, A., and Bibby, M. (1984).
+A new finite element model for computing heat flow in welds.
+\textit{Welding Journal}, 63(10), 299s--305s.
+
+\bibitem{Goldak1984b}
+Goldak, J.~A., and Akhlaghi, M. (1984).
+Computational weld pool geometry.
+\textit{Welding Journal}, 63(10), 306s--312s.
+
+\bibitem{Grieves2014}
+Grieves, M., and Vickers, J. (2017).
+Digital twin: Mitigating unpredictable, undesirable emergent behavior in complex systems.
+In Kahlen, F., Flumerfelt, S., and Alves, A. (Eds.), \textit{Transdisciplinary Perspectives on Complex Systems} (pp.~85--113). Springer.
+
+\bibitem{Griffel1974}
+Griffel, J. (1974).
+\textit{Vector Calculus}.
+McGraw-Hill.
+
+\bibitem{Guo2002}
+Guo, Z., Zheng, C., and Shi, B. (2002).
+Discrete lattice effects on the forcing term in the lattice Boltzmann method.
+\textit{Physical Review E}, 65(4), 046308.
+
+\bibitem{Hirt1981}
+Hirt, C.~W., and Nichols, B.~D. (1981).
+Volume of fluid (VOF) method for the dynamics of free boundaries.
+\textit{Journal of Computational Physics}, 39(1), 201--225.
+
+\bibitem{Incropera2007}
+Incropera, F.~P., DeWitt, D.~P., Bergman, T.~L., and Lavine, A.~S. (2007).
+\textit{Fundamentals of Heat and Mass Transfer} (6th ed.).
+Wiley.
+
+\bibitem{ISO23247}
+ISO (2021).
+\textit{ISO 23247-1: Automation systems and integration --- Digital twin framework for manufacturing}.
+International Organization for Standardization.
+
+\bibitem{Jackson1986}
+Jackson, J.~D. (1999).
+\textit{Classical Electrodynamics} (3rd ed.).
+Wiley.
+
+\bibitem{Klaus2022}
+Klaus, A., et al. (2022).
+Short-circuit resistance and CTWD effects in GMAW (literature basis cited in \textit{BEAD\_GEOMETRY\_PHYSICS\_SPEC.md}).
+
+\bibitem{Kou2003}
+Kou, S. (2003).
+\textit{Welding Metallurgy} (2nd ed.).
+John Wiley \& Sons.
+
+\bibitem{Kruger2017}
+Kr\"uger, T., Kusumaatmaja, H., Kuzmin, A., Shardt, O., Silva, G., and Viggen, E.~M. (2017).
+\textit{The Lattice Boltzmann Method: Principles and Practice}.
+Springer.
+
+\bibitem{KUKA2024}
+KUKA robot integration bridge (2024--2025).
+\texttt{kuka\_adapter.py}, \texttt{frame.py}, FYP22-01/waam\_twin.
+
+\bibitem{Lancaster1986}
+Lancaster, J.~F. (1986).
+\textit{The Physics of Welding} (2nd ed.).
+Pergamon Press.
+
+\bibitem{Matsunawa1997}
+Matsunawa, A., and Semak, V. (1997).
+The simulation of front keyhole wall dynamics during laser welding.
+\textit{Journal of Physics D: Applied Physics}, 30(5), 798--809.
+
+\bibitem{Mills2010}
+Mills, K.~C., Keene, B.~J., Brooks, R.~F., and Shirvanian, A. (1998).
+Marangoni effects in welding.
+\textit{Philosophical Transactions of the Royal Society A}, 356(1739), 911--935.
+
+\bibitem{Oreper1984}
+Oreper, G.~M., and Szekely, J. (1984).
+Heat and fluid flow phenomena in weld pools.
+\textit{Journal of Fluid Mechanics}, 147, 53--79.
+
+\bibitem{Patankar1980}
+Patankar, S.~V. (1980).
+\textit{Numerical Heat Transfer and Fluid Flow}.
+Hemisphere.
+
+\bibitem{Poirier1987}
+Poirier, G.~E. (1987).
+Permeability for flow parallel to a fiber axis.
+\textit{Metallurgical Transactions B}, 18(1), 245--255.
+(See also Carman--Kozeny mushy-zone drag in \cite{Voller1987}.)
+
+\bibitem{Qian1992}
+Qian, Y.~H., d'Humi\`eres, D., and Lallemand, P. (1992).
+Lattice BGK models for Navier--Stokes equation.
+\textit{Europhysics Letters}, 17(6), 479--484.
+
+\bibitem{Radaj2003}
+Radaj, D. (2003).
+\textit{Welding Residual Stresses and Distortion: Calculation and Measurement}.
+Woodhead Publishing.
+
+\bibitem{Rider2001}
+Rider, W.~J., and Kothe, D.~B. (1998).
+Reconstructing volume tracking.
+\textit{Journal of Computational Physics}, 141(2), 112--152.
+
+\bibitem{Rosenthal1946}
+Rosenthal, D. (1946).
+The theory of moving sources of heat and its application to metal treatments.
+\textit{Transactions of the ASME}, 68, 849--866.
+
+\bibitem{Rykalin1951}
+Rykalin, N.~N. (1951).
+\textit{Berechnung der W\"armevorg\"ange beim Schwei{\ss}en}.
+Akademie-Verlag, Berlin.
+(Classical moving heat-source welding theory.)
+
+\bibitem{Semak1997}
+Semak, V.~V., and Matsunawa, A. (1997).
+The role of recoil pressure in energy balance during laser materials processing.
+\textit{Journal of Physics D: Applied Physics}, 30(18), 2541--2552.
+
+\bibitem{Tanaka2006}
+Tanaka, M., and Lowke, J.~J. (2007).
+Predictions of properties of free burning arcs---properties of arcs in argon.
+\textit{Plasma Sources Science and Technology}, 16(1), 1--12.
+
+\bibitem{Voller1987}
+Voller, V.~R., and Prakash, C. (1987).
+A fixed grid numerical modelling methodology for convection-diffusion mushy region phase-change problems.
+\textit{International Journal of Heat and Mass Transfer}, 30(8), 1709--1719.
+
+\bibitem{Wang2003}
+Wang, G., Hu, S.~J., and Carlson, B.~E. (2003).
+Modelling and analysis of metal transfer in gas metal arc welding.
+\textit{Journal of Physics D: Applied Physics}, 36(9), 1143--1152.
+
+\end{thebibliography}
+
+\end{document}

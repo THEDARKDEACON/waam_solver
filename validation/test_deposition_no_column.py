@@ -38,13 +38,14 @@ def run() -> None:
     drop_vol = deposition.droplet_mass_kg(twin) / twin.mat.rho
     foot = deposition.deposition_footprint_cells(twin)
     g.deposit_vol_buf[None] = 0.0
+    g.deposit_real_buf[None] = 0.0
     deposition.feed_wire_surface(
         g.f_src, g.flags, g.f_l, g.phi, g.H, g.T, g.rho,
         float(i_arc), float(j_arc), k_arc,
         foot, drop_r, drop_vol,
         twin.mat.T_liquidus + 500.0,
-        twin.cp_rho, twin.L_rho, twin.mat.rho,
-        g.deposit_vol_buf, g.dx ** 3,
+        twin.cp_rho, twin.L_rho, 1.0,
+        g.deposit_vol_buf, g.deposit_real_buf, g.dx ** 3,
         g.FLAG_GAS, g.FLAG_FLUID, g.FLAG_SOLID,
         g.nx, g.ny, g.nz,
     )

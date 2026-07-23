@@ -36,6 +36,23 @@ def build_meta_dict(twin: "WAAMTwin", job_path: str | None = None) -> dict[str, 
         ],
         "window_offset_x_mm": telem["window_offset_x_mm"],
         "preset": twin.preset_name,
+        "plate_thickness_mm": (
+            None if getattr(twin, "plate_thickness_mm", None) is None
+            else round(float(twin.plate_thickness_mm), 3)
+        ),
+        "plate_size_mm": (
+            None if not getattr(twin, "plate_size_mm", None)
+            else [round(float(twin.plate_size_mm[0]), 3), round(float(twin.plate_size_mm[1]), 3)]
+        ),
+        "plate_origin_mm": (
+            None if not getattr(twin, "plate_origin_mm", None)
+            else [round(float(twin.plate_origin_mm[0]), 3), round(float(twin.plate_origin_mm[1]), 3)]
+        ),
+        "plate_ij": list(twin.resolve_plate_ij()) if hasattr(twin, "resolve_plate_ij") else None,
+        "nz_solid": int(getattr(twin, "nz_solid", 0)),
+        "substrate_thickness_mm": round(
+            float(getattr(twin, "nz_solid", 0)) * g.dx * 1000.0, 3
+        ),
         "material": {
             "name": mat.name,
             "status": mat.status,
@@ -66,7 +83,7 @@ def build_meta_dict(twin: "WAAMTwin", job_path: str | None = None) -> dict[str, 
         "unit_conversions": {
             "velocity_lu_to_ms": "u_ms = u_lu * dx / dt",
             "force_lu_to_ms2": "a_ms2 = F_lu * dx / dt^2",
-            "pressure_pa": "P = rho_lu * cs^2 * rho_phys/dx * (dx/dt)^2",
+            "pressure_pa_gauge": "P = (rho_lu - 1) * cs^2 * rho_phys * (dx/dt)^2",
         },
         "telemetry": telem,
     }

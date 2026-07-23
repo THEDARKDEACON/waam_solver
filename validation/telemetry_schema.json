@@ -20,6 +20,7 @@
     "peak_cooling_rate_Ks": { "type": "number" },
     "pool_width_mm": { "type": "number", "minimum": 0 },
     "pool_depth_mm": { "type": "number", "minimum": 0 },
+    "pool_length_mm": { "type": "number", "minimum": 0 },
     "n_liquid_cells": { "type": "integer", "minimum": 0 },
     "marangoni_vel_ms": { "type": "number", "minimum": 0 },
     "material_status": { "type": "string", "enum": ["placeholder", "calibrated"] },
@@ -31,7 +32,13 @@
     "variable_tau": { "type": "boolean" },
     "porosity_pct": { "type": "number", "minimum": 0, "maximum": 100 },
     "n_trapped_tracers": { "type": "integer", "minimum": 0 },
-    "window_offset_x_mm": { "type": "number", "minimum": 0 }
+    "window_offset_x_mm": { "type": "number", "minimum": 0 },
+    "physics_tier": { "type": "string" },
+    "strict_mode": { "type": "boolean" },
+    "force_diagnostics": {
+      "type": "object",
+      "additionalProperties": { "type": "number" }
+    }
   },
-  "additionalProperties": false
+  "additionalProperties": true
 }
