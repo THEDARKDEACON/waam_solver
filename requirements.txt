@@ -1,7 +1,9 @@
-# waam_twin v2 — simulation engine only (CI, headless, viewer)
-taichi>=1.7.0
-numpy>=1.24.0
-pyyaml>=6.0
-sympy>=1.12
-pyvista>=0.43.0
-jsonschema>=4.0.0
+# waam_twin v2 — simulation engine (CI, headless, viewer)
+# Prefer: pip install -e .
+# Upper bounds keep installs reproducible without requiring a lockfile.
+taichi>=1.7.0,<2
+numpy>=1.24.0,<3
+pyyaml>=6.0,<7
+sympy>=1.12,<2
+pyvista>=0.43.0,<0.46
+jsonschema>=4.0.0,<5

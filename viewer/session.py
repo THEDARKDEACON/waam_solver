@@ -265,6 +265,25 @@ def create_session(
     else:
         driver = None
 
+    # Path CSV is absolute domain mm; plate is often centered — warn if off coupon.
+    if waypoints and getattr(twin, "plate_size_mm", None):
+        i0, i1, j0, j1 = twin.resolve_plate_ij()
+        dx_mm = g.dx * 1000.0
+        x_lo, x_hi = i0 * dx_mm, i1 * dx_mm
+        y_lo, y_hi = j0 * dx_mm, j1 * dx_mm
+        off = []
+        for wx, wy, _wz in waypoints:
+            xmm, ymm = wx * 1000.0, wy * 1000.0
+            if not (x_lo <= xmm < x_hi and y_lo <= ymm < y_hi):
+                off.append((xmm, ymm))
+        if off:
+            print(
+                f"[viewer] WARNING: {len(off)} torch waypoint(s) outside plate "
+                f"x=[{x_lo:.1f},{x_hi:.1f}] y=[{y_lo:.1f},{y_hi:.1f}] mm "
+                f"(first off: {off[0][0]:.1f},{off[0][1]:.1f}). "
+                f"Path CSV uses absolute domain coordinates."
+            )
+
     session = ViewerSession(
         twin=twin,
         job_label=label,

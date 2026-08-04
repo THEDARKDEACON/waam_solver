@@ -39,7 +39,14 @@ def run() -> None:
     if twin.enable_lorentz:
         raise AssertionError("explicit enable_lorentz: false must override tier")
 
-    print(f"[physics_tier] full OK  p_arc={p:.1f} Pa  override OK")
+    try:
+        apply_physics_tier(twin, "lorentz_typo")
+        raise AssertionError("unknown physics_tier should raise ValueError")
+    except ValueError as exc:
+        if "Unknown physics_tier" not in str(exc):
+            raise
+
+    print(f"[physics_tier] full OK  p_arc={p:.1f} Pa  override OK  unknown rejected")
 
 
 if __name__ == "__main__":

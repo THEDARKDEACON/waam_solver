@@ -1,0 +1,89 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "WAAM twin job file",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "simulation": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "preset": { "type": "string" },
+        "backend": { "type": "string" },
+        "physics_tier": {
+          "type": "string",
+          "enum": ["thermal", "flow", "full", "base", "default", "standard_physics"]
+        },
+        "domain_mm": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "dx_mm": { "type": "number", "exclusiveMinimum": 0 },
+        "strict_mode": { "type": "boolean" }
+      }
+    },
+    "plate": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "thickness_mm": { "type": "number", "exclusiveMinimum": 0 },
+        "size_mm": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "origin_mm": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 2,
+          "maxItems": 2
+        }
+      }
+    },
+    "material": { "type": ["string", "object"] },
+    "calibration": { "type": ["string", "object", "null"] },
+    "torch_path_csv": { "type": "string" },
+    "torch_path": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "x_mm": { "type": "number" },
+          "y_mm": { "type": "number" },
+          "z_mm": { "type": "number" }
+        }
+      }
+    },
+    "heat_source": {
+      "type": "string",
+      "enum": [
+        "gaussian2d", "gaussian", "gauss",
+        "goldak", "goldak3d", "doubleellipsoid"
+      ]
+    },
+    "goldak": { "type": "object", "additionalProperties": true },
+    "process": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "current_A": { "type": "number" },
+        "voltage_V": { "type": "number" },
+        "arc_efficiency": { "type": "number", "minimum": 0, "maximum": 1 },
+        "travel_speed_mm_s": { "type": "number" },
+        "wire_feed_m_min": { "type": "number" },
+        "wire_diameter_mm": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "arc_physics": { "type": "object", "additionalProperties": true },
+    "advanced_physics": { "type": "object", "additionalProperties": true },
+    "deposition": { "type": "object", "additionalProperties": true },
+    "surface_wetting": { "type": "object", "additionalProperties": true },
+    "heat_loss": { "type": "object", "additionalProperties": true },
+    "reference": { "type": "object", "additionalProperties": true },
+    "model_reference": { "type": "object", "additionalProperties": true },
+    "probes": { "type": "array", "items": { "type": "object" } }
+  }
+}

@@ -4,13 +4,32 @@ run_all.py — Validation entry point.
 Usage:
     WAAM_BACKEND=cpu PYTHONPATH=. python3 -m waam_twin.validation.run_all
 
-Set WAAM_FULL_VALIDATION=1 for process benchmarks + soak.
+Set WAAM_FULL_VALIDATION=1 for process benchmarks + soak + recoil sweep smoke.
+Set WAAM_HELDOUT_VALIDATION=1 to run held-out process predictions (also implied by FULL).
+Set WAAM_INTENSIVE_PHYSICS=1 for long coupled-force / vapor / Lorentz stress tests
+(also included automatically when WAAM_FULL_VALIDATION=1).
 """
 
 from __future__ import annotations
 
 import os
 import sys
+
+
+def _intensive_physics_tests(*, include_soak: bool = True) -> list[tuple[str, str]]:
+    tests = [
+        ("intensive_coupled_physics", "waam_twin.validation.test_intensive_coupled_physics"),
+        ("intensive_vapor_physics", "waam_twin.validation.test_intensive_vapor_physics"),
+        ("intensive_force_ranking", "waam_twin.validation.test_intensive_force_ranking"),
+        ("intensive_lorentz_convergence", "waam_twin.validation.test_intensive_lorentz_convergence"),
+        ("intensive_marangoni_circulation", "waam_twin.validation.test_intensive_marangoni_circulation"),
+    ]
+    if include_soak:
+        tests.append(
+            ("intensive_calibrate_soak", "waam_twin.validation.test_intensive_calibrate_soak")
+        )
+    return tests
+
 
 
 def main() -> int:
@@ -36,6 +55,7 @@ def main() -> int:
         ("moving_window", "waam_twin.validation.test_moving_window"),
         ("surface_vtk", "waam_twin.validation.test_surface_vtk"),
         ("viewer_session", "waam_twin.validation.test_viewer_session"),
+        ("hardware_preserves_domain", "waam_twin.validation.test_hardware_preserves_domain"),
         ("viewer_extract", "waam_twin.validation.test_viewer_extract"),
         ("viewer_flow_arrows", "waam_twin.validation.test_viewer_flow_arrows"),
         ("viewer_streamlines", "waam_twin.validation.test_viewer_streamlines"),
@@ -43,6 +63,7 @@ def main() -> int:
         ("export_bundle", "waam_twin.validation.test_export_bundle"),
         ("probe_recorder", "waam_twin.validation.test_probe_recorder"),
         ("enthalpy_cap", "waam_twin.validation.test_enthalpy_cap"),
+        ("evaporative_cooling", "waam_twin.validation.test_evaporative_cooling"),
         ("mass_balance", "waam_twin.validation.test_mass_balance"),
         ("arc_surface_weight", "waam_twin.validation.test_arc_surface_weight"),
         ("advanced_weld_forces", "waam_twin.validation.test_advanced_weld_forces"),
@@ -54,6 +75,7 @@ def main() -> int:
         ("deposition_no_column", "waam_twin.validation.test_deposition_no_column"),
         ("hydrostatic_gravity", "waam_twin.validation.test_hydrostatic_gravity"),
         ("bead_freeze", "waam_twin.validation.test_bead_freeze"),
+        ("cooldown_energy", "waam_twin.validation.test_cooldown_energy"),
         ("trailing_solidify", "waam_twin.validation.test_trailing_solidify"),
         ("stickout_preheat", "waam_twin.validation.test_stickout_preheat"),
         ("surfactant_dgamma", "waam_twin.validation.test_surfactant_dgamma"),
@@ -62,6 +84,11 @@ def main() -> int:
         ("force_direction_gate", "waam_twin.validation.test_force_direction_gate"),
         ("bead_height_telemetry", "waam_twin.validation.test_bead_height_telemetry"),
         ("backend_smoke", "waam_twin.validation.test_backend_smoke"),
+        # Lock check only unless WAAM_HELDOUT_VALIDATION / FULL is set
+        ("heldout_prediction", "waam_twin.validation.test_heldout_prediction"),
+        ("material_v2_load", "waam_twin.validation.test_material_v2_load"),
+        # Smoke parity in core CI; FULL re-runs with longer/tighter thresholds
+        ("job_parity", "waam_twin.validation.test_job_parity"),
     ]
 
     if os.environ.get("WAAM_BEAD_VALIDATION") == "1":
@@ -76,15 +103,28 @@ def main() -> int:
             ("rosenthal_farfield", "waam_twin.validation.test_rosenthal_farfield"),
             ("thermocouple", "waam_twin.validation.test_thermocouple"),
             ("pool_geometry", "waam_twin.validation.test_pool_geometry"),
-            ("job_parity", "waam_twin.validation.test_job_parity"),
             ("soak_10k", "waam_twin.validation.test_soak_10k"),
             ("interpass_haz", "waam_twin.validation.test_interpass_haz"),
             ("parametric_monotonic", "waam_twin.validation.test_parametric_monotonic"),
             ("multi_bead_width", "waam_twin.validation.test_multi_bead_width"),
             ("calibrated_pool", "waam_twin.validation.test_calibrated_pool"),
+            ("calibrate_physics_credibility", "waam_twin.validation.test_calibrate_physics_credibility"),
+            ("calibrate_twolayer", "waam_twin.validation.test_calibrate_twolayer"),
             ("two_layer_remelt", "waam_twin.validation.test_two_layer_remelt"),
             ("two_layer_haz_ref", "waam_twin.validation.test_two_layer_haz_ref"),
+            ("heldout_prediction_sims", "waam_twin.validation.test_heldout_prediction_sims"),
+            ("twolayer_geometry_gate", "waam_twin.validation.test_twolayer_geometry_gate"),
+            ("recoil_sweep_smoke", "waam_twin.validation.test_recoil_sweep_smoke"),
         ])
+        # Include intensive suite with FULL, but skip the duplicate calibrate soak
+        # unless explicitly requested via WAAM_INTENSIVE_PHYSICS.
+        tests.extend(_intensive_physics_tests(include_soak=False))
+
+    if os.environ.get("WAAM_INTENSIVE_PHYSICS") == "1":
+        # Explicit intensive flag adds the calibrate soak (and any not already queued).
+        for item in _intensive_physics_tests(include_soak=True):
+            if item not in tests:
+                tests.append(item)
 
     if os.environ.get("WAAM_STANDARD_VALIDATION") == "1":
         tests.append(("pool_geometry_standard", "waam_twin.validation.test_pool_geometry_standard"))
@@ -106,6 +146,13 @@ def main() -> int:
     print("\n🏁 All validation tests passed.")
     if os.environ.get("WAAM_FULL_VALIDATION") != "1":
         print("  (Full suite skipped — set WAAM_FULL_VALIDATION=1)")
+    if os.environ.get("WAAM_HELDOUT_VALIDATION") != "1" and os.environ.get("WAAM_FULL_VALIDATION") != "1":
+        print("  (Held-out prediction sims skipped — set WAAM_HELDOUT_VALIDATION=1)")
+    if (
+        os.environ.get("WAAM_INTENSIVE_PHYSICS") != "1"
+        and os.environ.get("WAAM_FULL_VALIDATION") != "1"
+    ):
+        print("  (Intensive physics skipped — set WAAM_INTENSIVE_PHYSICS=1)")
     if os.environ.get("WAAM_STANDARD_VALIDATION") != "1":
         print("  (Standard preset pool test skipped — set WAAM_STANDARD_VALIDATION=1)")
     if os.environ.get("WAAM_BEAD_VALIDATION") != "1":

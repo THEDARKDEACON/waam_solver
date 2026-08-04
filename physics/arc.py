@@ -104,7 +104,16 @@ class Goldak3D:
         return a_f, a_r, b, c
 
     def inject(self, twin: "WAAMTwin", g: "WAAMGrid", arc_i: float, arc_j: float, arc_k: float) -> None:
-        sign = 1.0 if twin.travel_speed_m_s >= 0.0 else -1.0
+        # Align front/rear with torch travel in the XY plane (not ±grid-x alone).
+        dir_x, dir_y, _ = getattr(twin, "_torch_dir_xyz", (1.0, 0.0, 0.0))
+        horiz = (float(dir_x) ** 2 + float(dir_y) ** 2) ** 0.5
+        if horiz < 1e-12:
+            # Stationary / vertical tip motion: fall back to signed travel speed on +x.
+            dir_x = 1.0 if twin.travel_speed_m_s >= 0.0 else -1.0
+            dir_y = 0.0
+        else:
+            dir_x = float(dir_x) / horiz
+            dir_y = float(dir_y) / horiz
         pen_cells, enable = _arc_weight_args(twin)
         a_f, a_r, b, c = self._resolved_axes(twin)
         kernels.inject_goldak_heat(
@@ -112,7 +121,7 @@ class Goldak3D:
             arc_i, arc_j, arc_k,
             twin.Q_w,
             g.dt, g.dx ** 3, twin.eta,
-            sign, self.ff, self.fr,
+            dir_x, dir_y, self.ff, self.fr,
             a_f, a_r, b, c,
             pen_cells, enable,
             g.FLAG_SOLID, g.FLAG_GAS,
@@ -121,19 +130,14 @@ class Goldak3D:
 
 @dataclass
 class ConicalVolume:
-    """Conical volume — widened Gaussian until full cone geometry lands."""
+    """Conical volume heat source — not yet implemented (do not select in jobs)."""
 
     sigma_scale: float = 1.2
 
     def inject(self, twin: "WAAMTwin", g: "WAAMGrid", arc_i: float, arc_j: float, arc_k: float) -> None:
-        pen_cells, enable = _arc_weight_args(twin)
-        kernels.inject_arc_heat(
-            g.H, g.flags, g.phi, g.f_l, g.arc_norm_buf,
-            arc_i, arc_j, arc_k - 1.5,
-            twin.Q_w, twin.sigma_cells * self.sigma_scale,
-            g.dt, g.dx ** 3, twin.eta,
-            pen_cells, enable,
-            g.FLAG_SOLID, g.FLAG_GAS,
+        raise NotImplementedError(
+            "heat_source 'conical' is not implemented yet "
+            "(was a widened-Gaussian stub). Use gaussian2d or goldak."
         )
 
 
@@ -146,8 +150,16 @@ def create_heat_source(name: str, **kwargs) -> ArcHeatSource:
         )
         return Goldak3D(ff=ff, fr=fr, **kwargs)
     if key in ("conical", "conicalvolume", "cone"):
-        return ConicalVolume(**kwargs)
-    return Gaussian2D()
+        raise ValueError(
+            "heat_source 'conical' is not implemented. "
+            "Valid: gaussian2d | goldak (aliases: goldak3d, doubleellipsoid)"
+        )
+    if key in ("gaussian2d", "gaussian", "gauss"):
+        return Gaussian2D()
+    raise ValueError(
+        f"Unknown heat_source '{name}'. "
+        "Valid: gaussian2d | goldak (aliases: goldak3d, doubleellipsoid)"
+    )
 
 
 def goldak_from_job_mm(twin: "WAAMTwin", goldak_cfg: dict) -> Goldak3D:

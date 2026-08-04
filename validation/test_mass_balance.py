@@ -1,5 +1,6 @@
 """
 test_mass_balance.py — Deposited volume tracks wire feed integral (deterministic).
+Also: expected wire mass freezes when the arc is off (cooling dwell).
 """
 
 from __future__ import annotations
@@ -7,6 +8,7 @@ from __future__ import annotations
 from waam_twin import WAAMTwin
 from waam_twin.job import load_job_config, apply_job_to_twin
 from waam_twin.platform import init_taichi
+from waam_twin.physics.deposition_balance import wire_mass_flux_kg_s
 
 
 _JOB = "jobs/examples/bead_calibrate.yaml"
@@ -49,6 +51,33 @@ def run(tolerance: float = 0.35, n_steps: int = 8000) -> float:
         raise AssertionError("No metal deposited — droplet schedule may not have fired")
     if ratio < 1.0 - tolerance or ratio > 1.0 + tolerance:
         raise AssertionError(f"Mass balance ratio {ratio:.3f} outside ±{tolerance}")
+
+    # Arc-off dwell must not inflate the expected-wire ledger (HUD "wire" mass).
+    wire_on = float(telem["expected_wire_mass_g"])
+    dep_on = float(telem["deposited_mass_g"])
+    t_weld = float(telem["welding_time_s"])
+    expected_from_weld_t = wire_mass_flux_kg_s(twin) * t_weld * 1000.0
+    if abs(wire_on - expected_from_weld_t) > 1e-3:
+        raise AssertionError(
+            f"expected_wire_mass_g={wire_on:.4f} != ṁ·t_weld={expected_from_weld_t:.4f}"
+        )
+    for _ in range(2000):
+        twin.step(x, cy, is_welding=False)
+    telem2 = twin.get_telemetry()
+    if abs(float(telem2["expected_wire_mass_g"]) - wire_on) > 1e-6:
+        raise AssertionError(
+            f"wire mass grew during arc-off: {wire_on:.4f} → {telem2['expected_wire_mass_g']:.4f} g"
+        )
+    if abs(float(telem2["deposited_mass_g"]) - dep_on) > 1e-6:
+        raise AssertionError(
+            f"deposited mass changed during arc-off: {dep_on:.4f} → {telem2['deposited_mass_g']:.4f} g"
+        )
+    if abs(float(telem2["welding_time_s"]) - t_weld) > 1e-9:
+        raise AssertionError("welding_time_s advanced while is_welding=False")
+    print(
+        f"[mass_balance] arc-off freeze OK  wire={wire_on:.4f}g  "
+        f"t_weld={t_weld:.4f}s  (sim continued {2000 * g.dt * 1000:.0f} ms)"
+    )
     return ratio
 
 

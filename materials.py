@@ -42,6 +42,7 @@ class MaterialProps:
     sulphur_ppm: float = 30.0
     status: str = "placeholder"
     source: str = ""
+    notes: str = ""
     high_sulphur: bool = False
     tables: MaterialTables = field(default_factory=MaterialTables)
 
@@ -58,7 +59,14 @@ class MaterialProps:
         return interp_linear(T, self.tables.dgamma_dT, self.dgamma_dT)
 
 
-def _props_from_constants(name: str, status: str, source: str, c: dict) -> MaterialProps:
+def _props_from_constants(
+    name: str,
+    status: str,
+    source: str,
+    c: dict,
+    notes: str = "",
+) -> MaterialProps:
+
     rho = float(c["rho"])
     cp = float(c["cp"])
     k = float(c["k"])
@@ -79,6 +87,7 @@ def _props_from_constants(name: str, status: str, source: str, c: dict) -> Mater
         beta_T=float(c.get("beta_T", 1.2e-4)),
         status=status,
         source=source or "",
+        notes=notes or "",
     )
 
 
@@ -137,6 +146,7 @@ def _load_yaml_file(path: pathlib.Path) -> MaterialProps:
         data.get("status", "placeholder"),
         data.get("source", ""),
         data["constants"],
+        notes=str(data.get("notes", "") or ""),
     )
     theta, rho_e, eta_stick, sulphur_ppm, surf_model = _surface_from_yaml(data)
     props.contact_angle_deg = theta

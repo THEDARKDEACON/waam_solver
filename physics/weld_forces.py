@@ -127,6 +127,16 @@ def gas_shear_tau_pa(twin: "WAAMTwin") -> float:
     return min(tau, 5000.0)
 
 
+def recoil_onset_K(twin: "WAAMTwin") -> float:
+    """Soft-onset temperature for CC recoil (matches evaporative cooling schedule)."""
+    explicit = getattr(twin, "T_recoil_onset_K", None)
+    if explicit is not None:
+        return float(explicit)
+    T_boil = float(twin.T_boiling_K)
+    T_liq = float(getattr(twin.mat, "T_liquidus", 1793.0))
+    return max(0.85 * T_boil, T_liq + 200.0)
+
+
 def apply_recoil(twin: "WAAMTwin", g: "WAAMGrid", arc_i: float, arc_j: float, arc_k: float) -> None:
     if not twin.enable_recoil:
         return
@@ -134,7 +144,8 @@ def apply_recoil(twin: "WAAMTwin", g: "WAAMGrid", arc_i: float, arc_j: float, ar
         _kwf().apply_vapor_recoil_clausius_clapeyron(
             g.Fz, g.T, g.phi, g.flags,
             arc_i, arc_j, arc_k, twin.sigma_cells,
-            twin.P_vapor_ref_Pa, twin.T_boiling_K, twin.L_vapor_J_kg, twin.R_spec_vapor_J_kgK,
+            twin.P_vapor_ref_Pa, twin.T_boiling_K, recoil_onset_K(twin),
+            twin.L_vapor_J_kg, twin.R_spec_vapor_J_kgK,
             float(getattr(twin, "recoil_accommodation", 0.54)),
             g.dt, g.dx, twin.mat.rho,
             g.FLAG_SOLID, g.FLAG_GAS,

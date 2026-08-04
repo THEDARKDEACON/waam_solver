@@ -1,37 +1,38 @@
 # =============================================================================
-# Bead-on-plate — interactive (mirrors bead_calibrate heat schedule; flow tier)
+# Bead-on-plate — interactive (mirrors bead_calibrate; prefer calibrate for gates)
 # =============================================================================
-# Prefer jobs/examples/bead_calibrate.yaml for gates. Keep recoil/Lorentz off
-# until pool W/D is stable on flow tier.
-# Power: Q_w = I·V; kernels multiply by arc_efficiency.
+# Geometry lives here (not in config/presets.yaml). Hardware --preset only
+# coarsens dx to fit max_cells / VRAM — it does not change plate size.
 # =============================================================================
 
 simulation:
-  preset: standard
+  preset: high
   backend: cuda
-  physics_tier: flow
-  domain_mm: [80, 40, 25]
-  dx_mm: 0.4
+  physics_tier: full
+  # domain derived from plate + margin if omitted; explicit keeps path room:
+  domain_mm: [80, 80, 25]
+  dx_mm: 1
   enable_vof: true
   enable_csf_tension: true
   enable_wetting: true
   enable_hydrostatic_gravity: true
   enable_bead_freeze: true
   enable_droplet_impact_pressure: true
-  enable_recoil: false
-  use_recoil_clausius_clapeyron: false
-  enable_lorentz: false
-  enable_gas_shear: false
+  enable_recoil: true
+  use_recoil_clausius_clapeyron: true
+  enable_lorentz: true
+  enable_gas_shear: true
   enable_enthalpy_cap: true
+  enable_evaporative_cooling: true
   arc_surface_weighting: true
 
 plate:
-  thickness_mm: 8.0
-  size_mm: [50, 20]
+  thickness_mm: 10.0
+  size_mm: [30, 50]   # coupon L×W (mm) — this is the square you should see from +Z
 
-material: materials/validated/ER70S-6.v1.yaml
+material: materials/placeholders/Crown-FH-30.yaml
 calibration: null
-torch_path_csv: jobs/paths/bead_calibrate.csv
+torch_path_csv: jobs/paths/bead_line.csv
 
 heat_source: goldak
 goldak:
@@ -39,8 +40,8 @@ goldak:
   fr: 1.4
   a_front_mm: 2.2
   a_rear_mm: 4.2
-  b_mm: 1.5
-  c_mm: 1.0
+  b_mm: 3.0
+  c_mm: 1.5
 
 arc_physics:
   sigma_mm: 2.0
@@ -51,21 +52,24 @@ arc_physics:
   pressure_pa: 150.0
 
 advanced_physics:
-  gas_jet_velocity_m_s: 12.0
-  gas_shear_coeff: 1.0
-  sigma_liquid_Sm: 1.0e6
-  sigma_solid_Sm: 1.0e5
-  lorentz_jacobi_iters: 300
-  T_boiling_K: 3100.0
+  evap_cooling_scale: 25.0
+  T_boiling_K: 3000.0
+  recoil_accommodation: 0.25
   L_vapor_J_kg: 6.0e6
   R_spec_vapor_J_kgK: 450.0
+  lorentz_jacobi_iters: 300
+  lorentz_jacobi_tol: 1.0e-3
+  sigma_liquid_Sm: 1.0e6
+  sigma_solid_Sm: 1.0e5
+  gas_jet_velocity_m_s: 12.0
+  gas_shear_coeff: 1.0
 
 process:
-  current_A: 70
-  voltage_V: 10
+  current_A: 100
+  voltage_V: 15
   arc_efficiency: 0.72
-  travel_speed_mm_s: 7.5
-  wire_feed_m_min: 6.5
+  travel_speed_mm_s: 6.5
+  wire_feed_m_min: 3.2
   wire_diameter_mm: 1.2
   droplet_length_mm: 3.0
   T_ambient_K: 293
@@ -102,5 +106,5 @@ model_reference:
 probes:
   - name: substrate_behind_arc
     x_mm: 20.0
-    y_mm: 20.0
+    y_mm: 10.0
     z_mm: 2.0

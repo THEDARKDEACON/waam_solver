@@ -74,25 +74,42 @@ When a YAML file includes `tables.cp` or `tables.k`, `WAAMTwin` uploads knots to
 
 ## Validated materials
 
-Calibrated alloys live under `materials/validated/` with `status: calibrated`. Pair with a process overlay in `materials/calibration/`:
+Calibrated alloys live under `materials/validated/` with `status: calibrated`.
+
+**ER70S-6.v1** is the locked material for `jobs/examples/bead_calibrate.yaml`
+(Goldak GMAW window, macrograph ~7×3 mm). Prefer that job’s embedded η —
+do **not** stack the legacy `materials/calibration/ER70S-6.bead_on_plate.yaml`
+(η=0.65) on the locked calibrate case.
+
+**ER70S-6.v2** adds denser literature `cp`/`k`/`μ` tables (`notes` field documents
+sources). Do not point the calibrate job at v2 until `prediction_report` and
+FULL validation are re-run.
 
 ```yaml
-# jobs/examples/bead_on_plate.yaml
+# jobs/examples/bead_calibrate.yaml
+material: materials/validated/ER70S-6.v1.yaml
+calibration: null
+process:
+  arc_efficiency: 0.72
+```
+
+For older Gaussian smoke jobs that still use a process overlay:
+
+```yaml
 material: materials/validated/ER70S-6.v1.yaml
 calibration: materials/calibration/ER70S-6.bead_on_plate.yaml
-heat_loss:
-  convection: true
-  h_conv: 35.0
 ```
 
 ## Promotion workflow (placeholder → calibrated)
 
 1. **Copy** `materials/placeholders/<alloy>.yaml` → `materials/validated/<alloy>.v1.yaml`.
-2. **Set** `status: calibrated` and document data sources in a `notes` field.
+2. **Set** `status: calibrated` and document data sources / process window in `notes`.
 3. **Add** optional `tables` block (cp, k, μ, dγ/dT) from literature or measurement.
-4. **Create** `materials/calibration/<alloy>.<process>.yaml` with fitted η, `arc_sigma_scale`, etc. (`tools/fit_calibration`).
-5. **Add** `model_reference` W/D to the matching job YAML (simulator envelope, not macrograph).
-6. **Run** `WAAM_FULL_VALIDATION=1` + `WAAM_STANDARD_VALIDATION=1`; confirm pass via `python -m waam_twin.validation.run_all`.
-7. **Bump** material version (`v1` → `v2`) when properties or calibration change; never overwrite validated files in place.
+4. **Lock** η / Goldak / recoil in the job YAML (preferred) or create a calibration overlay.
+5. **Add** `reference` (experiment) and `model_reference` (simulator envelope) to the job.
+6. **Run** `WAAM_FULL_VALIDATION=1` + held-out prediction report; confirm pass.
+7. **Bump** material version (`v1` → `v2`) when properties change; never overwrite validated files in place.
 
 Until step 6 passes, keep `status: placeholder` and expect startup warnings.
+
+See also: [validation/reference_case_ER70S6.md](validation/reference_case_ER70S6.md).

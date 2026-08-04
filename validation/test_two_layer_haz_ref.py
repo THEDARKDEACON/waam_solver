@@ -9,16 +9,14 @@ from __future__ import annotations
 
 import sys
 
-import numpy as np
-
 from waam_twin.platform import init_taichi
 from waam_twin import WAAMTwin
 
 
-def run(n_steps: int = 600) -> float:
+def run(n_steps: int = 3000) -> float:
     init_taichi(backend="cpu")
     job_path = "jobs/examples/two_layer.yaml"
-    twin = WAAMTwin.from_job(job_path)
+    twin = WAAMTwin.from_job(job_path, preset_override="minimal")
     ref = twin._job_config.get("reference", {}) if hasattr(twin, "_job_config") else {}
     t_min = float(ref.get("haz_T_peak_min_K", 600))
     t_max = float(ref.get("haz_T_peak_max_K", 3200))
@@ -26,6 +24,10 @@ def run(n_steps: int = 600) -> float:
     twin.enable_vof = False
     twin.enable_heat_loss = True
     twin.enable_substrate_growth = True
+    twin.enable_recoil = False
+    twin.enable_lorentz = False
+    twin.enable_gas_shear = False
+    twin.enable_moving_window = False
     twin.reset()
     twin.run_path(job_path, n_steps=n_steps, interpass_steps=80)
 

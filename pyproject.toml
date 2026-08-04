@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "waam-twin"
+version = "2.0.0"
+description = "GPU-accelerated WAAM melt-pool digital twin (Taichi LBM + enthalpy–porosity + VOF)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Proprietary" }
+authors = [{ name = "FYP22-01" }]
+dependencies = [
+  "taichi>=1.7.0,<2",
+  "numpy>=1.24.0,<3",
+  "pyyaml>=6.0,<7",
+  "sympy>=1.12,<2",
+  "pyvista>=0.43.0,<0.46",
+  "jsonschema>=4.0.0,<5",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[tool.setuptools]
+# Repo root *is* the importable package `waam_twin` (flat layout).
+package-dir = { "waam_twin" = "." }
+packages = [
+  "waam_twin",
+  "waam_twin.physics",
+  "waam_twin.viewer",
+  "waam_twin.export",
+  "waam_twin.solvers",
+  "waam_twin.validation",
+  "waam_twin.tools",
+]
+
+[tool.setuptools.package-data]
+waam_twin = [
+  "config/*.yaml",
+  "jobs/**/*.yaml",
+  "jobs/**/*.csv",
+  "jobs/**/*.json",
+  "materials/**/*.yaml",
+  "materials/**/*.json",
+]

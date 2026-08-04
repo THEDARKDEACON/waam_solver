@@ -15,12 +15,14 @@ shift_simulation_window_x = kernels.shift_simulation_window_x
 
 def solidify_cooled_metal(
     T,
+    H,
     f_l,
     phi,
     flags,
     ux,
     uy,
     uz,
+    H_sol: float,
     T_solidus,
     zero_velocity: bool,
     FLAG_SOLID,
@@ -28,8 +30,8 @@ def solidify_cooled_metal(
     FLAG_GAS,
 ):
     kernels.solidify_cooled_metal(
-        T, f_l, phi, flags, ux, uy, uz,
-        T_solidus, 1 if zero_velocity else 0,
+        T, H, f_l, phi, flags, ux, uy, uz,
+        float(H_sol), T_solidus, 1 if zero_velocity else 0,
         FLAG_SOLID, FLAG_FLUID, FLAG_GAS,
     )
 

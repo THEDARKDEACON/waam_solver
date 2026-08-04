@@ -170,6 +170,10 @@ class WAAMGrid:
         self.telem_i_min = ti.field(dtype=ti.f32, shape=())
         self.telem_i_max = ti.field(dtype=ti.f32, shape=())
         self.telem_T_global = ti.field(dtype=ti.f32, shape=())
+        self.telem_n_cap = ti.field(dtype=ti.i32, shape=())
+        self.evap_energy_J_buf = ti.field(dtype=ti.f32, shape=())
+        self.clamp_force_hits_buf = ti.field(dtype=ti.i32, shape=())
+        self.clamp_mach_hits_buf = ti.field(dtype=ti.i32, shape=())
         self.telem_fl_slice = ti.field(dtype=ti.f32, shape=(ny, nz))
 
         # Tracer particles for porosity tracking

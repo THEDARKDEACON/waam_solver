@@ -48,6 +48,8 @@ def run(n_steps: int | None = None, threshold_pct: float = 30.0) -> float:
         f"W={W_mm:.2f}mm D={D_mm:.2f}mm  "
         f"macro_err={err:.1f}%  (threshold {threshold_pct}%)  "
         f"T_peak={telem['peak_temp_C']:.0f}C  bal={telem['mass_balance_ratio']:.2f}"
+        f"{'  VAPOR_CAP' if telem.get('vapor_cap_saturated') else ''}"
+        f"  n_cap={telem.get('n_cells_at_vapor_cap', 0)}"
     )
     if err >= threshold_pct:
         raise AssertionError(f"Pool geometry error {err:.1f}% >= {threshold_pct}%")

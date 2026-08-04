@@ -26,8 +26,8 @@ def run() -> None:
     g.uz[i, j, k] = 0.03
 
     free_surface.solidify_cooled_metal(
-        g.T, g.f_l, g.phi, g.flags, g.ux, g.uy, g.uz,
-        twin.mat.T_solidus, True,
+        g.T, g.H, g.f_l, g.phi, g.flags, g.ux, g.uy, g.uz,
+        twin.H_sol, twin.mat.T_solidus, True,
         g.FLAG_SOLID, g.FLAG_FLUID, g.FLAG_GAS,
     )
     assert int(g.flags[i, j, k]) == g.FLAG_SOLID

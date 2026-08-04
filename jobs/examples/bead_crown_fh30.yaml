@@ -1,0 +1,128 @@
+# =============================================================================
+# Crown FH-30 — bead-on-plate (datasheet short-circuit .035" window)
+# =============================================================================
+# Material: materials/placeholders/Crown-FH-30.yaml (4130-class placeholder)
+# Datasheet: docs/Crown-FH-30-datasheet.pdf
+#
+# Procedure taken from Crown FH-30 GMAW short-circuit transfer table
+# (.035" / 0.9 mm wire, 75% Ar – 25% CO₂, DCEP):
+#   Current  90–140 A   → mid 115 A
+#   Voltage  20–25 V    → mid 22.5 V
+#   WFS      120–300 ipm → mid 210 ipm ≈ 5.3 m/min
+# Preheat / interpass ambient: 400–450 °F → T_ambient_K ≈ 490 K
+#
+# Travel speed is NOT on the datasheet — 6.0 mm/s is a typical GMAW bead
+# starter; adjust against your coupon macrographs.
+# For spray-transfer (.035"): ~205 A / 30 V / WFS ~515 ipm (~13 m/min),
+# gas 98Ar/2O2 — switch transfer_mode to spray and retune η.
+# =============================================================================
+
+simulation:
+  preset: high
+  backend: cuda
+  physics_tier: full
+  domain_mm: [80, 80, 25]
+  dx_mm: 1
+  enable_vof: true
+  enable_csf_tension: true
+  enable_wetting: true
+  enable_hydrostatic_gravity: true
+  enable_bead_freeze: true
+  enable_droplet_impact_pressure: true
+  enable_recoil: true
+  use_recoil_clausius_clapeyron: true
+  enable_lorentz: true
+  enable_gas_shear: true
+  enable_enthalpy_cap: true
+  enable_evaporative_cooling: true
+  arc_surface_weighting: true
+
+plate:
+  thickness_mm: 10.0
+  size_mm: [30, 50]
+
+material: materials/placeholders/Crown-FH-30.yaml
+calibration: null
+torch_path_csv: jobs/paths/bead_line.csv
+
+heat_source: goldak
+goldak:
+  ff: 0.6
+  fr: 1.4
+  a_front_mm: 2.2
+  a_rear_mm: 4.2
+  b_mm: 3.0
+  c_mm: 1.5
+
+arc_physics:
+  sigma_mm: 2.0
+  penetration_mm: 2.0
+  T_vapor_cap_K: 3200.0
+  surface_weighting: true
+  pressure_model: lin_eagar
+  pressure_pa: 150.0
+
+advanced_physics:
+  evap_cooling_scale: 25.0
+  T_boiling_K: 3000.0
+  recoil_accommodation: 0.25
+  L_vapor_J_kg: 6.0e6
+  R_spec_vapor_J_kgK: 450.0
+  lorentz_jacobi_iters: 300
+  lorentz_jacobi_tol: 1.0e-3
+  sigma_liquid_Sm: 1.0e6
+  sigma_solid_Sm: 1.0e5
+  gas_jet_velocity_m_s: 12.0
+  gas_shear_coeff: 1.0
+
+process:
+  current_A: 115
+  voltage_V: 22.5
+  # Short-circuit GMAW efficiency (order-of-mag; calibrate later)
+  arc_efficiency: 0.78
+  travel_speed_mm_s: 6.0
+  wire_feed_m_min: 5.3
+  wire_diameter_mm: 0.9          # 0.035 in
+  droplet_length_mm: 2.5
+  # Datasheet preheat 400–450 °F
+  T_ambient_K: 490
+  stickout_mm: 12.0
+  ctwd_mm: 15.0
+  # Short-circuit → larger/slower drops than spray (engine heuristic)
+  transfer_mode: globular
+  droplet_size_jitter: 0.05
+  impact_lead_angle_deg: 5.0
+
+deposition:
+  superheat_K: 400.0
+  footprint_sigma_scale: 1.0
+  trailing_solidify_lookback_mm: 6.0
+  trailing_solidify_temp_margin_K: 10.0
+
+surface_wetting:
+  contact_angle_deg: 80.0
+
+heat_loss:
+  convection: true
+  radiation: true
+  h_conv: 35.0
+
+reference:
+  # No Crown FH-30 macrograph lock yet — envelopes are placeholders
+  pool_width_mm: 7.0
+  pool_depth_mm: 3.0
+  source: Crown_FH-30_datasheet_short_circuit_035_mid_window
+
+model_reference:
+  pool_width_mm: 6.5
+  pool_depth_mm: 2.8
+  n_steps: 8000
+  notes: >
+    Starter envelope only. Material is placeholder (4130 thermophysics).
+    Replace reference after coupon macrographs under this process window.
+
+probes:
+  - name: substrate_behind_arc
+    x_mm: 20.0
+    y_mm: 10.0
+    z_mm: 2.0

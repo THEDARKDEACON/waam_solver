@@ -24,13 +24,15 @@ def run(threshold_pct: float | None = None) -> float:
     ref = job.get("reference", {})
     W_ref = float(ref.get("pool_width_mm", 7.0))
     D_ref = float(ref.get("pool_depth_mm", 3.0))
+    if n_steps_env := os.environ.get("WAAM_BEAD_STEPS"):
+        n_steps = int(n_steps_env)
+    else:
+        n_steps = int((job.get("model_reference") or {}).get("n_steps", 8000))
 
     twin = WAAMTwin.from_job("jobs/examples/bead_calibrate.yaml", preset_override="standard")
+    twin.travel_speed_m_s = float(job.get("process", {}).get("travel_speed_mm_s", 6.5)) / 1000.0
     twin.reset()
-    n_steps_env = os.environ.get("WAAM_BEAD_STEPS")
-    n_steps, x_start, y_m, dir_x = plan_linear_bead_run(
-        twin, job, n_steps=int(n_steps_env) if n_steps_env else None
-    )
+    n_steps, x_start, y_m, dir_x = plan_linear_bead_run(twin, job, n_steps=n_steps)
     run_bead_travel(twin, n_steps, x_start_m=x_start, y_m=y_m, direction_x=dir_x)
 
     m = measure_bead_metrics(twin)

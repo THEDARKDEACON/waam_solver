@@ -170,7 +170,7 @@ torch_path_csv: jobs/paths/bead_line.csv
 # Options (aliases in parentheses):
 #   gaussian2d              — surface Gaussian (default if omitted)
 #   goldak | goldak3d | doubleellipsoid — Goldak double-ellipsoid volume
-#   conical | conicalvolume | cone      — conical volume source
+#   conical — NOT IMPLEMENTED (raises ValueError if selected)
 heat_source: goldak
 
 # Required / used when heat_source is goldak-family. Semi-axes in mm.

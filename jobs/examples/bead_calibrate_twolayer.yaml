@@ -1,0 +1,117 @@
+# =============================================================================
+# Two-layer remelt / HAZ on the calibrate domain (credibility, not CI smoke)
+# =============================================================================
+# Same Goldak / process / full-tier physics as bead_calibrate.yaml.
+# Layer 1: +x pass; layer 2: return at +layer_height_mm with use_torch_z.
+# Reference HAZ band is qualitative (literature envelope), not FEA parity.
+# =============================================================================
+
+simulation:
+  preset: standard
+  backend: cuda
+  physics_tier: full
+  domain_mm: [80, 40, 25]
+  dx_mm: 0.4
+  enable_vof: true
+  enable_csf_tension: true
+  enable_wetting: true
+  enable_hydrostatic_gravity: true
+  enable_bead_freeze: true
+  enable_droplet_impact_pressure: true
+  enable_recoil: true
+  use_recoil_clausius_clapeyron: true
+  enable_lorentz: true
+  enable_gas_shear: true
+  enable_enthalpy_cap: true
+  enable_evaporative_cooling: true
+  enable_substrate_growth: true
+  use_torch_z: true
+  arc_surface_weighting: true
+
+plate:
+  thickness_mm: 8.0
+  size_mm: [50, 20]
+
+material: materials/validated/ER70S-6.v1.yaml
+calibration: null
+
+heat_source: goldak
+goldak:
+  ff: 0.6
+  fr: 1.4
+  a_front_mm: 2.2
+  a_rear_mm: 4.2
+  b_mm: 3.0
+  c_mm: 1.5
+
+arc_physics:
+  sigma_mm: 2.0
+  penetration_mm: 2.1
+  T_vapor_cap_K: 3200.0
+  surface_weighting: true
+  pressure_model: lin_eagar
+  pressure_pa: 150.0
+
+advanced_physics:
+  evap_cooling_scale: 25.0
+  T_boiling_K: 3000.0
+  recoil_accommodation: 0.25
+  L_vapor_J_kg: 6.0e6
+  R_spec_vapor_J_kgK: 450.0
+  lorentz_jacobi_iters: 300
+  lorentz_jacobi_tol: 1.0e-3
+  sigma_liquid_Sm: 1.0e6
+  sigma_solid_Sm: 1.0e5
+  gas_jet_velocity_m_s: 12.0
+  gas_shear_coeff: 1.0
+
+process:
+  current_A: 100
+  voltage_V: 15
+  arc_efficiency: 0.72
+  travel_speed_mm_s: 6.5
+  wire_feed_m_min: 3.2
+  wire_diameter_mm: 1.2
+  droplet_length_mm: 3.0
+  T_ambient_K: 293
+  stickout_mm: 12.0
+  ctwd_mm: 15.0
+
+deposition:
+  superheat_K: 400.0
+  footprint_sigma_scale: 1.0
+
+surface_wetting:
+  contact_angle_deg: 80.0
+
+heat_loss:
+  convection: true
+  radiation: true
+  h_conv: 35.0
+
+interpass:
+  cooling_steps: 200
+
+# Path fits plate size_mm [50,20]; z rises for layer 2 (use_torch_z).
+torch_path:
+  - {x_mm: 10, y_mm: 10, z_mm: 0}
+  - {x_mm: 40, y_mm: 10, z_mm: 0}
+  - {x_mm: 10, y_mm: 10, z_mm: 1.2}
+
+layer_height_mm: 1.2
+
+reference:
+  # Qualitative HAZ peak band (always gated).
+  haz_T_peak_min_K: 800
+  haz_T_peak_max_K: 3200
+  remelt_liquid_min: 5
+  # Paste measured remelt depth / HAZ width from a two-layer cut when available.
+  awaiting_measurement: true
+  remelt_depth_mm: null
+  haz_width_mm: null
+  tolerance_pct: 40.0
+  source: TBD_twolayer_macrograph_ER70S-6
+
+model_reference:
+  n_steps: 12000
+  interpass_steps: 200

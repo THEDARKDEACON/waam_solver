@@ -44,7 +44,9 @@ def export_research_bundle(
     job_path: str | None = None,
 ) -> dict[str, str]:
     """Write a complete research snapshot to *out_dir*."""
-    out_dir = pathlib.Path(out_dir)
+    from ..paths import resolve_output_path
+
+    out_dir = resolve_output_path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     tier_tuple = _parse_tiers(tiers)
     step_tag = tag or f"step_{twin._step_n:06d}"
@@ -112,7 +114,15 @@ def write_pvd(
         except ValueError:
             rel = pathlib.Path(vti_p.name)
         t = times_s[i] if times_s is not None and i < len(times_s) else float(i)
-        lines.append(f'    <DataSet timestep="{t:.9g}" file="{rel.as_posix()}"/>')
+        # Escape XML attribute special characters in relative paths.
+        rel_s = (
+            rel.as_posix()
+            .replace("&", "&amp;")
+            .replace('"', "&quot;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+        lines.append(f'    <DataSet timestep="{t:.9g}" file="{rel_s}"/>')
     lines.extend(["  </Collection>", "</VTKFile>"])
     collection_path.write_text("\n".join(lines))
     print(f"[export] PVD collection → {collection_path}")

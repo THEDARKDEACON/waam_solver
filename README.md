@@ -163,10 +163,12 @@ See [docs/weld_pool_physics.md](docs/weld_pool_physics.md), [`solvers/coupled_st
 ```bash
 git clone https://github.com/THEDARKDEACON/waam_solver.git waam_twin
 cd waam_twin
-pip install -r requirements.txt
+pip install -e .
 ```
 
-The clone directory **must** be named `waam_twin` (Python package import path).
+Editable install is now the preferred path. It avoids the old "clone folder must
+be named `waam_twin`" constraint. That naming rule still matters only if you skip
+installation and rely on `PYTHONPATH` import resolution instead.
 
 ### CUDA / GPU backends
 
@@ -258,10 +260,18 @@ The notebook keeps three editable text blocks in memory, then writes them into a
 | Notebook variable | Writes to | Purpose |
 |------------------|-----------|---------|
 | `JOB_YAML` | `jobs/notebook_session/job.yaml` | full run configuration |
-| `TORCH_PATH_CSV` | `jobs/notebook_session/path.csv` | welding path waypoints |
-| `PRESETS_YAML` | `config/presets.yaml` | optional preset overrides for that session |
+| `TORCH_PATH_CSV` | `jobs/notebook_session/torch_path.csv` | welding path waypoints |
+| `PRESETS_YAML` | `jobs/notebook_session/presets.yaml` | optional preset overrides for that session |
 
-`apply_job_config()` materializes those cells and returns the `job` used by `run_job(...)` and `run_job_live_view(...)`.
+`apply_job_config()` materializes those cells and returns the `job` used by
+`run_job(...)` and `run_job_live_view(...)`.
+
+Current notebook assumptions:
+
+- install from the repo root with `pip install -e .`
+- presets are hardware/VRAM profiles only; geometry stays in `JOB_YAML`
+- `strict_mode: true` is recommended for long cloud runs
+- session jobs are schema-validated when loaded
 
 Main notebook run controls:
 
@@ -315,10 +325,10 @@ python3 -m waam_twin.viewer --preset standard --material materials/validated/ER7
 | `T` / `O` | Toggle porosity tracers / torch marker |
 | `G` | Full research VTK bundle → `viewer_output/bundle_step_*/` |
 | `I` | Pick probe at camera lookat; **T(t)** panel updates live |
-| `P` | Add probe at torch (CSV on **`G`** export) |
+| `U` | Add probe at torch (CSV on **`G`** export) |
+| `P` | Screenshot PNG → `viewer_output/` |
 | `R` | Reset simulation |
 | `+` / `-` | More / fewer physics steps per frame |
-| `S` | Screenshot PNG → `viewer_output/` |
 | `SPACE` | Pause / resume |
 | `ESC` | Exit |
 
@@ -332,17 +342,17 @@ Two separate knobs: **simulation grid** (physics) vs **particle size** (display 
 
 | What | Where | Effect |
 |------|--------|--------|
-| **Grid / cell size** | Job YAML `simulation.preset` or viewer `--preset` | `minimal` → dx≈0.5 mm, `standard` → 0.3 mm, `high` → 0.2 mm |
-| **Preset definitions** | [`config/presets.yaml`](config/presets.yaml) | Edit `target_dx_mm`, `domain_mm`, `vram_budget_mb` per tier |
-| **Viewer override** | CLI | `--preset standard` overrides job preset without editing YAML |
+| **Job domain / plate** | Job YAML `simulation.domain_mm`, `plate.size_mm` | Physical experiment size (sacred). Presets have **no** domain. |
+| **Hardware profile** | Job `simulation.preset` or viewer `--preset` | Caps cell count / VRAM; **coarsens dx** if needed — does **not** rewrite plate |
+| **Profile definitions** | [`config/presets.yaml`](config/presets.yaml) | `vram_budget_mb`, `max_cells`, `target_dx_mm` only |
 | **Particle “ball” size** | CLI | `--particle-scale 0.25` (fraction of cell width; default `0.35`) |
 
-Example — finer physics + smaller particles:
+Example — same 50×50 plate, cheaper hardware (coarser dx):
 
 ```bash
 python3 -m waam_twin.viewer \
   --job jobs/examples/bead_on_plate.yaml \
-  --preset standard \
+  --preset minimal \
   --particle-scale 0.28
 ```
 
@@ -350,11 +360,14 @@ Or edit the job file:
 
 ```yaml
 simulation:
-  preset: standard   # was minimal — 0.3 mm cells, larger grid
+  preset: standard   # hardware profile (cell budget), not coupon size
+  domain_mm: [80, 80, 25]
   enable_vof: true
+plate:
+  size_mm: [50, 50]  # geometry lives here — not in presets.yaml
 ```
 
-**VRAM:** `standard` needs ~2 GB GPU budget; `high` ~8 GB. Your RTX-class laptop can usually run `standard` on CUDA.
+**dx target:** `max_cells` + `vram_budget_mb` (cell-count / memory). **Not** viewer FPS. See [docs/HARDWARE.md](docs/HARDWARE.md).
 
 ### VTK export & ParaView
 
@@ -403,11 +416,21 @@ Full field inventory (names, units, computation): [docs/VTK_EXPORT.md](docs/VTK_
 ### Bead geometry physics (job flags)
 
 Example [`jobs/examples/bead_calibrate.yaml`](jobs/examples/bead_calibrate.yaml)
-(`physics_tier: flow` — VOF/CSF/wetting/gravity/freeze; recoil/Lorentz/gas shear off until pool is stable):
+(`physics_tier: full` — VOF/CSF/wetting/gravity/freeze + Lorentz/gas shear + Lin–Eagar
+arc pressure; `enable_recoil: true` is explicit with soft-onset CC vapor recoil).
+Fitted knobs (η, Goldak axes, `evap_cooling_scale`, `recoil_accommodation`) vs
+predicted closures (Lin–Eagar \(p_0\), CC \(P_\mathrm{sat}\), Marangoni \(d\gamma/dT\))
+are listed in the job YAML header. Held-out process variants
+(`bead_calibrate_heldout_fast.yaml`, `bead_calibrate_heldout_hot.yaml`) must not
+retune those knobs — report with `python -m waam_twin.tools.prediction_report`.
+Recoil evidence: `python -m waam_twin.tools.recoil_accommodation_sweep`.
+Reference write-up: [docs/validation/reference_case_ER70S6.md](docs/validation/reference_case_ER70S6.md).
+Plain-language guide (macrograph vs multipass, calibration vs held-out):
+[docs/validation/UNDERSTANDING_CALIBRATION_AND_DATA.md](docs/validation/UNDERSTANDING_CALIBRATION_AND_DATA.md).
 
 | Flag | Effect |
 |------|--------|
-| `physics_tier` | `base` / `flow` / `full` — sets force defaults; later `enable_*` keys override |
+| `physics_tier` | `flow` / `full` (aliases: `base`, `default`, `standard_physics` → `flow`) — sets force defaults; later `enable_*` keys override |
 | `enable_wetting` | Contact-angle CSF at substrate triple line |
 | `enable_hydrostatic_gravity` | ρg flattening of liquid crest |
 | `enable_bead_freeze` | Solidify cooled metal behind arc (bead crown) |
@@ -417,6 +440,7 @@ Example [`jobs/examples/bead_calibrate.yaml`](jobs/examples/bead_calibrate.yaml)
 | `enable_droplet_impact_pressure` | Droplet momentum pulse on impact |
 | `enable_ctwd` | Stick-out I²R wire preheat (open-loop CTWD) |
 | `enable_enthalpy_cap` | Soft T/H ceiling (`arc_physics.T_vapor_cap_K`) — safety net, not boiling physics |
+| `enable_evaporative_cooling` | Hertz–Knudsen evaporative enthalpy sink on hot liquid / free surface (preferred over living on the hard cap) |
 
 New droplet / impact knobs:
 
@@ -481,7 +505,7 @@ deposition:
 |-----|---------|
 | `preset` | named grid preset from `config/presets.yaml` |
 | `backend` | preferred backend hint; runtime still follows `init_taichi` / `WAAM_*` env |
-| `physics_tier` | `base` / `flow` / `full` — default force set before `enable_*` overrides |
+| `physics_tier` | `flow` / `full` — default force set before `enable_*` overrides (`base`, `default`, `standard_physics` are accepted aliases to `flow`; unknown values now raise `ValueError`) |
 | `domain_mm` / `dx_mm` | optional domain and cell size (override preset sizing) |
 | `enable_vof` | enable free-surface VOF advection |
 | `enable_csf_tension` | enable capillary surface-tension force |
@@ -683,8 +707,15 @@ precision with validation tolerance.
 # Core CI (~2 min on CPU)
 WAAM_BACKEND=cpu PYTHONPATH=... python3 -m waam_twin.validation.run_all
 
-# Full suite (process + soak)
-WAAM_FULL_VALIDATION=1 WAAM_BACKEND=cpu PYTHONPATH=... python3 -m waam_twin.validation.run_all
+# Full suite (process + soak + held-out sims + recoil smoke + intensive)
+WAAM_FULL_VALIDATION=1 WAAM_BACKEND=cuda PYTHONPATH=... python3 -m waam_twin.validation.run_all
+
+# Held-out prediction sims only (locked Goldak/η/recoil, process varies)
+WAAM_HELDOUT_VALIDATION=1 WAAM_BACKEND=cuda PYTHONPATH=... \
+  python3 -m waam_twin.validation.test_heldout_prediction
+
+# Intensive physics only (coupled forces / vapor / Lorentz / calibrate soak)
+WAAM_INTENSIVE_PHYSICS=1 WAAM_BACKEND=cuda PYTHONPATH=... python3 -m waam_twin.validation.run_all
 
 # Standard cell size pool gate
 WAAM_STANDARD_VALIDATION=1 WAAM_BACKEND=cpu PYTHONPATH=... python3 -m waam_twin.validation.run_all
@@ -693,6 +724,9 @@ WAAM_STANDARD_VALIDATION=1 WAAM_BACKEND=cpu PYTHONPATH=... python3 -m waam_twin.
 **Tools:**
 
 ```bash
+python3 -m waam_twin.tools.prediction_report          # fitted vs held-out W/D (+ macro2 slot)
+python3 -m waam_twin.tools.multipass_report            # twolayer remelt / HAZ extents
+python3 -m waam_twin.tools.recoil_accommodation_sweep # C_acc evidence
 python3 -m waam_twin.tools.fit_calibration --write
 python3 -m waam_twin.tools.run_validation_matrix --quick
 python3 -m waam_twin.tools.benchmark_performance
@@ -714,7 +748,9 @@ Legacy entry: `python3 -m waam_twin.verify` (delegates to `run_all`).
 | `WAAM_JOB` | path to job YAML | `jobs/examples/bead_on_plate.yaml` |
 | `WAAM_BEAD_STEPS` | int — force bead validation step count | unset |
 | `WAAM_MAX_BEAD_STEPS` | int — cap long path-derived runs | unset |
-| `WAAM_FULL_VALIDATION` | `1` = process + soak tests | off |
+| `WAAM_FULL_VALIDATION` | `1` = process + soak + held-out sims + recoil smoke + intensive | off |
+| `WAAM_HELDOUT_VALIDATION` | `1` = held-out prediction sims (process-only variants) | off |
+| `WAAM_INTENSIVE_PHYSICS` | `1` = coupled-force / vapor / Lorentz stress tests | off |
 | `WAAM_STANDARD_VALIDATION` | `1` = standard-dx pool test | off |
 | `WAAM_BACKEND_MATRIX` | `1` = probe vulkan/cuda in smoke test | off |
 | `WAAM_STRICT` | `1` = abort on mass/Lorentz/NaN faults | off |
@@ -756,16 +792,16 @@ No robot logic lives inside this package — only frame mapping, CSV paths, and 
 
 ---
 
-## Presets
+## Hardware profiles (`preset`)
 
-| Preset | Typical dx | VRAM budget | Collision |
-|--------|------------|-------------|-----------|
-| `minimal` | 0.5 mm | 512 MB | SRT |
-| `standard` | 0.3 mm | 2 GB | SRT |
-| `high` | 0.2 mm | 8 GB | MRT (two-rate) |
-| `ultra` | 0.15 mm | 16 GB | MRT (two-rate) |
+| Profile | Typical dx start | Cell / VRAM cap | Collision |
+|---------|------------------|-----------------|-----------|
+| `minimal` | 0.5 mm | 4e5 cells / 512 MB | SRT |
+| `standard` | 0.3 mm | 2.5e6 cells / 1.5 GB | SRT |
+| `high` | 0.2 mm | 1.2e7 cells / 8 GB | MRT (two-rate) |
+| `ultra` | 0.15 mm | 4e7 cells / 16 GB | MRT (two-rate) |
 
-Grid dimensions are computed by `auto_grid()` from `config/presets.yaml` and available memory.
+`auto_grid()` keeps job `domain_mm` and coarsens `dx` to fit the profile. See [docs/HARDWARE.md](docs/HARDWARE.md).
 
 **Collision honesty note:** "MRT" here is a **two-relaxation-rate central-moment
 collision** — the deviatoric second moments relax at ω_s (sets viscosity) and

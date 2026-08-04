@@ -63,8 +63,8 @@ def _solidify_if_enabled(twin: "WAAMTwin", g) -> None:
     if not twin.enable_substrate_growth and not twin.enable_bead_freeze:
         return
     free_surface.solidify_cooled_metal(
-        g.T, g.f_l, g.phi, g.flags, g.ux, g.uy, g.uz,
-        twin.mat.T_solidus,
+        g.T, g.H, g.f_l, g.phi, g.flags, g.ux, g.uy, g.uz,
+        twin.H_sol, twin.mat.T_solidus,
         twin.enable_bead_freeze or twin.enable_substrate_growth,
         g.FLAG_SOLID, g.FLAG_FLUID, g.FLAG_GAS,
     )
@@ -238,6 +238,48 @@ def coupled_step(
             twin.mat.T_solidus, twin.mat.T_liquidus,
         )
 
+    # Evaporative energy sink on the free surface (before hard vapor ceiling).
+    if getattr(twin, "enable_evaporative_cooling", False):
+        T_boil = float(twin.T_boiling_K)
+        T_onset = max(float(twin.mat.T_liquidus) + 200.0, 0.85 * T_boil)
+        use_field = 1 if twin.use_material_tables else 0
+        thermal.apply_evaporative_enthalpy_sink(
+            g.H, g.T, g.phi, g.f_l, g.flags,
+            g.cp_rho_field,
+            use_field,
+            float(twin.cp_rho),
+            T_boil,
+            T_onset,
+            float(twin.L_vapor_J_kg),
+            float(twin.R_spec_vapor_J_kgK),
+            float(twin.P_vapor_ref_Pa),
+            float(getattr(twin, "recoil_accommodation", 0.54)),
+            float(getattr(twin, "evap_cooling_scale", 25.0)),
+            g.dt, g.dx,
+            g.evap_energy_J_buf,
+            g.FLAG_GAS,
+            g.nx, g.ny, g.nz,
+        )
+        e_step = float(g.evap_energy_J_buf[None])
+        twin._evap_energy_J_step = e_step
+        twin._evap_energy_J_cum = float(getattr(twin, "_evap_energy_J_cum", 0.0)) + e_step
+        # Recover T after sink so the ceiling sees post-evaporation state.
+        if twin.use_material_tables:
+            thermal.update_phase_variable_cp(
+                g.H, g.T, g.f_l, g.cp_rho_field,
+                twin.L_rho,
+                twin.mat.T_solidus, twin.mat.T_liquidus,
+                twin.H_sol, twin.H_liq,
+            )
+        else:
+            phase_change.update_phase(
+                g.H, g.T, g.f_l,
+                twin.cp_rho, twin.L_rho,
+                twin.mat.T_solidus, twin.mat.T_liquidus,
+            )
+    else:
+        twin._evap_energy_J_step = 0.0
+
     # Cap H, then re-recover T so telemetry / T_max cannot retain a
     # post-phase spike above T_vapor_cap while H was already clamped.
     _clamp_enthalpy_ceiling(twin, g)
@@ -353,13 +395,21 @@ def coupled_step(
         weld_forces.solve_lorentz(twin, g, arc_i, arc_j, arc_k)
 
     # Stability: full-tier surface/body forces on coarse grids can drive Ma≫1.
+    # Hit counts are surfaced in telemetry (and fail under strict_mode).
     u_cap = float(getattr(twin, "u_mach_limit_lu", 0.08))
     F_cap = float(getattr(twin, "force_limit_lu", 0.05))
+    twin._force_clamp_hits_step = 0
+    twin._mach_clamp_hits_step = 0
     if F_cap > 0.0:
         kernels.clamp_body_force_magnitude(
             g.Fx, g.Fy, g.Fz, g.flags, F_cap,
+            g.clamp_force_hits_buf,
             g.FLAG_SOLID, g.FLAG_GAS,
         )
+        n_f = int(g.clamp_force_hits_buf[None])
+        twin._force_clamp_hits_step = n_f
+        twin._force_clamp_hits_cum = int(getattr(twin, "_force_clamp_hits_cum", 0)) + n_f
+        twin._force_clamp_steps = int(getattr(twin, "_force_clamp_steps", 0)) + (1 if n_f > 0 else 0)
 
     if twin.use_material_tables and twin.use_variable_tau:
         lbm.collide_srt_variable_tau(
@@ -398,8 +448,13 @@ def coupled_step(
     if u_cap > 0.0:
         kernels.clamp_velocity_mach(
             g.ux, g.uy, g.uz, g.flags, u_cap,
+            g.clamp_mach_hits_buf,
             g.FLAG_SOLID, g.FLAG_GAS,
         )
+        n_u = int(g.clamp_mach_hits_buf[None])
+        twin._mach_clamp_hits_step = n_u
+        twin._mach_clamp_hits_cum = int(getattr(twin, "_mach_clamp_hits_cum", 0)) + n_u
+        twin._mach_clamp_steps = int(getattr(twin, "_mach_clamp_steps", 0)) + (1 if n_u > 0 else 0)
 
     lbm.stream(
         g.f_dst, g.f_src,
@@ -426,15 +481,14 @@ def coupled_step(
     if twin.enable_substrate_growth or twin.enable_bead_freeze:
         if twin.use_material_tables:
             free_surface.remelt_hot_solid(
-                g.T, g.H, g.f_l, g.phi, g.flags, g.cp_rho_field,
-                twin.mat.T_solidus, twin.mat.T_liquidus, twin.L_rho,
+                g.T, g.H, g.f_l, g.phi, g.flags,
+                twin.L_rho, twin.H_sol, twin.H_liq,
                 g.FLAG_SOLID, g.FLAG_FLUID,
             )
         else:
             free_surface.remelt_hot_solid_scalar(
                 g.T, g.H, g.f_l, g.phi, g.flags,
-                twin.cp_rho,
-                twin.mat.T_solidus, twin.mat.T_liquidus, twin.L_rho,
+                twin.L_rho, twin.H_sol, twin.H_liq,
                 g.FLAG_SOLID, g.FLAG_FLUID,
             )
         if is_welding and twin.enable_bead_freeze:

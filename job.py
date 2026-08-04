@@ -18,11 +18,8 @@ def parse_torch_path(job: dict[str, Any]) -> list[tuple[float, float, float]]:
     csv_ref = job.get("torch_path_csv")
     if csv_ref:
         from .torch_path import load_torch_path_csv
-        from .paths import PROJECT_ROOT
-        p = pathlib.Path(csv_ref)
-        if not p.is_absolute():
-            p = PROJECT_ROOT / p
-        return load_torch_path_csv(p)
+        from .paths import resolve_project_path
+        return load_torch_path_csv(resolve_project_path(csv_ref, must_exist=True))
 
     raw = job.get("torch_path") or []
     out: list[tuple[float, float, float]] = []
@@ -33,6 +30,54 @@ def parse_torch_path(job: dict[str, Any]) -> list[tuple[float, float, float]]:
             float(pt.get("z_mm", 0)) / 1000.0,
         ))
     return out
+
+
+_JOB_SCHEMA_PATH = pathlib.Path(__file__).resolve().parent / "jobs" / "schema.json"
+
+
+def validate_job_config(data: dict[str, Any], path: pathlib.Path | None = None) -> None:
+    """Validate job YAML against jobs/schema.json when jsonschema is installed."""
+    if not _JOB_SCHEMA_PATH.exists():
+        return
+    label = str(path or data.get("name", "job"))
+    try:
+        import json
+        import jsonschema
+
+        with open(_JOB_SCHEMA_PATH) as f:
+            schema = json.load(f)
+        jsonschema.validate(instance=data, schema=schema)
+    except ImportError:
+        sim = data.get("simulation") or {}
+        tier = sim.get("physics_tier")
+        if tier is not None and str(tier).strip().lower() not in (
+            "thermal", "flow", "full", "base", "default", "standard_physics",
+        ):
+            raise ValueError(
+                f"Job {label}: unknown physics_tier '{tier}' "
+                "(valid: thermal | flow | full)"
+            )
+        hs = data.get("heat_source")
+        if hs is not None:
+            key = str(hs).lower().replace("-", "").replace("_", "")
+            if key not in (
+                "gaussian2d", "gaussian", "gauss",
+                "goldak", "goldak3d", "doubleellipsoid",
+            ):
+                raise ValueError(
+                    f"Job {label}: unknown heat_source '{hs}' "
+                    "(valid: gaussian2d | goldak)"
+                )
+    except Exception as exc:
+        try:
+            from jsonschema import ValidationError
+        except ImportError:
+            raise
+        if isinstance(exc, ValidationError):
+            raise ValueError(
+                f"Job schema validation failed for {label}: {exc.message}"
+            ) from exc
+        raise
 
 
 def load_job_config(path: str | pathlib.Path) -> dict[str, Any]:
@@ -46,7 +91,11 @@ def load_job_config(path: str | pathlib.Path) -> dict[str, Any]:
     except ImportError as exc:
         raise ImportError("PyYAML required: pip install pyyaml") from exc
     with open(path) as f:
-        return yaml.safe_load(f) or {}
+        data = yaml.safe_load(f) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"Job file must be a mapping: {path}")
+    validate_job_config(data, path)
+    return data
 
 
 def _wire_droplet_freq_hz(process: dict[str, Any]) -> float | None:
@@ -65,13 +114,14 @@ def apply_physics_tier(twin, tier: str) -> None:
     Apply PHYSICS_FORCE_CORRECTNESS_SPEC §4.3 tier defaults.
 
     Individual simulation.* flags applied later still override.
+    Unknown tiers raise ValueError (aliases base/default/standard_physics → flow).
     """
     key = str(tier or "flow").strip().lower()
-    # Aliases / common typos
+    # Aliases / common typos → flow (safe default, not full)
     if key in ("base", "default", "standard_physics"):
         from . import logging_util as log
         log.warning(
-            f"[job] physics_tier '{tier}' is not defined; using 'flow'. "
+            f"[job] physics_tier '{tier}' is an alias; using 'flow'. "
             f"Valid: thermal | flow | full"
         )
         key = "flow"
@@ -102,10 +152,9 @@ def apply_physics_tier(twin, tier: str) -> None:
         twin.arc_pressure_model = "constant"
         return
     if key != "full":
-        from . import logging_util as log
-        log.warning(
-            f"[job] unknown physics_tier '{tier}'; using 'full'. "
-            f"Valid: thermal | flow | full"
+        raise ValueError(
+            f"Unknown physics_tier '{tier}'. Valid: thermal | flow | full "
+            f"(aliases: base, default, standard_physics → flow)"
         )
     # full
     twin.enable_vof = True
@@ -123,41 +172,40 @@ def apply_physics_tier(twin, tier: str) -> None:
     twin.physics_tier = "full"
 
 
-def resolve_plate_and_domain(job: dict[str, Any], preset_domain_mm: tuple[float, float, float], preset_dx_mm: float) -> dict[str, Any]:
-    """Resolve plate thickness and optional domain/dx overrides from a job dict.
+def resolve_plate_and_domain(
+    job: dict[str, Any],
+    preset_dx_mm: float,
+    *,
+    fallback_domain_mm: tuple[float, float, float] | None = None,
+) -> dict[str, Any]:
+    """Resolve plate + domain from a job dict (geometry is never taken from presets).
 
-    Job keys (any of these work):
+    Precedence for domain:
+      1. ``simulation.domain_mm`` / ``plate.domain_mm`` (explicit)
+      2. Derived from ``plate.size_mm`` + margin / air gap
+      3. ``fallback_domain_mm`` (demo/CI only) with a warning
+
+    Job keys:
       plate:
         thickness_mm: 10.0
-        size_mm: [50, 25]       # optional coupon L×W; default = full domain XY
-        origin_mm: [15, 7.5]    # optional lower-left; default = centered
-        # domain_mm / dx_mm also accepted here
+        size_mm: [50, 50]
+        origin_mm: [15, 15]          # optional; default = centered
+        domain_margin_mm: 15         # XY pad when domain is derived
+        air_gap_mm: 15               # Z above plate when domain is derived
       simulation:
-        plate_thickness_mm: 10.0
-        plate_size_mm: [50, 25]
-        domain_mm: [80, 40, 30]
+        domain_mm: [80, 80, 25]
         dx_mm: 0.3
-
-    Returns domain_mm, dx_mm, plate_thickness_mm, plate_size_mm, plate_origin_mm.
     """
+    from . import logging_util as log
+
     sim = job.get("simulation", {}) or {}
     plate = job.get("plate", {}) or {}
-
-    domain = plate.get("domain_mm", sim.get("domain_mm"))
-    if domain is not None:
-        domain_mm = (float(domain[0]), float(domain[1]), float(domain[2]))
-    else:
-        domain_mm = preset_domain_mm
-
-    dx = plate.get("dx_mm", sim.get("dx_mm"))
-    dx_mm = float(dx) if dx is not None else float(preset_dx_mm)
 
     thick = plate.get("thickness_mm", sim.get("plate_thickness_mm"))
     if thick is None and "substrate_thickness_mm" in sim:
         thick = sim["substrate_thickness_mm"]
     plate_thickness_mm = float(thick) if thick is not None else None
 
-    # Lateral coupon size (mm). None → plate fills the whole domain XY.
     size = plate.get("size_mm", sim.get("plate_size_mm"))
     plate_size_mm = None
     if size is not None:
@@ -173,16 +221,52 @@ def resolve_plate_and_domain(job: dict[str, Any], preset_domain_mm: tuple[float,
     if origin is not None:
         plate_origin_mm = (float(origin[0]), float(origin[1]))
 
+    domain = plate.get("domain_mm", sim.get("domain_mm"))
+    if domain is not None:
+        domain_mm = (float(domain[0]), float(domain[1]), float(domain[2]))
+    elif plate_size_mm is not None:
+        margin = float(plate.get("domain_margin_mm", sim.get("domain_margin_mm", 15.0)))
+        thick_for_z = plate_thickness_mm if plate_thickness_mm is not None else 8.0
+        air = plate.get("air_gap_mm", sim.get("air_gap_mm"))
+        air_gap = float(air) if air is not None else max(12.0, 1.5 * thick_for_z)
+        domain_mm = (
+            plate_size_mm[0] + 2.0 * margin,
+            plate_size_mm[1] + 2.0 * margin,
+            thick_for_z + air_gap,
+        )
+        log.info(
+            f"[job] domain_mm derived from plate {plate_size_mm[0]:.0f}×{plate_size_mm[1]:.0f} mm "
+            f"+ margin {margin:.0f} mm / air {air_gap:.0f} mm → "
+            f"{domain_mm[0]:.0f}×{domain_mm[1]:.0f}×{domain_mm[2]:.0f} mm"
+        )
+    elif fallback_domain_mm is not None:
+        domain_mm = (
+            float(fallback_domain_mm[0]),
+            float(fallback_domain_mm[1]),
+            float(fallback_domain_mm[2]),
+        )
+        log.warning(
+            f"[job] no simulation.domain_mm or plate.size_mm — using fallback domain "
+            f"{domain_mm[0]:.0f}×{domain_mm[1]:.0f}×{domain_mm[2]:.0f} mm"
+        )
+    else:
+        raise ValueError(
+            "Job must set simulation.domain_mm and/or plate.size_mm. "
+            "Hardware presets no longer supply domain geometry."
+        )
+
+    dx = plate.get("dx_mm", sim.get("dx_mm"))
+    dx_mm = float(dx) if dx is not None else float(preset_dx_mm)
+
     if plate_size_mm is not None:
         if plate_size_mm[0] > domain_mm[0] * 1.001 or plate_size_mm[1] > domain_mm[1] * 1.001:
-            from . import logging_util as log
-            log.warning(
-                f"[job] plate size {plate_size_mm} mm exceeds domain XY "
-                f"{domain_mm[0]}×{domain_mm[1]} mm — clamping to domain."
+            raise ValueError(
+                f"plate size {plate_size_mm[0]:.1f}×{plate_size_mm[1]:.1f} mm exceeds "
+                f"domain XY {domain_mm[0]:.1f}×{domain_mm[1]:.1f} mm. "
+                f"Enlarge simulation.domain_mm (or shrink plate.size_mm)."
             )
 
     if plate_thickness_mm is not None and plate_thickness_mm >= domain_mm[2] * 0.95:
-        from . import logging_util as log
         log.warning(
             f"[job] plate_thickness_mm={plate_thickness_mm} is ≥95% of domain Z="
             f"{domain_mm[2]} mm — raise simulation.domain_mm Z (air gap for the bead)."
@@ -207,6 +291,30 @@ def _apply_heat_source(twin, job: dict[str, Any]) -> None:
     else:
         twin.arc_source = create_heat_source(name)
     twin.heat_source_name = name
+
+
+def electrical_arc_power_W(process: dict[str, Any]) -> float:
+    """Arc electrical power Q_w = V·I·PF·duty (η applied separately in kernels)."""
+    return (
+        float(process.get("voltage_V", 20.0))
+        * float(process.get("current_A", 140.0))
+        * float(process.get("power_factor", 1.0))
+        * float(process.get("duty_cycle", 1.0))
+    )
+
+
+def clone_job_with_process(
+    job: dict[str, Any],
+    **process_overrides: Any,
+) -> dict[str, Any]:
+    """Deep-copy a job and override ``process`` keys only (held-out predictions)."""
+    import copy
+
+    out = copy.deepcopy(job)
+    proc = dict(out.get("process") or {})
+    proc.update(process_overrides)
+    out["process"] = proc
+    return out
 
 
 def apply_job_to_twin(twin, job: dict[str, Any]) -> None:
@@ -243,6 +351,12 @@ def apply_job_to_twin(twin, job: dict[str, Any]) -> None:
     if current_A is not None:
         twin.welding_current_A = float(current_A)
 
+    # Keep Lin–Eagar (I) and Goldak heating (Q_w) consistent after process edits.
+    if any(k in process for k in ("current_A", "voltage_V", "power_factor", "duty_cycle")):
+        twin.Q_w = electrical_arc_power_W(process)
+    if "arc_efficiency" in process:
+        twin.eta = float(process["arc_efficiency"])
+
     adv = job.get("advanced_physics", {})
     if "gas_jet_velocity_m_s" in adv:
         twin.gas_jet_velocity_m_s = float(adv["gas_jet_velocity_m_s"])
@@ -254,14 +368,20 @@ def apply_job_to_twin(twin, job: dict[str, Any]) -> None:
         twin.sigma_solid_Sm = float(adv["sigma_solid_Sm"])
     if "lorentz_jacobi_iters" in adv:
         twin.lorentz_jacobi_iters = int(adv["lorentz_jacobi_iters"])
+    if "lorentz_jacobi_tol" in adv:
+        twin.lorentz_jacobi_tol = float(adv["lorentz_jacobi_tol"])
     if "T_boiling_K" in adv:
         twin.T_boiling_K = float(adv["T_boiling_K"])
+    if "T_recoil_onset_K" in adv:
+        twin.T_recoil_onset_K = float(adv["T_recoil_onset_K"])
     if "L_vapor_J_kg" in adv:
         twin.L_vapor_J_kg = float(adv["L_vapor_J_kg"])
     if "R_spec_vapor_J_kgK" in adv:
         twin.R_spec_vapor_J_kgK = float(adv["R_spec_vapor_J_kgK"])
     if "recoil_accommodation" in adv:
         twin.recoil_accommodation = float(adv["recoil_accommodation"])
+    if "evap_cooling_scale" in adv:
+        twin.evap_cooling_scale = float(adv["evap_cooling_scale"])
 
     sim = job.get("simulation", {})
     if "physics_tier" in sim:
@@ -292,6 +412,8 @@ def apply_job_to_twin(twin, job: dict[str, Any]) -> None:
             twin.grid.ensure_vof_buffers()
     if "enable_enthalpy_cap" in sim:
         twin.enable_enthalpy_cap = bool(sim["enable_enthalpy_cap"])
+    if "enable_evaporative_cooling" in sim:
+        twin.enable_evaporative_cooling = bool(sim["enable_evaporative_cooling"])
     if "arc_surface_weighting" in sim:
         twin.arc_surface_weighting = bool(sim["arc_surface_weighting"])
     if "enable_substrate_growth" in sim:
@@ -306,8 +428,10 @@ def apply_job_to_twin(twin, job: dict[str, Any]) -> None:
         twin.enable_bead_freeze = bool(sim["enable_bead_freeze"])
     if "enable_ctwd" in sim:
         twin.enable_ctwd = bool(sim["enable_ctwd"])
-    if sim.get("use_torch_z") or sim.get("enable_torch_z"):
-        twin.use_torch_z = True
+    if "use_torch_z" in sim:
+        twin.use_torch_z = bool(sim["use_torch_z"])
+    elif "enable_torch_z" in sim:
+        twin.use_torch_z = bool(sim["enable_torch_z"])
 
     # Plate / substrate geometry (decoupled from filling the whole domain).
     plate = job.get("plate", {}) or {}

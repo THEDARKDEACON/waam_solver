@@ -1,29 +1,44 @@
-# waam_twin v2 fidelity presets — grid scales with host VRAM via platform.auto_grid()
+# Hardware profiles — compute / memory only. NO geometry.
+#
+# Owns:
+#   vram_budget_mb  — memory cap for auto_grid
+#   max_cells       — explicit cell-count cap (compute intensity)
+#   target_dx_mm    — preferred dx when the job omits dx_mm
+#   max_tracers, use_srt
+#
+# Does NOT own domain or plate. Job YAML owns:
+#   plate.size_mm / thickness_mm
+#   simulation.domain_mm  (optional — if omitted, derived from plate + margin)
+#
+# CLI `--preset X` switches this profile and may coarsen dx to fit the
+# budget. It never rewrites plate or domain size.
+#
+# dx coarsening target = max_cells + vram_budget (NOT viewer FPS).
 
 minimal:
-  vram_budget_mb: 512
-  domain_mm: [40, 20, 15]
+  vram_budget_mb: 1024
+  max_cells: 4000000
   target_dx_mm: 0.5
   max_tracers: 5000
   use_srt: true
 
 standard:
-  vram_budget_mb: 1536
-  domain_mm: [80, 40, 25]
+  vram_budget_mb: 2048
+  max_cells: 25000000
   target_dx_mm: 0.3
   max_tracers: 20000
   use_srt: true
 
 high:
   vram_budget_mb: 8192
-  domain_mm: [120, 60, 40]
-  target_dx_mm: 0.05
+  max_cells: 120000000
+  target_dx_mm: 0.2
   max_tracers: 50000
   use_srt: false
 
 ultra:
   vram_budget_mb: 16384
-  domain_mm: [200, 100, 60]
+  max_cells: 400000000
   target_dx_mm: 0.15
   max_tracers: 100000
   use_srt: false

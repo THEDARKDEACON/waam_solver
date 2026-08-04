@@ -18,7 +18,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--preset",
         default=None,
-        help="Override job simulation preset (minimal, standard, high, ultra)",
+        help=(
+            "Hardware profile override (minimal|standard|high|ultra). "
+            "Changes VRAM/cell budget and may coarsen dx; does NOT rewrite "
+            "job domain_mm or plate.size_mm."
+        ),
     )
     p.add_argument(
         "--material",

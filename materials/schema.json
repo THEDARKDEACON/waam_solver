@@ -7,6 +7,7 @@
     "name": { "type": "string" },
     "status": { "enum": ["placeholder", "calibrated"] },
     "source": { "type": "string" },
+    "notes": { "type": "string" },
     "constants": {
       "type": "object",
       "required": [

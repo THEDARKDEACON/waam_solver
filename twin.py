@@ -94,6 +94,7 @@ class WAAMTwin:
         travel_speed_m_s: float = 0.0,
         use_variable_tau: bool = True,
         enable_enthalpy_cap: bool = True,
+        enable_evaporative_cooling: bool = False,
         T_vapor_cap_K: float = 3200.0,
         arc_surface_weighting: bool = True,
         arc_penetration_mm: float = 2.0,
@@ -187,9 +188,11 @@ class WAAMTwin:
         self.sigma_solid_Sm = sigma_solid_Sm
         self.lorentz_jacobi_iters = lorentz_jacobi_iters
         self.lorentz_jacobi_omega = lorentz_jacobi_omega
+        self.lorentz_jacobi_tol = 1.0e-4
         self.gas_jet_velocity_m_s = gas_jet_velocity_m_s
         self.gas_shear_coeff = gas_shear_coeff
         self.T_boiling_K = T_boiling_K
+        self.T_recoil_onset_K = None  # None → max(0.85·T_boil, T_liq+200)
         self.P_vapor_ref_Pa = P_vapor_ref_Pa
         self.L_vapor_J_kg = L_vapor_J_kg
         self.R_spec_vapor_J_kgK = R_spec_vapor_J_kgK
@@ -197,6 +200,10 @@ class WAAMTwin:
         self.marangoni_scale = 1.0
         self.use_variable_tau = use_variable_tau
         self.enable_enthalpy_cap = enable_enthalpy_cap
+        self.enable_evaporative_cooling = enable_evaporative_cooling
+        self.evap_cooling_scale = 25.0
+        self._evap_energy_J_step = 0.0
+        self._evap_energy_J_cum = 0.0
         self.T_vapor_cap_K = T_vapor_cap_K
         self.arc_surface_weighting = arc_surface_weighting
         self.arc_penetration_m = arc_penetration_mm * 1e-3
@@ -211,6 +218,7 @@ class WAAMTwin:
         self._deposited_volume_m3 = 0.0
         self._n_droplets_fired = 0
         self._deposition_overflow = 0
+        self._welding_time_s = 0.0
         self._bead_height_m = 0.0
         # Substrate thickness: None → legacy nz//5. Job may set plate_thickness_mm.
         self.plate_thickness_mm: float | None = None
@@ -235,6 +243,12 @@ class WAAMTwin:
         self._torch_dir_xyz = (1.0, 0.0, 0.0)
         self._warned_zero_wire_feed = False
         self._warned_overflow = False
+        self._force_clamp_hits_step = 0
+        self._mach_clamp_hits_step = 0
+        self._force_clamp_hits_cum = 0
+        self._mach_clamp_hits_cum = 0
+        self._force_clamp_steps = 0
+        self._mach_clamp_steps = 0
 
         kernels.bind_velocity_set(self.grid)
 
@@ -368,23 +382,27 @@ class WAAMTwin:
         **kwargs: Any,
     ) -> "WAAMTwin":
         from .platform import (
+            DEMO_DEFAULT_DOMAIN_MM,
             auto_grid,
             auto_tracer_count,
             check_vram_budget,
             ensure_taichi,
+            resolve_grid_budget_mb,
             resolve_preset,
         )
 
         ensure_taichi()
         cfg = resolve_preset(preset)
-        vram = cfg.vram_budget_mb
+        vram = resolve_grid_budget_mb(cfg)
         tracers = auto_tracer_count(vram, cfg)
-        dom = cfg.domain_mm if domain_mm is None else (
+        dom = DEMO_DEFAULT_DOMAIN_MM if domain_mm is None else (
             float(domain_mm[0]), float(domain_mm[1]), float(domain_mm[2])
         )
         dx_target = cfg.target_dx_mm if dx_mm is None else float(dx_mm)
-        nx, ny, nz, dx = auto_grid(dom, dx_target, vram, tracers)
-        check_vram_budget(nx, ny, nz, tracers, cfg.vram_budget_mb)
+        nx, ny, nz, dx = auto_grid(
+            dom, dx_target, vram, tracers, max_cells=cfg.max_cells,
+        )
+        check_vram_budget(nx, ny, nz, tracers, vram)
 
         twin = cls(
             material=material,
@@ -402,9 +420,11 @@ class WAAMTwin:
             twin.nz_solid = twin.resolve_nz_solid()
         i0, i1, j0, j1 = twin.resolve_plate_ij()
         log.info(
-            f"[WAAMTwin] Preset={cfg.name}  grid={nx}×{ny}×{nz}  dx={dx*1e3:.3f}mm"
+            f"[WAAMTwin] hardware={cfg.name}  grid={nx}×{ny}×{nz}  dx={dx*1e3:.3f}mm"
             f"  domain={dom[0]:.0f}×{dom[1]:.0f}×{dom[2]:.0f}mm"
-            f"  plate≈{twin.nz_solid * dx * 1e3:.2f}mm thick"
+            f"  budget≈{vram} MB"
+            + (f"  max_cells={cfg.max_cells}" if cfg.max_cells else "")
+            + f"  plate≈{twin.nz_solid * dx * 1e3:.2f}mm thick"
             f"  footprint i=[{i0},{i1}) j=[{j0},{j1})"
         )
         return twin
@@ -422,7 +442,14 @@ class WAAMTwin:
         ensure_taichi()
         job = load_job_config(job_path)
         if preset_override:
-            job.setdefault("simulation", {})["preset"] = preset_override
+            # Switch hardware profile only. Job domain_mm / plate / dx request
+            # stay intact; auto_grid may coarsen dx to fit the profile budget.
+            sim = job.setdefault("simulation", {})
+            sim["preset"] = preset_override
+            log.info(
+                f"[WAAMTwin] hardware override → {preset_override} "
+                f"(job domain/plate kept; dx may coarsen to fit budget)"
+            )
         preset = job.get("simulation", {}).get("preset", "standard")
         material = job.get("material", "ER70S-6")
         process = job.get("process", {})
@@ -432,12 +459,8 @@ class WAAMTwin:
         # For pulsed transfer supply duty_cycle; for AC processes supply
         # power_factor — otherwise V(rms)×I(peak) style mismatches inflate
         # power by 20–40% with no warning.
-        arc_w = (
-            float(process.get("voltage_V", 20))
-            * float(process.get("current_A", 140))
-            * float(process.get("power_factor", 1.0))
-            * float(process.get("duty_cycle", 1.0))
-        )
+        from .job import electrical_arc_power_W
+        arc_w = electrical_arc_power_W(process)
         arc_eta = float(process.get("arc_efficiency", kwargs.pop("arc_efficiency", 0.8)))
         T_amb = float(process.get("T_ambient_K", kwargs.pop("T_ambient", 300.0)))
 
@@ -453,7 +476,12 @@ class WAAMTwin:
             )
 
         cfg = resolve_preset(preset)
-        grid = resolve_plate_and_domain(job, cfg.domain_mm, cfg.target_dx_mm)
+        from .platform import DEMO_DEFAULT_DOMAIN_MM
+        grid = resolve_plate_and_domain(
+            job,
+            cfg.target_dx_mm,
+            fallback_domain_mm=DEMO_DEFAULT_DOMAIN_MM,
+        )
 
         twin = cls.from_preset(
             preset=preset,
@@ -474,6 +502,18 @@ class WAAMTwin:
             plate_thickness_mm=grid["plate_thickness_mm"],
             plate_size_mm=grid["plate_size_mm"],
             plate_origin_mm=grid["plate_origin_mm"],
+        )
+        # Footprint log after plate geometry is applied (from_preset ran earlier).
+        i0, i1, j0, j1 = twin.resolve_plate_ij()
+        dx_mm = twin.grid.dx * 1e3
+        ps = twin.plate_size_mm
+        plate_xy = (
+            f"{ps[0]:.0f}×{ps[1]:.0f} mm" if ps else "full domain XY"
+        )
+        log.info(
+            f"[WAAMTwin] job geometry: plate {plate_xy}  "
+            f"footprint i=[{i0},{i1}) j=[{j0},{j1})  "
+            f"resolved dx={dx_mm:.3f} mm"
         )
         twin._job_config = job
         twin._job_path = str(job_path)
@@ -520,12 +560,19 @@ class WAAMTwin:
         self._deposited_volume_m3 = 0.0
         self._n_droplets_fired = 0
         self._deposition_overflow = 0
+        self._welding_time_s = 0.0
         self._bead_height_m = 0.0
         self._last_torch_pos_m = None
         self._torch_dir_xyz = (1.0, 0.0, 0.0)
         self._warned_zero_wire_feed = False
         self._lorentz_warm = False
         self._lorentz_unconverged_streak = 0
+        self._force_clamp_hits_step = 0
+        self._mach_clamp_hits_step = 0
+        self._force_clamp_hits_cum = 0
+        self._mach_clamp_hits_cum = 0
+        self._force_clamp_steps = 0
+        self._mach_clamp_steps = 0
         g.deposit_vol_buf[None] = 0.0
         g.deposit_real_buf[None] = 0.0
         log.info(f"[WAAMTwin] Grid reset. T_ambient={T0:.1f}K  test_fluid={test_fluid_domain}")
@@ -563,6 +610,9 @@ class WAAMTwin:
             self._maybe_shift_window(torch_x_m)
         sim_x = torch_x_m - self._window_offset_x_m - self._sim_origin_offset_x_m
         sim_y = torch_y_m - self._sim_origin_offset_y_m
+        # Wire-feed ledger: only arc-on time counts toward expected wire mass.
+        if is_welding:
+            self._welding_time_s = float(getattr(self, "_welding_time_s", 0.0)) + self.grid.dt
         coupled_step(self, sim_x, sim_y, is_welding, torch_z_m)
         self._check_strict_mode()
 
@@ -571,11 +621,29 @@ class WAAMTwin:
         if not self.strict_mode:
             return
         streak = int(getattr(self, "_lorentz_unconverged_streak", 0) or 0)
-        if self.enable_lorentz and streak > 50:
+        # Stricter than the historical 50-step allowance: a warm-started Jacobi
+        # that fails for >10 consecutive steps is already polluting J×B.
+        if self.enable_lorentz and streak > 10:
             raise RuntimeError(
                 f"[strict_mode] Lorentz Jacobi failed to converge for {streak} "
                 f"consecutive steps — raise lorentz_jacobi_iters or disable strict_mode"
             )
+        # Sustained Mach/force clamping means the pool is numerically limited.
+        if self._step_n >= 100:
+            f_steps = int(getattr(self, "_force_clamp_steps", 0) or 0)
+            u_steps = int(getattr(self, "_mach_clamp_steps", 0) or 0)
+            if f_steps > 0.5 * self._step_n:
+                raise RuntimeError(
+                    f"[strict_mode] body-force clamp active on {f_steps}/{self._step_n} "
+                    f"steps (force_limit_lu={self.force_limit_lu}) — refine grid or "
+                    "raise force_limit_lu / lower force magnitudes"
+                )
+            if u_steps > 0.5 * self._step_n:
+                raise RuntimeError(
+                    f"[strict_mode] Mach velocity clamp active on {u_steps}/{self._step_n} "
+                    f"steps (u_mach_limit_lu={self.u_mach_limit_lu}) — refine grid or "
+                    "reduce driving forces"
+                )
         diag = getattr(self, "_force_diag", None) or {}
         if diag:
             from .physics.force_diagnostics import diagnostics_have_nan
@@ -719,6 +787,11 @@ class WAAMTwin:
             g.telem_i_sum, g.telem_i_min, g.telem_i_max, g.telem_T_global,
         )
         n_liquid = int(g.telem_n[None])
+        kernels.count_near_vapor_cap(
+            g.T, g.flags, g.telem_n_cap,
+            float(self.T_vapor_cap_K), 1.0, g.FLAG_GAS,
+        )
+        n_at_vapor_cap = int(g.telem_n_cap[None])
 
         if n_liquid > 0:
             T_peak = float(g.telem_T_peak[None])
@@ -771,7 +844,18 @@ class WAAMTwin:
             "sim_time_ms": round(self._step_n * g.dt * 1000, 4),
             "peak_temp_K": round(T_peak, 1),
             "peak_temp_C": round(T_peak - 273.15, 1),
-            "peak_cooling_rate_Ks": round(peak_cool, 1),
+            "T_vapor_cap_K": self.T_vapor_cap_K,
+            "n_cells_at_vapor_cap": n_at_vapor_cap,
+            "vapor_cap_saturated": bool(
+                self.enable_enthalpy_cap and T_peak >= float(self.T_vapor_cap_K) - 1.0
+            ),
+            "enable_evaporative_cooling": bool(
+                getattr(self, "enable_evaporative_cooling", False)
+            ),
+            "evap_energy_J_step": round(float(getattr(self, "_evap_energy_J_step", 0.0)), 6),
+            "evap_energy_J_cum": round(float(getattr(self, "_evap_energy_J_cum", 0.0)), 4),
+            "peak_cooling_rate_Ks": round(min(float(peak_cool), 1.0e5), 1),
+            "peak_cooling_rate_raw_Ks": round(float(peak_cool), 1),
             "pool_width_mm": round(pool_width_m * 1000, 3),
             "pool_depth_mm": round(pool_depth_m * 1000, 3),
             "pool_length_mm": round(pool_length_m * 1000, 3),
@@ -791,12 +875,12 @@ class WAAMTwin:
             "expected_wire_mass_g": round(exp_mass * 1000, 4),
             "expected_drop_mass_g": round(exp_drop_mass * 1000, 4),
             "n_droplets_fired": self._n_droplets_fired,
+            "welding_time_s": round(float(getattr(self, "_welding_time_s", 0.0)), 6),
             "droplet_mass_mg": round(m_drop * 1e6, 3),
             "droplet_transfer_mode": infer_transfer_mode(self),
             "droplet_impact_velocity_ms": round(droplet_impact_velocity_m_s(self), 4),
             "mass_balance_ratio": round(mass_ratio, 3),
             "wire_mass_flux_g_s": round(wire_mass_flux_kg_s(self) * 1000, 4),
-            "T_vapor_cap_K": self.T_vapor_cap_K,
             "arc_surface_weighting": self.arc_surface_weighting,
             "enable_enthalpy_cap": self.enable_enthalpy_cap,
             "enable_wetting": self.enable_wetting,
@@ -817,6 +901,14 @@ class WAAMTwin:
             "enable_gas_shear": self.enable_gas_shear,
             "lorentz_unconverged_count": int(getattr(self, "_lorentz_unconverged", 0) or 0),
             "lorentz_unconverged_streak": int(getattr(self, "_lorentz_unconverged_streak", 0) or 0),
+            "force_clamp_hits_step": int(getattr(self, "_force_clamp_hits_step", 0) or 0),
+            "mach_clamp_hits_step": int(getattr(self, "_mach_clamp_hits_step", 0) or 0),
+            "force_clamp_hits_cum": int(getattr(self, "_force_clamp_hits_cum", 0) or 0),
+            "mach_clamp_hits_cum": int(getattr(self, "_mach_clamp_hits_cum", 0) or 0),
+            "force_clamp_steps": int(getattr(self, "_force_clamp_steps", 0) or 0),
+            "mach_clamp_steps": int(getattr(self, "_mach_clamp_steps", 0) or 0),
+            "u_mach_limit_lu": float(getattr(self, "u_mach_limit_lu", 0.08)),
+            "force_limit_lu": float(getattr(self, "force_limit_lu", 0.05)),
             "force_diagnostics": force_diag,
         }
 

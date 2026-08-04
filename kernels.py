@@ -515,7 +515,8 @@ def _goldak_pdf_weight(
     di: ti.f32,
     dj: ti.f32,
     dk: ti.f32,
-    travel_sign: ti.f32,
+    dir_x: ti.f32,
+    dir_y: ti.f32,
     ff: ti.f32,
     fr: ti.f32,
     a_front: ti.f32,
@@ -529,17 +530,19 @@ def _goldak_pdf_weight(
         f_{f,r} exp(-3 x²/a_{f,r}² - 3 y²/b² - 3 z²/c²)
 
     Absolute 6√3/(π√π a b c) amplitude is absorbed by energy renormalization.
-    x is along travel (travel_sign·di ≥ 0 ⇒ front).
+    Travel frame: (dir_x, dir_y) is the unit travel direction in the XY plane
+    (from torch path). x_travel ≥ 0 ⇒ front ellipsoid.
     """
     eps = 1e-6
-    x_travel = di * travel_sign
+    x_travel = di * dir_x + dj * dir_y
+    y_trans = -di * dir_y + dj * dir_x
     is_front = x_travel >= 0.0
     a_axis = ti.select(is_front, a_front, a_rear)
     frac = ti.select(is_front, ff, fr)
     return frac * ti.math.exp(
         -3.0 * (
             (x_travel * x_travel) / (a_axis * a_axis + eps)
-            + (dj * dj) / (b_axis * b_axis + eps)
+            + (y_trans * y_trans) / (b_axis * b_axis + eps)
             + (dk * dk) / (c_axis * c_axis + eps)
         )
     )
@@ -559,7 +562,8 @@ def inject_goldak_heat(
     dt: ti.f32,
     dx3: ti.f32,
     eta: ti.f32,
-    travel_sign: ti.f32,
+    dir_x: ti.f32,
+    dir_y: ti.f32,
     ff: ti.f32,
     fr: ti.f32,
     a_front: ti.f32,
@@ -575,6 +579,7 @@ def inject_goldak_heat(
     Goldak (1984) double-ellipsoid heat source, energy-normalized.
 
     Semi-axes a_front / a_rear (travel), b (transverse), c (depth) in cells.
+    (dir_x, dir_y) is the horizontal unit travel direction.
     Requires f_f + f_r = 2 in the loader (relative split still works under
     renormalization). Pass 1 sums weights on metal; pass 2 deposits exactly
     η·Q·dt joules.
@@ -594,7 +599,7 @@ def inject_goldak_heat(
         dj = ti.f32(j) - arc_j
         dk = ti.f32(k) - arc_k
         w = _goldak_pdf_weight(
-            di, dj, dk, travel_sign, ff, fr,
+            di, dj, dk, dir_x, dir_y, ff, fr,
             a_front, a_rear, b_axis, c_axis,
         )
         ti.atomic_add(norm_buf[None], w * w_dep)
@@ -616,7 +621,7 @@ def inject_goldak_heat(
         dj = ti.f32(j) - arc_j
         dk = ti.f32(k) - arc_k
         w = _goldak_pdf_weight(
-            di, dj, dk, travel_sign, ff, fr,
+            di, dj, dk, dir_x, dir_y, ff, fr,
             a_front, a_rear, b_axis, c_axis,
         )
         H[i, j, k] += energy_per_weight * w * w_dep
@@ -1055,6 +1060,7 @@ def apply_vapor_recoil_clausius_clapeyron(
     sigma: ti.f32,
     P_ref_Pa: ti.f32,
     T_boil_K: ti.f32,
+    T_onset_K: ti.f32,
     L_vapor_J_kg: ti.f32,
     R_spec_J_kgK: ti.f32,
     C_acc: ti.f32,
@@ -1065,9 +1071,11 @@ def apply_vapor_recoil_clausius_clapeyron(
     FLAG_GAS: ti.i32,
 ):
     """
-    Vapor recoil via Clausius–Clapeyron: p = C_acc · P_sat(T).
+    Vapor recoil via Clausius–Clapeyron: p = C_acc · P_sat(T) · ramp².
 
-    C_acc ≈ 0.54 (Anisimov / Knight accommodation). Force is zero for T ≤ T_boil.
+    C_acc ≈ 0.54 (Anisimov / Knight accommodation). Soft quadratic onset from
+    T_onset → T_boil (same schedule as evaporative cooling) so conduction-mode
+    pools can develop a partial recoil force without needing T > T_boil.
     """
     eps = 1e-6
     inv2s2 = 1.0 / (2.0 * sigma * sigma + eps)
@@ -1078,11 +1086,16 @@ def apply_vapor_recoil_clausius_clapeyron(
         if ti.abs(dphi_z) < 0.05:
             continue
         Tc = T[i, j, k]
-        if Tc <= T_boil_K:
+        if Tc <= T_onset_K:
             continue
+        ramp = 1.0
+        if Tc < T_boil_K:
+            ramp = (Tc - T_onset_K) / (T_boil_K - T_onset_K + eps)
+            ramp = ti.max(0.0, ti.min(1.0, ramp))
+            ramp = ramp * ramp
         exponent = (L_vapor_J_kg / (R_spec_J_kgK + eps)) * (1.0 / (T_boil_K + eps) - 1.0 / (Tc + eps))
-        exponent = ti.min(exponent, 12.0)
-        P_vap = C_acc * P_ref_Pa * ti.math.exp(exponent)
+        exponent = ti.max(ti.min(exponent, 12.0), -8.0)
+        P_vap = C_acc * P_ref_Pa * ti.math.exp(exponent) * ramp
         F_peak_lu = _wf_pressure_to_Fz_lu(P_vap, dt, dx, rho_ref)
         di = ti.f32(i) - arc_i
         dj = ti.f32(j) - arc_j
@@ -1951,6 +1964,101 @@ def clamp_enthalpy_floor_scalar(
 
 
 @ti.kernel
+def apply_evaporative_enthalpy_sink(
+    H: ti.template(),
+    T: ti.template(),
+    phi: ti.template(),
+    f_l: ti.template(),
+    flags: ti.template(),
+    cp_rho: ti.template(),
+    use_cp_field: ti.i32,
+    cp_rho_scalar: ti.f32,
+    T_boil_K: ti.f32,
+    T_onset_K: ti.f32,
+    L_vapor_J_kg: ti.f32,
+    R_spec_J_kgK: ti.f32,
+    P_ref_Pa: ti.f32,
+    C_acc: ti.f32,
+    scale: ti.f32,
+    dt: ti.f32,
+    dx: ti.f32,
+    energy_J_buf: ti.template(),
+    FLAG_GAS: ti.i32,
+    nx: ti.i32,
+    ny: ti.i32,
+    nz: ti.i32,
+):
+    """
+    Evaporative cooling (energy sink) on free-surface metal AND hot liquid.
+
+    Surface weighting piles arc energy into bulk liquid under the torch; a
+    free-surface-only sink never sees those cells, so the vapor-cap stays
+    saturated. Liquid cells with T > onset are therefore included.
+
+    Mass flux ~ Hertz–Knudsen / Anisimov:
+        ṁ = C_acc · P_sat(T) / √(2 π R_spec T)
+        q = ṁ · L_vapor · scale
+    """
+    eps = 1e-6
+    energy_J_buf[None] = 0.0
+    dx3 = dx * dx * dx
+    two_pi = 2.0 * 3.141592653589793
+
+    for i, j, k in H:
+        if flags[i, j, k] == FLAG_GAS:
+            continue
+        Tc = T[i, j, k]
+        if Tc <= T_onset_K:
+            continue
+
+        has_gas = 0
+        if i > 0 and flags[i - 1, j, k] == FLAG_GAS:
+            has_gas = 1
+        if i < nx - 1 and flags[i + 1, j, k] == FLAG_GAS:
+            has_gas = 1
+        if j > 0 and flags[i, j - 1, k] == FLAG_GAS:
+            has_gas = 1
+        if j < ny - 1 and flags[i, j + 1, k] == FLAG_GAS:
+            has_gas = 1
+        if k > 0 and flags[i, j, k - 1] == FLAG_GAS:
+            has_gas = 1
+        if k < nz - 1 and flags[i, j, k + 1] == FLAG_GAS:
+            has_gas = 1
+        dphi = 0.0
+        if k > 0 and k < nz - 1:
+            dphi = ti.abs(phi[i, j, k + 1] - phi[i, j, k - 1])
+        is_surface = (has_gas == 1) or (dphi >= 0.05) or (phi[i, j, k] < 0.9)
+        is_hot_liquid = f_l[i, j, k] > 0.5
+        if (not is_surface) and (not is_hot_liquid):
+            continue
+
+        ramp = 1.0
+        if Tc < T_boil_K:
+            ramp = (Tc - T_onset_K) / (T_boil_K - T_onset_K + eps)
+            ramp = ti.max(0.0, ti.min(1.0, ramp))
+            ramp = ramp * ramp
+
+        exponent = (L_vapor_J_kg / (R_spec_J_kgK + eps)) * (
+            1.0 / (T_boil_K + eps) - 1.0 / (Tc + eps)
+        )
+        exponent = ti.max(ti.min(exponent, 12.0), -8.0)
+        P_sat = P_ref_Pa * ti.math.exp(exponent)
+        denom = ti.sqrt(two_pi * R_spec_J_kgK * ti.max(Tc, 300.0)) + eps
+        m_dot = C_acc * P_sat / denom
+        q = m_dot * L_vapor_J_kg * scale * ramp
+        dH = q * dt / (dx + eps)
+
+        cp_r = cp_rho_scalar
+        if use_cp_field == 1:
+            cp_r = cp_rho[i, j, k]
+        dH_max = cp_r * ti.max(0.0, Tc - T_onset_K)
+        dH = ti.min(dH, dH_max)
+        if dH > 0.0:
+            H[i, j, k] -= dH
+            ti.atomic_add(energy_J_buf[None], dH * dx3)
+
+
+@ti.kernel
 def clamp_enthalpy_ceiling_scalar(
     H: ti.template(),
     flags: ti.template(),
@@ -2019,11 +2127,28 @@ def update_cooling_rate(
     dt_phys: ti.f32,
     FLAG_GAS: ti.i32,
 ):
+    """Per-cell (T − T_prev)/dt [K/s]; positive while heating.
+
+    Single-step |ΔT| above ``max_jump_K`` is treated as a discrete event
+    (droplet inject, freeze clamp, vapor reset, gas→metal birth) — rate is
+    zeroed for that step so telemetry/VTK are not polluted by 10⁶ K/s spikes.
+    Gas cells keep ``T_prev`` synced so a newly created metal cell does not
+    inherit a stale ambient/hot mismatch on the following step.
+    """
     inv_dt = 1.0 / (dt_phys + 1e-12)
+    # ~25 K/step at dt≈50 µs ⇒ 5e5 K/s. Real GMAW HAZ cool is typically
+    # 10–few×10³ K/s; anything needing a bigger jump is not continuum cooling.
+    max_jump_K = 25.0
     for i, j, k in T:
         if flags[i, j, k] == FLAG_GAS:
+            dT_dt[i, j, k] = 0.0
+            T_prev[i, j, k] = T[i, j, k]
             continue
-        dT_dt[i, j, k] = (T[i, j, k] - T_prev[i, j, k]) * inv_dt
+        dT = T[i, j, k] - T_prev[i, j, k]
+        if ti.abs(dT) > max_jump_K:
+            dT_dt[i, j, k] = 0.0
+        else:
+            dT_dt[i, j, k] = dT * inv_dt
         T_prev[i, j, k] = T[i, j, k]
 
 
@@ -2402,10 +2527,16 @@ def update_flags_from_phi(
     FLAG_GAS: ti.i32,
     FLAG_IFACE: ti.i32,
 ):
-    """Derive FLUID / GAS / IFACE from φ and liquid fraction."""
+    """Derive FLUID / GAS / IFACE from φ and liquid fraction.
+
+    Substrate band (k < nz_solid): keep existing metal as SOLID, but never
+    convert GAS → SOLID. A previous blanket assignment filled the whole
+    domain footprint with invented plate metal beside partial coupons.
+    """
     for i, j, k in phi:
         if k < nz_solid:
-            flags[i, j, k] = FLAG_SOLID
+            if flags[i, j, k] != FLAG_GAS:
+                flags[i, j, k] = FLAG_SOLID
             continue
         p = phi[i, j, k]
         fl = f_l[i, j, k]
@@ -2422,19 +2553,25 @@ def update_flags_from_phi(
 @ti.kernel
 def solidify_cooled_metal(
     T: ti.template(),
+    H: ti.template(),
     f_l: ti.template(),
     phi: ti.template(),
     flags: ti.template(),
     ux: ti.template(),
     uy: ti.template(),
     uz: ti.template(),
+    H_sol: ti.f32,
     T_solidus: ti.f32,
     zero_velocity: ti.i32,
     FLAG_SOLID: ti.i32,
     FLAG_FLUID: ti.i32,
     FLAG_GAS: ti.i32,
 ):
-    """Promote solidified weld metal to static SOLID (bead growth / interpass)."""
+    """Promote solidified weld metal to static SOLID (bead growth / interpass).
+
+    Clamps H ≤ H_sol so f_l/T recovered next step stay consistent with a
+    fully solid cell (avoids freeze→remelt chatter from leftover latent H).
+    """
     for i, j, k in T:
         if flags[i, j, k] == FLAG_GAS:
             continue
@@ -2444,6 +2581,8 @@ def solidify_cooled_metal(
             flags[i, j, k] = FLAG_SOLID
             phi[i, j, k] = 1.0
             f_l[i, j, k] = 0.0
+            if H[i, j, k] > H_sol:
+                H[i, j, k] = H_sol
             if zero_velocity == 1:
                 ux[i, j, k] = 0.0
                 uy[i, j, k] = 0.0
@@ -2457,33 +2596,33 @@ def remelt_hot_solid(
     f_l: ti.template(),
     phi: ti.template(),
     flags: ti.template(),
-    cp_rho_field: ti.template(),
-    T_solidus: ti.f32,
-    T_liquidus: ti.f32,
     L_rho: ti.f32,
+    H_sol: ti.f32,
+    H_liq: ti.f32,
     FLAG_SOLID: ti.i32,
     FLAG_FLUID: ti.i32,
 ):
-    """Re-melt deposited SOLID when interpass or new layer reheats above solidus."""
-    margin = 5.0
+    """Re-open SOLID → FLUID when enthalpy already indicates melting.
+
+    Driven by H (not T). Previously remelt reconstructed H = cp·T + f_l·L
+    from temperature, which *created* latent heat whenever a sensible-only
+    solid crossed T_solidus — prolonging liquid lifetime and, with VOF flag
+    fill-in, runaway heating toward the vapor cap.
+    """
+    margin = 0.02 * L_rho
     for i, j, k in T:
         if flags[i, j, k] != FLAG_SOLID:
             continue
-        T_c = T[i, j, k]
-        if T_c <= T_solidus + margin:
+        h = H[i, j, k]
+        if h <= H_sol + margin:
             continue
-        cp_r = cp_rho_field[i, j, k]
-        H_sol = cp_r * T_solidus
-        fl_val = 0.0
-        if T_c >= T_liquidus:
-            fl_val = 1.0
-            H[i, j, k] = cp_r * T_liquidus + L_rho + cp_r * (T_c - T_liquidus)
+        if h >= H_liq:
+            f_l[i, j, k] = 1.0
         else:
-            fl_val = (T_c - T_solidus) / (T_liquidus - T_solidus + 1e-6)
-            H[i, j, k] = H_sol + fl_val * L_rho
-        f_l[i, j, k] = fl_val
+            f_l[i, j, k] = (h - H_sol) / (L_rho + 1e-9)
         phi[i, j, k] = 1.0
         flags[i, j, k] = FLAG_FLUID
+        # H unchanged — latent heat must arrive via conduction/advection.
 
 
 @ti.kernel
@@ -2493,32 +2632,26 @@ def remelt_hot_solid_scalar(
     f_l: ti.template(),
     phi: ti.template(),
     flags: ti.template(),
-    cp_rho: ti.f32,
-    T_solidus: ti.f32,
-    T_liquidus: ti.f32,
     L_rho: ti.f32,
+    H_sol: ti.f32,
+    H_liq: ti.f32,
     FLAG_SOLID: ti.i32,
     FLAG_FLUID: ti.i32,
 ):
-    margin = 5.0
+    """Scalar-cp twin of remelt_hot_solid (enthalpy-driven, no H rewrite)."""
+    margin = 0.02 * L_rho
     for i, j, k in T:
         if flags[i, j, k] != FLAG_SOLID:
             continue
-        T_c = T[i, j, k]
-        if T_c <= T_solidus + margin:
+        h = H[i, j, k]
+        if h <= H_sol + margin:
             continue
-        H_sol = cp_rho * T_solidus
-        fl_val = 0.0
-        if T_c >= T_liquidus:
-            fl_val = 1.0
-            H[i, j, k] = cp_rho * T_liquidus + L_rho + cp_rho * (T_c - T_liquidus)
+        if h >= H_liq:
+            f_l[i, j, k] = 1.0
         else:
-            fl_val = (T_c - T_solidus) / (T_liquidus - T_solidus + 1e-6)
-            H[i, j, k] = H_sol + fl_val * L_rho
-        f_l[i, j, k] = fl_val
+            f_l[i, j, k] = (h - H_sol) / (L_rho + 1e-9)
         phi[i, j, k] = 1.0
         flags[i, j, k] = FLAG_FLUID
-
 
 @ti.kernel
 def solidify_trailing_pool(
@@ -3290,11 +3423,16 @@ def clamp_body_force_magnitude(
     Fz: ti.template(),
     flags: ti.template(),
     F_max_lu: ti.f32,
+    hit_buf: ti.template(),
     FLAG_SOLID: ti.i32,
     FLAG_GAS: ti.i32,
 ):
-    """Limit |F| so Guo forcing cannot drive Ma ≫ 0.1 in one step."""
+    """Limit |F| so Guo forcing cannot drive Ma ≫ 0.1 in one step.
+
+    ``hit_buf`` accumulates the number of fluid cells clamped this call.
+    """
     eps = 1e-12
+    hit_buf[None] = 0
     for i, j, k in Fx:
         if flags[i, j, k] == FLAG_SOLID or flags[i, j, k] == FLAG_GAS:
             continue
@@ -3307,6 +3445,7 @@ def clamp_body_force_magnitude(
             Fx[i, j, k] = fx * s
             Fy[i, j, k] = fy * s
             Fz[i, j, k] = fz * s
+            ti.atomic_add(hit_buf[None], 1)
 
 
 @ti.kernel
@@ -3316,11 +3455,16 @@ def clamp_velocity_mach(
     uz: ti.template(),
     flags: ti.template(),
     u_max_lu: ti.f32,
+    hit_buf: ti.template(),
     FLAG_SOLID: ti.i32,
     FLAG_GAS: ti.i32,
 ):
-    """Cap macroscopic lattice velocity (keeps VOF / telemetry physical)."""
+    """Cap macroscopic lattice velocity (keeps VOF / telemetry physical).
+
+    ``hit_buf`` accumulates the number of fluid cells clamped this call.
+    """
     eps = 1e-12
+    hit_buf[None] = 0
     for i, j, k in ux:
         if flags[i, j, k] == FLAG_SOLID or flags[i, j, k] == FLAG_GAS:
             continue
@@ -3333,6 +3477,7 @@ def clamp_velocity_mach(
             ux[i, j, k] = vx * s
             uy[i, j, k] = vy * s
             uz[i, j, k] = vz * s
+            ti.atomic_add(hit_buf[None], 1)
 
 
 @ti.kernel
@@ -3456,8 +3601,11 @@ def telemetry_pool_reduce(
         Tc = T[i, j, k]
         ti.atomic_max(T_global_buf[None], Tc)
         if phi[i, j, k] > 0.05:
-            # Positive while cooling (metallurgical sign).
-            ti.atomic_max(cool_buf[None], -dT_dt[i, j, k])
+            # Positive while cooling (metallurgical sign). Ignore absurd
+            # leftovers (pre-filter spikes / NaN) above 1e5 K/s.
+            cool = -dT_dt[i, j, k]
+            if cool > 0.0 and cool < 1.0e5:
+                ti.atomic_max(cool_buf[None], cool)
         if f_l[i, j, k] > 0.5:
             ti.atomic_add(n_buf[None], 1)
             ti.atomic_max(T_peak_buf[None], Tc)
@@ -3466,6 +3614,25 @@ def telemetry_pool_reduce(
             ti.atomic_add(i_sum_buf[None], ti.f32(i))
             ti.atomic_min(i_min_buf[None], ti.f32(i))
             ti.atomic_max(i_max_buf[None], ti.f32(i))
+
+
+@ti.kernel
+def count_near_vapor_cap(
+    T: ti.template(),
+    flags: ti.template(),
+    n_buf: ti.template(),
+    T_cap: ti.f32,
+    margin_K: ti.f32,
+    FLAG_GAS: ti.i32,
+):
+    """Count metal cells with T ≥ T_cap − margin (enthalpy-ceiling saturation)."""
+    n_buf[None] = 0
+    thresh = T_cap - margin_K
+    for i, j, k in T:
+        if flags[i, j, k] == FLAG_GAS:
+            continue
+        if T[i, j, k] >= thresh:
+            ti.atomic_add(n_buf[None], 1)
 
 
 @ti.kernel

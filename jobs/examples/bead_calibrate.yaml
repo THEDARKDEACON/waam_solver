@@ -1,15 +1,34 @@
 # =============================================================================
 # Bead calibration job — fixed domain for deposition + pool W/D tuning
 # =============================================================================
-# Tuned vs macrograph W≈7 mm, D≈3 mm (cool_shallow ≈6.8×3.2, err≈7%).
-# Power convention: Q_w = I·V (electrical); kernels apply η separately.
+# Macrograph target: W≈7 mm, D≈3 mm (cool_shallow model_reference ≈6.8×3.2).
+# Power: Q_w = I·V (electrical); kernels apply η separately.
+#
+# Fitted vs predicted (physics upgrade — keep when retuning):
+#   FITTED: η=0.72, Goldak a_f/a_r/b/c, σ=2.0, penetration=2.1, travel 6.5 mm/s,
+#           I×V=100×15, evap_cooling_scale=25, C_acc=0.25 (soft-onset recoil),
+#           T_boil=3000 under T_cap=3200.
+#   PREDICTED / model: Lin–Eagar p0(I,σ), CC P_sat(T), Lorentz J×B, gas shear
+#           τ~ρv², CSF/wetting from contact_angle, Marangoni from material dγ/dT.
+#   physics_tier: full → lin_eagar + Lorentz/gas-shear defaults; enable_recoil
+#           stays explicit (conduction-mode WAAM often keeps recoil off).
+#
+# Held-out predictions (do not retune fitted knobs):
+#   jobs/examples/bead_calibrate_heldout_fast.yaml  — travel 11 mm/s
+#   jobs/examples/bead_calibrate_heldout_hot.yaml   — 120 A
+#   jobs/examples/bead_calibrate_heldout_macro2.yaml — 5 mm/s (paste 2nd macrograph)
+#   docs/validation/heldout_macrograph_slot.md
+#   python3 -m waam_twin.tools.prediction_report
+#   python3 -m waam_twin.tools.multipass_report
+#   python3 -m waam_twin.tools.recoil_accommodation_sweep
+#
 #   python3 -m waam_twin.viewer --job jobs/examples/bead_calibrate.yaml
 # =============================================================================
 
 simulation:
   preset: standard
   backend: cuda
-  physics_tier: flow
+  physics_tier: full
   domain_mm: [80, 40, 25]
   dx_mm: 0.4
   enable_vof: true
@@ -18,11 +37,13 @@ simulation:
   enable_hydrostatic_gravity: true
   enable_bead_freeze: true
   enable_droplet_impact_pressure: true
-  enable_recoil: false
-  use_recoil_clausius_clapeyron: false
-  enable_lorentz: false
-  enable_gas_shear: false
+  # Explicit: full tier leaves recoil off unless requested
+  enable_recoil: true
+  use_recoil_clausius_clapeyron: true
+  enable_lorentz: true
+  enable_gas_shear: true
   enable_enthalpy_cap: true
+  enable_evaporative_cooling: true
   arc_surface_weighting: true
 
 plate:
@@ -47,8 +68,26 @@ arc_physics:
   penetration_mm: 2.1
   T_vapor_cap_K: 3200.0
   surface_weighting: true
-  pressure_model: constant
-  pressure_pa: 150.0
+  # lin_eagar: p0 = μ0 I²/(4π² σ²) ≈ 80 Pa @ 100 A / 2 mm (was constant 150 Pa)
+  pressure_model: lin_eagar
+  pressure_pa: 150.0  # fallback only if pressure_model: constant
+
+advanced_physics:
+  # Hertz–Knudsen evaporative cooling (primary hotspot control)
+  evap_cooling_scale: 25.0
+  # Soft-onset CC recoil: ramp from ~0.85·T_boil; C_acc half of Knight 0.54
+  # while waking the force under the vapor cap
+  T_boiling_K: 3000.0
+  recoil_accommodation: 0.25
+  L_vapor_J_kg: 6.0e6
+  R_spec_vapor_J_kgK: 450.0
+  lorentz_jacobi_iters: 300
+  # Warm-start residual often lands ~4–8e-4; 1e-3 avoids full-iter burn each step
+  lorentz_jacobi_tol: 1.0e-3
+  sigma_liquid_Sm: 1.0e6
+  sigma_solid_Sm: 1.0e5
+  gas_jet_velocity_m_s: 12.0
+  gas_shear_coeff: 1.0
 
 process:
   current_A: 100
@@ -88,3 +127,5 @@ model_reference:
   pool_width_mm: 6.8
   pool_depth_mm: 3.2
   n_steps: 8000
+  bead_height_mm_min: 1.5
+  f_recoil_active: true

@@ -1,0 +1,76 @@
+# Crown FH-30 (Crown Alloys) — Chrome-Moly GMAW MIG wire
+#
+# Datasheet: docs/Crown-FH-30-datasheet.pdf
+#   (TOOL-STEEL-CROWN-FH-30-…-12-01-15.pdf)
+#
+# The product sheet lists mechanicals + GMAW procedure only. Thermophysical
+# constants below are AISI 4130 / Cr–Mo literature placeholders (MakeItFrom /
+# ASM-class values) because FH-30 is marketed for 4130/4140 joining & build-up.
+# status=placeholder — do NOT cite as calibrated until DSC / diffusivity data
+# or a bead-on-plate lock exists.
+#
+name: Crown-FH-30
+status: placeholder
+source: >
+  Product: Crown Alloys FH-30 Chrome-Moly MIG (datasheet mechanicals + GMAW
+  procedure). Thermophysics: SAE-AISI 4130 literature (solidus/liquidus,
+  ρ, cp, k) — not measured on FH-30 wire.
+notes: >
+  Typical use: join/build-up on 4130/4140 when PWHT or flame harden is planned.
+  Datasheet PWHT: austenitize 1550 °F (1116 K), oil quench, temper 1050 °F
+  (839 K) → ~145 ksi UTS / 42–46 HRC; as-welded hardness 32–36 HRC.
+  Preheat per datasheet: 400–450 °F (478–505 K) — set process.T_ambient_K
+  accordingly in the job file. Shielding: short-circuit 75Ar/25CO2;
+  spray 98Ar/2O2.
+
+constants:
+  # Liquid-pool oriented density (solid 4130 ≈ 7850 kg/m³)
+  rho: 7200.0
+  # Mid-range solid cp; tables carry T dependence toward liquidus
+  cp: 650.0
+  # Solid RT ~43 W/m·K; liquid Cr–Mo weld pools run lower
+  k: 35.0
+  # alpha = k / (rho·cp) with the constants above
+  alpha: 7.48e-6
+  # MakeItFrom SAE-AISI 4130: solidus 1420 °C, liquidus 1460 °C
+  T_solidus: 1693.0
+  T_liquidus: 1733.0
+  # Latent heat ~250 kJ/kg (4130 class)
+  L_fusion: 250000.0
+  gamma_0: 1.8
+  dgamma_dT: -4.0e-4
+  T_ref_gamma: 1733.0
+  mu: 0.0060
+  beta_T: 1.2e-4
+
+tables:
+  cp:
+    - [300, 470]
+    - [800, 600]
+    - [1100, 750]
+    - [1733, 720]
+  k:
+    - [300, 43]
+    - [600, 40]
+    - [1200, 30]
+    - [1733, 32]
+  dgamma_dT:
+    - [1733, -4.0e-4]
+    - [2000, -3.5e-4]
+  mu:
+    - [300, 0.0070]
+    - [1733, 0.0060]
+    - [2000, 0.0050]
+
+surface:
+  contact_angle_deg: 80.0
+
+surfactant:
+  # Cr–Mo filler S content unknown — mild outward Marangoni default
+  model: heiple
+  sulphur_ppm: 30.0
+
+electrical:
+  # Slightly higher resistivity than mild steel at elevated T (order-of-mag)
+  rho_e_ohm_m: 2.0e-7
+  eta_stick: 0.85

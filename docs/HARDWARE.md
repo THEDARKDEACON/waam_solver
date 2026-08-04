@@ -1,6 +1,34 @@
 # Hardware & portability (waam_twin v2)
 
-`waam_twin` targets **any machine** with a supported Taichi backend. Grid size and tracer count are chosen from available memory, not from a fixed RTX 3050 configuration.
+`waam_twin` targets **any machine** with a supported Taichi backend.
+
+## Two layers (do not conflate)
+
+| Layer | Owns | Examples |
+|-------|------|----------|
+| **Job YAML** | Experiment geometry & process | `plate.size_mm`, `domain_mm`, path, I/V, `physics_tier` |
+| **Hardware profile** (`preset`) | Cost / cell-count cap | `vram_budget_mb`, `max_cells`, `target_dx_mm`, SRT |
+
+`config/presets.yaml` has **no** `domain_mm`. CLI `--preset minimal` only switches the
+hardware profile and may **coarsen `dx`** until the grid fits. Plate size is
+unchanged.
+
+If the job omits `simulation.domain_mm` but sets `plate.size_mm`, the domain is
+**derived**: `plate + 2×domain_margin_mm` in XY and `thickness + air_gap_mm` in Z.
+
+## What targets dx coarsening? (not FPS)
+
+```text
+cost ≈ N_cells × physics_tier × steps
+```
+
+`auto_grid` coarsens `dx` until **both** fit:
+
+1. `vram_budget_mb` (memory estimate)
+2. `max_cells` (explicit compute throttle)
+
+Viewer **FPS is not a control target**. FPS is a side effect of cell count,
+physics tier, and steps-per-frame. Empty GPU VRAM with `minimal` is expected.
 
 ## Backends (auto-detect order)
 
@@ -12,42 +40,39 @@
 export WAAM_BACKEND=cuda   # or vulkan, cpu
 ```
 
-## Presets
+## Hardware profiles
 
-Presets in `config/presets.yaml` define domain size, target resolution, VRAM budget, and collision model:
-
-| Preset | Typical use |
-|--------|-------------|
-| `minimal` | CI, smoke tests, laptops |
-| `standard` | Default development |
-| `high` | Workstation GPU |
-| `ultra` | Large VRAM (≥16 GB) |
+| Profile | Typical use | Default budget |
+|---------|-------------|----------------|
+| `minimal` | CI, interactive smoke, coarsest mesh | 512 MB / 4e5 cells |
+| `standard` | Default development | 1.5 GB / 2.5e6 cells |
+| `high` | Workstation GPU | 8 GB |
+| `ultra` | Large VRAM (≥16 GB) | 16 GB |
 
 ```bash
 export WAAM_PRESET=standard
+python3 -m waam_twin.viewer --job jobs/examples/bead_on_plate.yaml --preset minimal
 ```
 
-`WAAMTwin.from_preset("standard")` calls `auto_grid()` to fit `nx×ny×nz` within the preset VRAM budget.
+## Moving window
+
+`enable_moving_window: true` keeps a fixed local mesh and slides it in X as the
+torch advances — useful for long beads without a huge `domain_mm`.
 
 ## Environment variables
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `WAAM_BACKEND` | auto | `cuda`, `vulkan`, `cpu` |
-| `WAAM_PRESET` | `standard` | Grid preset name |
-| `WAAM_VRAM_MB` | from preset | Override VRAM budget |
+| `WAAM_PRESET` | `standard` | Default hardware profile name |
+| `WAAM_VRAM_MB` | from profile | Override grid memory/compute budget |
 | `WAAM_HEADLESS` | `0` | Skip VTK export when `1` |
 | `WAAM_MATERIAL` | — | Default material YAML path |
 
-## VRAM estimate
-
-`WAAMGrid.estimated_vram_mb()` reports approximate field + tracer memory. `platform.check_vram_budget()` warns if the chosen grid exceeds the budget.
-
 ## CI
 
-GitHub Actions runs the full validation suite on **CPU** (`WAAM_BACKEND=cpu`, `WAAM_PRESET=minimal`) so merges are not gated on GPU runners.
-
-## Local validation
+Prefer small job domains (or plate-derived domains) for smoke tests. Do not rely
+on `--preset minimal` to shrink geometry.
 
 ```bash
 cd FYP22-01

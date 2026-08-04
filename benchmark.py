@@ -39,6 +39,8 @@ def measure_bead_frozen_mm(twin) -> dict[str, float]:
     Frozen deposited metal above substrate (mm).
 
     Uses FLAG_SOLID cells with k >= nz_solid.
+    Width is the transverse (y) extent — the welding bead width — not the
+    travel-direction length.
     """
     g = twin.grid
     flags = g.flags.to_numpy()
@@ -52,10 +54,10 @@ def measure_bead_frozen_mm(twin) -> dict[str, float]:
     if not dep.any():
         return {"bead_width_mm": 0.0, "bead_height_mm": 0.0, "n_deposited_cells": 0.0}
 
-    x_idx = np.where(dep.any(axis=(1, 2)))[0]
+    y_idx = np.where(dep.any(axis=(0, 2)))[0]
     z_idx = np.where(dep.any(axis=(0, 1)))[0]
     h_mm = (z_idx[-1] - nz + 1) * g.dx * 1000.0 if z_idx.size else 0.0
-    w_mm = (x_idx[-1] - x_idx[0] + 1) * g.dx * 1000.0 if x_idx.size else 0.0
+    w_mm = (y_idx[-1] - y_idx[0] + 1) * g.dx * 1000.0 if y_idx.size else 0.0
     return {
         "bead_width_mm": float(max(0.0, w_mm)),
         "bead_height_mm": float(max(0.0, h_mm)),
@@ -79,6 +81,70 @@ def measure_bead_metrics(twin) -> dict[str, float]:
         "pool_aspect_dw": pool_aspect,
         "n_deposited_cells": bead["n_deposited_cells"],
     }
+
+
+def measure_fusion_zone_mm(twin, T_threshold_K: float | None = None) -> dict[str, float]:
+    """Fusion / remelt envelope from peak temperature (T_max).
+
+    Width = transverse extent where T_max ≥ threshold at the centroid x-slice.
+    Depth = penetration of that envelope below the substrate top (nz_solid).
+    Default threshold = material liquidus (fusion zone).
+    """
+    g = twin.grid
+    T_max = g.T_max.to_numpy()
+    flags = g.flags.to_numpy()
+    thr = float(T_threshold_K if T_threshold_K is not None else twin.mat.T_liquidus)
+    metal = flags != g.FLAG_GAS
+    fused = metal & (T_max >= thr)
+    n = int(fused.sum())
+    if not fused.any():
+        return {
+            "fusion_width_mm": 0.0,
+            "fusion_depth_mm": 0.0,
+            "n_fusion_cells": 0.0,
+            "T_threshold_K": thr,
+        }
+    xs = np.nonzero(fused)[0]
+    i_c = int(round(float(xs.mean())))
+    sect = fused[i_c]
+    if not sect.any():
+        return {
+            "fusion_width_mm": 0.0,
+            "fusion_depth_mm": 0.0,
+            "n_fusion_cells": float(n),
+            "T_threshold_K": thr,
+        }
+    y_idx = np.where(sect.any(axis=1))[0]
+    z_idx = np.where(sect.any(axis=0))[0]
+    W_mm = (y_idx[-1] - y_idx[0] + 1) * g.dx * 1000.0
+    nz_solid = int(getattr(twin, "nz_solid", 0))
+    D_mm = max(0, nz_solid - int(z_idx[0])) * g.dx * 1000.0
+    return {
+        "fusion_width_mm": float(W_mm),
+        "fusion_depth_mm": float(D_mm),
+        "n_fusion_cells": float(n),
+        "T_threshold_K": thr,
+    }
+
+
+def measure_haz_extent_mm(twin, T_threshold_K: float = 1073.15) -> dict[str, float]:
+    """HAZ isotherm envelope (default Ac1≈800 °C) from T_max."""
+    out = measure_fusion_zone_mm(twin, T_threshold_K=T_threshold_K)
+    return {
+        "haz_width_mm": out["fusion_width_mm"],
+        "haz_depth_mm": out["fusion_depth_mm"],
+        "n_haz_cells": out["n_fusion_cells"],
+        "T_threshold_K": out["T_threshold_K"],
+        "haz_T_peak_K": float(twin.grid.T_max.to_numpy().max()),
+    }
+
+
+def measure_multipass_metrics(twin) -> dict[str, float]:
+    """Pool + fusion zone + HAZ metrics for two-layer credibility."""
+    pool = measure_bead_metrics(twin)
+    fusion = measure_fusion_zone_mm(twin)
+    haz = measure_haz_extent_mm(twin)
+    return {**pool, **fusion, **haz}
 
 
 def pool_error_pct(W_mm: float, D_mm: float, W_ref: float, D_ref: float) -> float:

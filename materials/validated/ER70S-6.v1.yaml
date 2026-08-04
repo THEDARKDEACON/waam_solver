@@ -1,8 +1,30 @@
 # Calibrated ER70S-6 — bead-on-plate reference (v1)
-# Fit targets: pool width/depth vs macrograph; η from energy balance.
+#
+# Process window (locked twin job):
+#   jobs/examples/bead_calibrate.yaml — GMAW-style 100 A × 15 V, η=0.72,
+#   travel 6.5 mm/s, Goldak + soft-onset CC recoil (C_acc=0.25).
+# Macrograph target: pool W≈7 mm, D≈3 mm (simulator envelope ≈6.8×3.2).
+#
+# Status meaning:
+#   calibrated = properties + surfactant model fixed for this process window and
+#   used by credibility gates. Absolute handbook accuracy is not claimed; bump
+#   to v2 when replacing tables with measured DSC/diffusivity data.
+#
+# Property sources (order-of-magnitude + weld-pool literature):
+#   rho, L_fusion, T_sol/liq — mild-steel / ER70S-6 weld literature
+#   cp(T), k(T) — piecewise knots bridging ambient → liquidus
+#   dγ/dT + Sahoo surfactant — Sahoo–DebRoy–McNallan Fe–S (1988), S≈28 ppm
+#   mu(T) — liquid steel viscosity trend near melting
+# Do NOT load materials/placeholders/ER70S-6.yaml for publishable runs.
+# Do NOT apply materials/calibration/ER70S-6.bead_on_plate.yaml (legacy η=0.65)
+# on top of the locked calibrate job (η is embedded in the job process block).
 name: ER70S-6
 status: calibrated
-source: "Bead-on-plate calibration v1 — illustrative fit for development CI"
+source: "Bead-on-plate lock v1 — jobs/examples/bead_calibrate.yaml (macrograph 7×3 mm)"
+notes: >
+  Validated path for waam_twin credibility gates. Tables are engineering fits
+  for the locked GMAW window, not a full thermophysical database. Held-out
+  predictions must keep these properties fixed while varying process only.
 
 constants:
   k: 30.0

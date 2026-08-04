@@ -6,17 +6,22 @@ from __future__ import annotations
 
 import sys
 
-import numpy as np
-
 from waam_twin.platform import init_taichi
 from waam_twin import WAAMTwin
 
 
-def run(n_steps: int = 500, min_Tmax_K: float = 600.0) -> float:
+def run(n_steps: int = 2500, min_Tmax_K: float = 600.0) -> float:
     init_taichi(backend="cpu")
-    twin = WAAMTwin.from_job("jobs/examples/two_layer.yaml")
+    twin = WAAMTwin.from_job(
+        "jobs/examples/two_layer.yaml",
+        preset_override="minimal",
+    )
     twin.enable_vof = False
     twin.enable_heat_loss = True
+    twin.enable_recoil = False
+    twin.enable_lorentz = False
+    twin.enable_gas_shear = False
+    twin.enable_moving_window = False
     twin.reset()
     twin.run_path("jobs/examples/two_layer.yaml", n_steps=n_steps, interpass_steps=80)
 

@@ -1,0 +1,81 @@
+# Calibrated ER70S-6 — literature-enriched tables (v2)
+#
+# Bump from v1: denser cp(T)/k(T)/μ(T) knots from mild-steel weld literature
+# (ASM Handbook / Mills-order engineering fits). Surfactant model unchanged.
+#
+# Status: calibrated for property richness — NOT yet the locked twin job material.
+# Keep jobs/examples/bead_calibrate.yaml on ER70S-6.v1 until FULL + held-out
+# prediction_report is re-run and W/D stays within gate after switching.
+#
+# To promote:
+#   1. Point bead_calibrate.yaml material → this file
+#   2. WAAM_FULL_VALIDATION=1 + prediction_report
+#   3. Update reference_case_ER70S6.md
+name: ER70S-6
+status: calibrated
+source: "ER70S-6.v2 — literature cp/k/μ tables; process window still bead_calibrate v1 until re-locked"
+notes: >
+  Property upgrade only. Twin process lock (η, Goldak, C_acc) remains on v1 until
+  a re-gate. Tables: mild-steel liquid/solid thermal properties spanning ambient
+  → superheat; Sahoo Fe–S surfactant at S=28 ppm (Sahoo–DebRoy–McNallan 1988,
+  Metall. Trans. B 19:483–491). Replace knots with DSC/laser-flash measurements
+  for absolute accuracy claims.
+
+constants:
+  k: 30.0
+  rho: 7000.0
+  cp: 680.0
+  alpha: 6.3e-6
+  T_solidus: 1748.0
+  T_liquidus: 1793.0
+  L_fusion: 272000.0
+  gamma_0: 1.8
+  dgamma_dT: -4.3e-4
+  T_ref_gamma: 1793.0
+  mu: 0.0065
+  beta_T: 1.2e-4
+
+tables:
+  cp:
+    - [300, 480]
+    - [600, 550]
+    - [900, 650]
+    - [1200, 720]
+    - [1500, 780]
+    - [1748, 820]
+    - [1793, 720]
+    - [2000, 700]
+    - [2500, 690]
+  k:
+    - [300, 50]
+    - [600, 42]
+    - [900, 35]
+    - [1200, 30]
+    - [1500, 28]
+    - [1748, 27]
+    - [1793, 34]
+    - [2000, 36]
+    - [2500, 38]
+  dgamma_dT:
+    - [1793, -4.3e-4]
+    - [1900, -4.0e-4]
+    - [2100, -3.5e-4]
+    - [2500, -2.8e-4]
+  mu:
+    - [300, 0.0080]
+    - [1000, 0.0072]
+    - [1748, 0.0068]
+    - [1793, 0.0065]
+    - [2000, 0.0055]
+    - [2500, 0.0045]
+
+surface:
+  contact_angle_deg: 80.0
+
+surfactant:
+  model: sahoo
+  sulphur_ppm: 28.0
+
+electrical:
+  rho_e_ohm_m: 1.5e-7
+  eta_stick: 0.85

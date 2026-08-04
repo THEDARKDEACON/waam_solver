@@ -1,0 +1,110 @@
+# =============================================================================
+# Held-out prediction — FASTER TRAVEL (locked physics from bead_calibrate)
+# =============================================================================
+# DO NOT retune: η, Goldak a_f/a_r/b/c, σ, penetration, C_acc, T_boil,
+#                 evap_cooling_scale. Only process travel (and WFS) change.
+#
+# Expected trend vs calibrate (6.5 mm/s): smaller pool W and/or D, lower crown.
+# Compared at equal travel distance (not equal wall-clock) so heat-input/length drops.
+# No experimental macrograph — prediction-only credibility gate.
+# =============================================================================
+
+simulation:
+  preset: standard
+  backend: cuda
+  physics_tier: full
+  domain_mm: [80, 40, 25]
+  dx_mm: 0.4
+  enable_vof: true
+  enable_csf_tension: true
+  enable_wetting: true
+  enable_hydrostatic_gravity: true
+  enable_bead_freeze: true
+  enable_droplet_impact_pressure: true
+  enable_recoil: true
+  use_recoil_clausius_clapeyron: true
+  enable_lorentz: true
+  enable_gas_shear: true
+  enable_enthalpy_cap: true
+  enable_evaporative_cooling: true
+  arc_surface_weighting: true
+
+plate:
+  thickness_mm: 8.0
+  size_mm: [50, 20]
+
+material: materials/validated/ER70S-6.v1.yaml
+calibration: null
+torch_path_csv: jobs/paths/bead_calibrate.csv
+
+heat_source: goldak
+goldak:
+  ff: 0.6
+  fr: 1.4
+  a_front_mm: 2.2
+  a_rear_mm: 4.2
+  b_mm: 3.0
+  c_mm: 1.5
+
+arc_physics:
+  sigma_mm: 2.0
+  penetration_mm: 2.1
+  T_vapor_cap_K: 3200.0
+  surface_weighting: true
+  pressure_model: lin_eagar
+  pressure_pa: 150.0
+
+advanced_physics:
+  evap_cooling_scale: 25.0
+  T_boiling_K: 3000.0
+  recoil_accommodation: 0.25
+  L_vapor_J_kg: 6.0e6
+  R_spec_vapor_J_kgK: 450.0
+  lorentz_jacobi_iters: 300
+  lorentz_jacobi_tol: 1.0e-3
+  sigma_liquid_Sm: 1.0e6
+  sigma_solid_Sm: 1.0e5
+  gas_jet_velocity_m_s: 12.0
+  gas_shear_coeff: 1.0
+
+process:
+  current_A: 100
+  voltage_V: 15
+  arc_efficiency: 0.72
+  # Held-out: +70% travel vs calibrate 6.5 mm/s (needs >1 dx to move W/D)
+  travel_speed_mm_s: 11.0
+  wire_feed_m_min: 3.2
+  wire_diameter_mm: 1.2
+  droplet_length_mm: 3.0
+  T_ambient_K: 293
+  stickout_mm: 12.0
+  ctwd_mm: 15.0
+  transfer_mode: auto
+  droplet_size_jitter: 0.05
+  impact_lead_angle_deg: 5.0
+
+deposition:
+  superheat_K: 400.0
+  footprint_sigma_scale: 1.0
+  trailing_solidify_lookback_mm: 6.0
+  trailing_solidify_temp_margin_K: 10.0
+
+surface_wetting:
+  contact_angle_deg: 80.0
+
+heat_loss:
+  convection: true
+  radiation: true
+  h_conv: 35.0
+
+# Prediction-only — no new macrograph. Trends gated in test_heldout_prediction.
+prediction:
+  role: heldout
+  baseline_job: jobs/examples/bead_calibrate.yaml
+  expected_trend: smaller_pool
+  vary: [travel_speed_mm_s]
+
+model_reference:
+  n_steps: 8000
+  bead_height_mm_min: 0.5
+  f_recoil_active: true

@@ -82,5 +82,10 @@ def droplet_radius_cells(twin: "WAAMTwin") -> float:
 
 
 def expected_deposited_mass_kg(twin: "WAAMTwin") -> float:
-    """Integrated wire mass for elapsed sim time."""
-    return wire_mass_flux_kg_s(twin) * twin._step_n * twin.grid.dt
+    """Integrated wire mass for arc-on (welding) time only.
+
+    Uses ``_welding_time_s`` so post-path cooling / interpass dwell does not
+    inflate the HUD ``wire`` ledger while deposition is frozen.
+    """
+    t_weld = float(getattr(twin, "_welding_time_s", 0.0) or 0.0)
+    return wire_mass_flux_kg_s(twin) * t_weld
