@@ -381,7 +381,7 @@ class WAAMTwin:
         plate_thickness_mm: float | None = None,
         **kwargs: Any,
     ) -> "WAAMTwin":
-        from .platform import (
+        from .runtime import (
             DEMO_DEFAULT_DOMAIN_MM,
             auto_grid,
             auto_tracer_count,
@@ -437,7 +437,7 @@ class WAAMTwin:
         **kwargs: Any,
     ) -> "WAAMTwin":
         from .job import load_job_config, resolve_plate_and_domain
-        from .platform import ensure_taichi, resolve_preset
+        from .runtime import ensure_taichi, resolve_preset
 
         ensure_taichi()
         job = load_job_config(job_path)
@@ -476,7 +476,7 @@ class WAAMTwin:
             )
 
         cfg = resolve_preset(preset)
-        from .platform import DEMO_DEFAULT_DOMAIN_MM
+        from .runtime import DEMO_DEFAULT_DOMAIN_MM
         grid = resolve_plate_and_domain(
             job,
             cfg.target_dx_mm,

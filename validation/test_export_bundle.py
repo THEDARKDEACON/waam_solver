@@ -11,7 +11,7 @@ from pathlib import Path
 
 from waam_twin import WAAMTwin
 from waam_twin.export.bundle import write_pvd
-from waam_twin.platform import init_taichi
+from waam_twin.runtime import init_taichi
 
 
 def run() -> None:

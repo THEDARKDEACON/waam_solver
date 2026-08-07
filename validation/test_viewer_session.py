@@ -4,7 +4,7 @@ test_viewer_session.py — Viewer session loads job twin without opening GGUI.
 
 from __future__ import annotations
 
-from waam_twin.platform import init_taichi
+from waam_twin.runtime import init_taichi
 from waam_twin.viewer.session import create_session
 
 

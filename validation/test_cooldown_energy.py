@@ -13,7 +13,7 @@ import yaml
 from pathlib import Path
 
 from waam_twin import WAAMTwin
-from waam_twin.platform import init_taichi, reset_taichi
+from waam_twin.runtime import init_taichi, reset_taichi
 
 
 def _seed_hot_blob(twin: WAAMTwin) -> tuple[float, float]:

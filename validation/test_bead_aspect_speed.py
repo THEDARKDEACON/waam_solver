@@ -10,7 +10,7 @@ from __future__ import annotations
 from waam_twin import WAAMTwin
 from waam_twin.benchmark import measure_bead_metrics
 from waam_twin.job import load_job_config, apply_job_to_twin
-from waam_twin.platform import init_taichi, reset_taichi
+from waam_twin.runtime import init_taichi, reset_taichi
 from waam_twin.validation.bead_helpers import run_bead_travel, steps_for_travel
 
 

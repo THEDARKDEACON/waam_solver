@@ -17,7 +17,7 @@ import numpy as np
 
 from waam_twin import WAAMTwin, kernels
 from waam_twin.physics import weld_forces
-from waam_twin.platform import init_taichi
+from waam_twin.runtime import init_taichi
 
 
 def _seed_hot_surface(twin: WAAMTwin, T_hot: float) -> tuple[int, int, int]:

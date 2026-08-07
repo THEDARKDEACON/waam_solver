@@ -7,7 +7,7 @@ import sys
 
 
 def main(argv: list[str] | None = None) -> int:
-    from waam_twin.platform import init_taichi
+    from waam_twin.runtime import init_taichi
     from waam_twin import WAAMTwin
     from waam_twin.export import export_research_sequence
     from waam_twin.export.probes import ProbeRecorder

@@ -11,7 +11,7 @@ from pathlib import Path
 from waam_twin.kuka_adapter import tcp_mm_to_sim_m
 from waam_twin.frame import load_weld_frame
 from waam_twin.toolpath.export import segments_to_csv_file, segments_to_waypoints
-from waam_twin.platform import init_taichi
+from waam_twin.runtime import init_taichi
 
 
 def test_frame_tcp_mapping() -> None:

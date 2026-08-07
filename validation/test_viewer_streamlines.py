@@ -7,7 +7,7 @@ from __future__ import annotations
 import numpy as np
 import taichi as ti
 
-from waam_twin.platform import init_taichi
+from waam_twin.runtime import init_taichi
 from waam_twin.viewer.streamlines import (
     seeds_in_liquid_near_torch,
     trace_streamlines,

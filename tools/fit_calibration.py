@@ -16,7 +16,7 @@ import pathlib
 from waam_twin import WAAMTwin
 from waam_twin.benchmark import bead_error_pct, measure_bead_metrics
 from waam_twin.job import apply_job_to_twin, load_job_config
-from waam_twin.platform import init_taichi
+from waam_twin.runtime import init_taichi
 from waam_twin.validation.bead_helpers import run_bead_travel
 
 _JOB = "jobs/examples/bead_on_plate.yaml"

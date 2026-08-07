@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import sys
 
-from waam_twin.platform import init_taichi, reset_taichi, load_presets
+from waam_twin.runtime import init_taichi, reset_taichi, load_presets
 from waam_twin import WAAMTwin
 from waam_twin.job import resolve_plate_and_domain
 

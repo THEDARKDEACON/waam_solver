@@ -18,7 +18,7 @@ import numpy as np
 from waam_twin import WAAMTwin
 from waam_twin.benchmark import measure_pool_mm, pool_error_pct
 from waam_twin.job import load_job_config
-from waam_twin.platform import init_taichi
+from waam_twin.runtime import init_taichi
 from waam_twin.validation.bead_helpers import plan_linear_bead_run, run_bead_travel
 
 

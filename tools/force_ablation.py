@@ -19,7 +19,7 @@ import numpy as np
 
 from waam_twin import WAAMTwin
 from waam_twin.job import apply_physics_tier
-from waam_twin.platform import init_taichi
+from waam_twin.runtime import init_taichi
 
 
 @dataclass

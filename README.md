@@ -20,7 +20,7 @@ waam_twin/                    ← git repository root (this folder)
 ├── README.md
 ├── requirements.txt
 ├── paths.py                  # PROJECT_ROOT = repo root
-├── platform.py               # Taichi init, presets, auto_grid
+├── runtime.py                # Taichi init, presets, auto_grid (was platform.py — renamed to avoid shadowing stdlib)
 ├── twin.py                   # WAAMTwin orchestrator
 ├── grid.py                   # SoA Taichi fields
 ├── kernels.py                # Taichi kernels (migrating → physics/)
@@ -88,7 +88,7 @@ flowchart TB
   end
 
   subgraph platform [Platform]
-    INIT[platform.init_taichi]
+    INIT[runtime.init_taichi]
     PRE[presets.yaml + auto_grid]
   end
 
@@ -150,7 +150,7 @@ See [docs/weld_pool_physics.md](docs/weld_pool_physics.md), [`solvers/coupled_st
 
 | Module | Role |
 |--------|------|
-| `platform.py` | CUDA → Vulkan → CPU fallback; VRAM-aware grid sizing |
+| `runtime.py` | CUDA → Vulkan → CPU fallback; VRAM-aware grid sizing |
 | `grid.py` | Ping-pong LBM distributions, T, H, φ, flags, tracers |
 | `physics/*` | Thin API over `kernels.py` (ongoing migration) |
 | `kernels.py` | Taichi `@ti.kernel` implementations |
@@ -181,6 +181,11 @@ After install, verify the GPU backend before any long job:
 nvidia-smi
 python -c "import taichi as ti; ti.init(arch=ti.cuda); print(ti.cfg.arch)"
 ```
+
+> **Note:** the module formerly named `platform.py` was renamed to **`runtime.py`**
+> so it no longer shadows Python’s stdlib `platform` (that clash broke CI when
+> NumPy/Taichi imported `platform`). Use `from waam_twin.runtime import init_taichi`.
+> `from waam_twin import platform` still works as an alias to `runtime`.
 
 ### CUDA / GPU backends
 
@@ -230,7 +235,7 @@ export PYTHONPATH="$(cd .. && pwd)"   # or . if under FYP22-01
 export WAAM_BACKEND=cuda              # cpu also fine for short smoke runs
 
 python3 -c "
-from waam_twin.platform import init_taichi
+from waam_twin.runtime import init_taichi
 from waam_twin import WAAMTwin
 init_taichi()
 t = WAAMTwin.from_job('jobs/examples/bead_calibrate.yaml')
@@ -247,7 +252,7 @@ geometry only; amplitude is renormalized so \(\int q\,dV=\eta\,V\,I\).
 ### Preset-only (no job file)
 
 ```python
-from waam_twin.platform import init_taichi
+from waam_twin.runtime import init_taichi
 from waam_twin import WAAMTwin
 
 init_taichi(backend="cpu")

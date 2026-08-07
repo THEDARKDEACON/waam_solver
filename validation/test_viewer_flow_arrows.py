@@ -7,7 +7,7 @@ from __future__ import annotations
 import taichi as ti
 
 from waam_twin import WAAMTwin
-from waam_twin.platform import init_taichi
+from waam_twin.runtime import init_taichi
 from waam_twin.viewer.extract import FILTER_ALL, FILTER_LIQUID, extract_flow_arrows, reset_count
 
 

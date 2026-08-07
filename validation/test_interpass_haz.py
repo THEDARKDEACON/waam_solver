@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import sys
 
-from waam_twin.platform import init_taichi
+from waam_twin.runtime import init_taichi
 from waam_twin import WAAMTwin
 
 

@@ -50,7 +50,7 @@ def default_job_path() -> pathlib.Path:
 
 def create_twin_from_env(**kwargs: Any):
     """Create WAAMTwin from WAAM_JOB + WAAM_PRESET + WAAM_FRAME environment variables."""
-    from waam_twin.platform import init_taichi
+    from waam_twin.runtime import init_taichi
     from waam_twin import WAAMTwin
 
     init_taichi()

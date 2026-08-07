@@ -10,7 +10,7 @@ from pathlib import Path
 
 from waam_twin import WAAMTwin
 from waam_twin.export.probes import ProbeRecorder
-from waam_twin.platform import init_taichi
+from waam_twin.runtime import init_taichi
 
 
 def run(min_rows: int = 5) -> None:

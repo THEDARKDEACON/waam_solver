@@ -19,7 +19,7 @@ import numpy as np
 from waam_twin import WAAMTwin, kernels
 from waam_twin.job import load_job_config
 from waam_twin.physics import weld_forces
-from waam_twin.platform import init_taichi, reset_taichi
+from waam_twin.runtime import init_taichi, reset_taichi
 from waam_twin.validation.prediction import CALIBRATE_JOB
 
 

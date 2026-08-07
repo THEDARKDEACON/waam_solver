@@ -9,7 +9,7 @@ import numpy as np
 from waam_twin import WAAMTwin
 from waam_twin.physics import forces, weld_forces
 from waam_twin.physics.lorentz_physics import lorentz_reference_accel_m_s2
-from waam_twin.platform import init_taichi
+from waam_twin.runtime import init_taichi
 
 
 def run() -> None:

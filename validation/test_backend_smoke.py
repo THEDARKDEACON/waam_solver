@@ -11,7 +11,7 @@ import sys
 
 
 def _smoke_backend(backend: str) -> None:
-    from waam_twin.platform import init_taichi, reset_taichi
+    from waam_twin.runtime import init_taichi, reset_taichi
     from waam_twin.validation import test_thermal_diffusion
 
     prev = os.environ.get("WAAM_BACKEND")

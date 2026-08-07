@@ -1,5 +1,5 @@
 """
-platform.py — Backend detection, presets, and grid sizing (waam_twin v2)
+runtime.py — Backend detection, presets, and grid sizing (waam_twin v2)
 """
 
 from __future__ import annotations

@@ -5,7 +5,7 @@ test_stickout_preheat.py — Stick-out resistance raises droplet entry temperatu
 from __future__ import annotations
 
 from waam_twin import WAAMTwin
-from waam_twin.platform import init_taichi
+from waam_twin.runtime import init_taichi
 from waam_twin.physics.electrical_stickout import droplet_entry_temperature_K
 
 

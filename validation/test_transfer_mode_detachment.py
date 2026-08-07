@@ -5,7 +5,7 @@ test_transfer_mode_detachment.py — Transfer mode changes detachment period and
 from __future__ import annotations
 
 from waam_twin import WAAMTwin
-from waam_twin.platform import init_taichi
+from waam_twin.runtime import init_taichi
 from waam_twin.physics import deposition, weld_forces
 
 

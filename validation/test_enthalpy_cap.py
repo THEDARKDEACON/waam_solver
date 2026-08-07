@@ -5,7 +5,7 @@ test_enthalpy_cap.py — Peak temperature stays below vaporization cap.
 from __future__ import annotations
 
 from waam_twin import WAAMTwin
-from waam_twin.platform import init_taichi
+from waam_twin.runtime import init_taichi
 
 
 def run(max_peak_K: float = 3250.0, n_steps: int = 400) -> float:

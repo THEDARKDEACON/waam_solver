@@ -5,7 +5,7 @@ test_trailing_solidify.py — Trailing liquid behind the torch is clamped back t
 from __future__ import annotations
 
 from waam_twin import WAAMTwin
-from waam_twin.platform import init_taichi
+from waam_twin.runtime import init_taichi
 from waam_twin import kernels
 
 

@@ -156,7 +156,7 @@ def _flow_filter(filter_mode: int, flow_mode: int, liquid_only: int) -> int:
 
 
 def run(argv: list[str] | None = None) -> None:
-    from waam_twin.platform import init_taichi
+    from waam_twin.runtime import init_taichi
 
     args = build_parser().parse_args(argv)
     init_taichi()
