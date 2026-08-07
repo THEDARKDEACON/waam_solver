@@ -1,147 +1,169 @@
-# HPC & cluster runs (waam_twin v2)
+# HPC — production bead runs (waam_twin v2)
 
-Production guide for GPU clusters (SLURM assumed). For Colab / Jupyter, use
-`notebooks/cloud_production_workflow.ipynb` instead.
+Operators: start with the **copy-paste** section. You need a terminal on a
+**GPU node** (or an interactive GPU allocation). No scheduler scripts required.
 
-## When to use what
+For local GGUI use the viewer; for Colab use `notebooks/cloud_production_workflow.ipynb`.
 
-| Environment | Use | Avoid |
-|-------------|-----|--------|
-| **Local desktop** | Interactive viewer, short smoke | Overnight 100 mm beads |
-| **Colab / notebook** | Editable job cells, Drive sync, moderate beads | Full `validation.run_all` as primary CI |
-| **HPC (SLURM)** | Full validation, long beads, reproducible batch | GGUI viewer (no display) |
-
-## One-time setup
+## Copy-paste: higher-resolution bead
 
 ```bash
-cd $SCRATCH   # prefer scratch over home for VTK outputs
-git clone <repo-url> waam_twin
-cd waam_twin   # directory that contains pyproject.toml
+cd /path/to/waam_twin          # folder that contains pyproject.toml
 
-module load python/3.11 cuda/12.x   # names vary by site
+# --- one-time (new machine / new clone) ---
+module load python/3.11         # site-specific — try: module avail
+module load cuda/12.2
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -U pip
-pip install -e .
-```
-
-### Prove CUDA before submitting jobs
-
-```bash
+pip install -U pip && pip install -e .
 nvidia-smi
 python -c "import taichi as ti; ti.init(arch=ti.cuda); print(ti.cfg.arch)"
+
+# --- every run ---
+source .venv/bin/activate
+# module load python/3.11 cuda/12.2   # if this is a new shell
+export WAAM_BACKEND=cuda
+mkdir -p runs
+
+python scripts/hpc/run_batch.py \
+  --job jobs/examples/bead_on_plate_hires.yaml \
+  --n-steps auto \
+  --out runs/bead_on_plate_hires
 ```
 
-Silent CPU fallback wastes queue time. Fix Taichi/CUDA mismatch first.
-
-If you skip `pip install -e .`, put the **parent** of the `waam_twin` package on
-`PYTHONPATH` (see README Installation).
-
-## SLURM scripts
-
-Shipped under [`scripts/hpc/`](../scripts/hpc/):
-
-| Script | Purpose | Typical walltime |
-|--------|---------|------------------|
-| `val_core.slurm` | Core CI validation | ~15–45 min |
-| `val_full.slurm` | `WAAM_FULL_VALIDATION=1` | ~1–4 h |
-| `run_production.slurm` | Headless bead + research bundle | job-dependent |
-| `run_batch.py` | CLI used by production SLURM job | — |
-
-Submit **from the repo root**:
-
-```bash
-mkdir -p logs runs
-sbatch scripts/hpc/val_core.slurm
-# after core passes:
-sbatch scripts/hpc/val_full.slurm
-# optional bead macrograph gates:
-sbatch --export=ALL,WAAM_BEAD_VALIDATION=1 scripts/hpc/val_full.slurm
-
-# production weld:
-sbatch --export=ALL,WAAM_JOB=jobs/examples/bead_calibrate.yaml,WAAM_PRESET=high \
-  scripts/hpc/run_production.slurm
-```
-
-Edit `#SBATCH` resource lines and `module load` comments for your site.
-PBS/LSF sites: keep the shell body; replace `#SBATCH` with the local directives.
-
-## Validation tiers
-
-`run_all` defaults `WAAM_PRESET=minimal` — leave it. Tests own their grids;
-raising to `high`/`ultra` mostly burns VRAM without changing gate logic.
-
-```bash
-# Core
-WAAM_BACKEND=cuda WAAM_PRESET=minimal python -m waam_twin.validation.run_all
-
-# Full (process + soak + held-out + intensive)
-WAAM_FULL_VALIDATION=1 WAAM_BACKEND=cuda WAAM_PRESET=minimal \
-  python -m waam_twin.validation.run_all
-
-# Full + bead macrograph
-WAAM_FULL_VALIDATION=1 WAAM_BEAD_VALIDATION=1 WAAM_BACKEND=cuda WAAM_PRESET=minimal \
-  python -m waam_twin.validation.run_all
-```
-
-Re-run a single failure:
-
-```bash
-WAAM_BACKEND=cuda python -m waam_twin.validation.test_calibrated_pool
-```
-
-## Production batch (no notebook `N_STEPS`)
-
-Physical timestep `dt` is fixed by LBM scaling (`dt = 0.1 · dx`). Torch advance
-uses real travel speed. Step count must cover path length:
+By default this writes **both** VTK snapshots and ParaView **`.pvd`** collections
+(frame every 500 steps). Outputs:
 
 ```text
-steps_needed ≈ path_length_m / (travel_speed_m_s · dt)
+runs/bead_on_plate_hires/telemetry.json
+runs/bead_on_plate_hires/final.pvd                 # end state — File→Open in ParaView
+runs/bead_on_plate_hires/bundle/                   # final .vti / .vtp
+runs/bead_on_plate_hires/sequence/sequence.pvd     # animation — Open → Apply → Play
+runs/bead_on_plate_hires/sequence/frame_XXXX/      # per-frame VTK bundles
 ```
 
-`run_batch.py --n-steps auto` (and `run_path(..., n_steps=None)`) sizes this for
-you. A fixed notebook-style `N_STEPS=12000` can end mid-bead on long paths.
+Fewer frames / less disk: add `--sequence-every 2000`. Final VTK only: `--sequence-every 0`.
+
+### Coarser smoke (if hires OOMs)
 
 ```bash
 python scripts/hpc/run_batch.py \
-  --job jobs/examples/bead_calibrate.yaml \
-  --preset high \
+  --job jobs/examples/bead_on_plate.yaml \
   --n-steps auto \
-  --out runs/calibrate_high
+  --out runs/bead_on_plate
 ```
 
-## Grid / VRAM sizing
+| Job | Requested `dx` | Preset | Use |
+|-----|----------------|--------|-----|
+| `bead_on_plate.yaml` | 0.5 mm | high | Quick pipeline check |
+| `bead_on_plate_hires.yaml` | 0.25 mm | high | Production-looking mesh |
 
-Two layers:
+`--n-steps auto` covers the full torch path. Do not replace it with a small
+fixed step count or the bead may end early.
 
-| Layer | Owns |
-|-------|------|
-| Job YAML | `domain_mm`, plate, process, `dx_mm` request |
-| Preset | `vram_budget_mb`, `max_cells`, `target_dx_mm` |
+## Curbing OOM (out-of-memory) errors
 
-`auto_grid` keeps domain fixed and **coarsens dx** until the optimistic VRAM
-estimate and `max_cells` fit. The estimator undercounts full-physics fields
-(Lorentz, VOF, tables, viewer buffers), so `ultra` on a true 16 GB card can
-still OOM. Prefer:
+If CUDA runs out of memory, reduce cost in this order:
 
-- trim `domain_mm` or enable `enable_moving_window`
-- use `high` with a realistic `dx` (~0.15–0.25 mm) before `ultra`
-- leave ~15% VRAM headroom (`vram_budget_mb` × 0.85 is already applied)
+### 1. Lower the preset
 
-See [HARDWARE.md](HARDWARE.md) and [VTK_EXPORT.md](VTK_EXPORT.md).
+```bash
+python scripts/hpc/run_batch.py \
+  --job jobs/examples/bead_on_plate_hires.yaml \
+  --preset standard \
+  --n-steps auto \
+  --out runs/bead_on_plate_hires_std
+```
 
-## Outputs
+`ultra` → `high` → `standard` → `minimal` (each step is cheaper).
 
-| Path | Contents |
-|------|----------|
-| `logs/*-%j.out` | SLURM stdout |
-| `runs/<tag>/telemetry.json` | End-of-run telemetry |
-| `runs/<tag>/bundle/` | Research VTK + meta (unless `WAAM_HEADLESS=1`) |
+### 2. Increase `dx_mm` in the job YAML
 
-Keep large VTK trees on scratch; they are gitignored.
+Coarser cells ⇒ fewer cells ⇒ less VRAM. Edit your job (or a copy):
 
-## Notebook on HPC?
+```yaml
+simulation:
+  preset: high
+  dx_mm: 0.35          # raise from 0.25
+  domain_mm: [60, 60, 22]   # optional: shrink box as well
+```
 
-Possible (Jupyter on a GPU node) but not recommended as the primary validation
-or overnight path. Prefer SLURM + `run_batch.py` for queue accounting, logs, and
-restarts. Use the notebook on Colab for interactive job editing and Drive sync.
+### 3. Lower `max_cells` / `vram_budget_mb` in presets
+
+Runtime reads:
+
+```text
+waam_twin/config/presets.yaml
+```
+
+(not the legacy `FYP22-01/config/presets.yaml` unless you deliberately point at it).
+
+Example — keep profile name `high` but tighten the hard cell cap:
+
+```yaml
+high:
+  vram_budget_mb: 8192
+  max_cells: 40000000     # reduce if you still OOM on a 16 GB card
+  target_dx_mm: 0.2
+  max_tracers: 50000
+  use_srt: false
+```
+
+`auto_grid` keeps the job **domain** fixed and **coarsens `dx`** until both
+`vram_budget_mb × 0.85` and `max_cells` are satisfied. Watch for
+`[auto_grid] … coarsened dx …` in the log.
+
+### Extra levers
+
+| Lever | Effect |
+|-------|--------|
+| `--sequence-every 0` | Skip time-series VTK (less peak RAM/disk during export) |
+| Lower `max_tracers` in presets | Smaller particle buffers |
+| Smaller `domain_mm` / plate | Directly fewer cells |
+| `physics_tier: flow` instead of `full` | Drops Lorentz/gas-shear field cost |
+
+The VRAM planner is optimistic; full physics can still OOM near the printed
+budget — leave headroom (prefer `high` + raised `dx` before `ultra`).
+
+See [HARDWARE.md](HARDWARE.md).
+
+## What `module load` does
+
+It selects the centre’s preinstalled Python/CUDA for **this shell** (`PATH`,
+library paths). It does not install `waam_twin`. The venv + `pip install -e .`
+does. On a laptop you usually skip `module load`.
+
+## Why not the viewer command?
+
+```bash
+python3 -m waam_twin.viewer --job …
+```
+
+needs a GUI. HPC nodes typically have no display. Use `run_batch.py` instead;
+same job YAML, headless outputs.
+
+## If you are on a login node (no GPU)
+
+Ask your site how to open an **interactive GPU shell**, then run the block
+above. Example pattern (names vary):
+
+```bash
+srun --gres=gpu:1 --mem=32G --time=04:00:00 --pty bash
+```
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---------|-----|
+| Taichi prints CPU / CUDA init fails | Fix `module load cuda/…`; re-create venv after loading modules |
+| CUDA OOM | See **Curbing OOM** above (preset → `dx` → `max_cells`) |
+| `[auto_grid] coarsened dx` | Expected under VRAM pressure; check printed grid size |
+| Job path not found | `cd` to repo root; use `jobs/examples/...` not `waam_twin/jobs/...` |
+
+VRAM / timestep background: [HARDWARE.md](HARDWARE.md).
+
+## Optional later
+
+Validation suites and batch schedulers are documented for maintainers but are
+**not** required for a production bead run. See the Validation section of the
+README when you need them.

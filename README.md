@@ -260,9 +260,153 @@ twin.step(0.015, 0.010, is_welding=True)
 
 | Environment | Best for | Entry point |
 |-------------|----------|-------------|
-| **Local desktop** | Interactive debugging, viewer | `python -m waam_twin.viewer …` |
-| **Colab / Jupyter** | Editable jobs, Drive sync, moderate beads | `notebooks/cloud_production_workflow.ipynb` |
-| **HPC (SLURM)** | Full validation, long beads, overnight batch | [`scripts/hpc/`](scripts/hpc/) + [docs/HPC.md](docs/HPC.md) |
+| **Local desktop** | Interactive debugging, GGUI viewer | `python -m waam_twin.viewer …` |
+| **Colab / Jupyter** | Editable jobs, Drive sync | `notebooks/cloud_production_workflow.ipynb` |
+| **HPC (GPU shell)** | Higher-resolution production beads | Copy-paste section below |
+
+### HPC — production bead run (copy-paste)
+
+For operators with a **terminal already open on a GPU node** (or an interactive
+GPU allocation). No scheduler scripts required. Do **not** use the interactive
+viewer on HPC (no display).
+
+Replace `/path/to/waam_twin` with the real clone path. Module names are
+site-specific — run `module avail` if unsure.
+
+#### 1) One-time setup
+
+```bash
+cd /path/to/waam_twin
+# directory that contains pyproject.toml and jobs/
+
+module load python/3.11          # edit to your site's module
+module load cuda/12.2            # edit to your site's module
+
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -U pip
+pip install -e .
+
+# Prove the GPU works before a long run:
+nvidia-smi
+python -c "import taichi as ti; ti.init(arch=ti.cuda); print(ti.cfg.arch)"
+```
+
+`module load` only selects the centre’s Python/CUDA for this shell; it does not
+install the project. The venv + `pip install -e .` does that.
+
+#### 2) Every session — higher-resolution bead
+
+```bash
+cd /path/to/waam_twin
+source .venv/bin/activate
+# reload modules if this is a new shell:
+# module load python/3.11 cuda/12.2
+
+export WAAM_BACKEND=cuda
+mkdir -p runs
+
+python scripts/hpc/run_batch.py \
+  --job jobs/examples/bead_on_plate_hires.yaml \
+  --n-steps auto \
+  --out runs/bead_on_plate_hires
+```
+
+| Flag | Meaning |
+|------|---------|
+| `--job …_hires.yaml` | Finer mesh (`dx_mm: 0.25`, `preset: high`) vs default `bead_on_plate.yaml` (`dx_mm: 0.5`) |
+| `--n-steps auto` | Run until the torch path finishes (do not under-size steps) |
+| `--out …` | Writes telemetry + VTK + ParaView PVD under `runs/` |
+| `--sequence-every N` | VTK frame every N steps + `sequence.pvd` (default **500**; `0` = final only) |
+
+When it finishes, collect:
+
+```text
+runs/bead_on_plate_hires/telemetry.json
+runs/bead_on_plate_hires/final.pvd          ← open this for the end state
+runs/bead_on_plate_hires/bundle/            ← final .vti / .vtp files
+runs/bead_on_plate_hires/sequence/sequence.pvd  ← open this for the animation
+```
+
+In ParaView: **File → Open → `sequence.pvd` → Apply → Play** (time series), or open
+`final.pvd` for a single end-of-run volume. Copy `runs/` off the cluster first.
+
+#### 3) Optional — coarser smoke first
+
+If the hires job OOMs or is too slow, prove the pipeline with the default job:
+
+```bash
+python scripts/hpc/run_batch.py \
+  --job jobs/examples/bead_on_plate.yaml \
+  --n-steps auto \
+  --out runs/bead_on_plate
+```
+
+#### 4) Curbing OOM (out-of-memory) errors
+
+VRAM blow-ups are normal when the mesh is too fine for the GPU. Try these **in
+order** (cheapest first):
+
+**A. Lower the hardware preset** (fewer cells / smaller VRAM budget):
+
+```bash
+python scripts/hpc/run_batch.py \
+  --job jobs/examples/bead_on_plate_hires.yaml \
+  --preset standard \
+  --n-steps auto \
+  --out runs/bead_on_plate_hires_std
+```
+
+Ladder: `ultra` → `high` → `standard` → `minimal`.
+
+**B. Increase `dx_mm` in the job** (coarser cells → fewer cells):
+
+Edit `jobs/examples/bead_on_plate_hires.yaml` (or your copy):
+
+```yaml
+simulation:
+  preset: high
+  dx_mm: 0.35          # was 0.25; larger dx = less VRAM
+  # domain_mm: [60, 60, 22]   # optional: shrink domain too
+```
+
+**C. Cap `max_cells` / `vram_budget_mb` in the preset file**
+
+Edit the package presets (this is what `auto_grid` reads):
+
+```text
+waam_twin/config/presets.yaml
+```
+
+Example — keep `high` but refuse huge grids:
+
+```yaml
+high:
+  vram_budget_mb: 8192
+  max_cells: 40000000    # lower from 120000000 if you still OOM
+  target_dx_mm: 0.2
+  max_tracers: 50000
+  use_srt: false
+```
+
+`auto_grid` will **coarsen `dx`** until both the VRAM estimate and `max_cells`
+fit. Domain size is never shrunk by the preset — only by editing the job.
+
+Also helps: `--sequence-every 0` (less peak memory from export buffers), fewer
+`max_tracers`, or a smaller `domain_mm` in the job.
+
+> Note: if your tree also has `FYP22-01/config/presets.yaml`, that is a **legacy**
+> copy. Runtime uses **`waam_twin/config/presets.yaml`** unless a notebook
+> session redirects it.
+
+#### Notes for operators
+
+- Stay in the **`waam_twin` repo root** (the folder with `pyproject.toml`).
+- Job path is `jobs/examples/...`, **not** `waam_twin/jobs/...` (that form is only when your cwd is the parent `FYP22-01` folder on a laptop).
+- Watch the log for `[auto_grid]` — it prints when dx was coarsened to fit budget.
+- Leave the terminal open until the process exits; outputs are under `runs/`.
+
+More detail: [docs/HPC.md](docs/HPC.md), [docs/HARDWARE.md](docs/HARDWARE.md).
 
 ### Notebook / Colab workflow
 
@@ -274,8 +418,7 @@ Use it when you want:
 - in-run VTK sequence export
 - editable job/path/preset cells without touching tracked example files
 
-For **cluster overnight / full validation**, prefer HPC SLURM scripts (below) —
-the notebook is not a substitute for `validation.run_all` or queue accounting.
+For **cluster GPU beads**, prefer the HPC copy-paste section above.
 
 The notebook keeps three editable text blocks in memory, then writes them into a session workspace inside the repo:
 
@@ -321,39 +464,6 @@ Path behavior is intentionally consistent:
 - local CLI/Python runs usually point at `jobs/examples/...`
 - notebook runs usually point at `jobs/notebook_session/...`
 - both are resolved relative to the `waam_twin` repo root
-
-### HPC / SLURM (production batch)
-
-Full guide: **[docs/HPC.md](docs/HPC.md)**.
-
-Shipped templates (submit from the **repo root** after `pip install -e .`):
-
-```bash
-mkdir -p logs runs
-
-# 1) Core validation (CI-equivalent)
-sbatch scripts/hpc/val_core.slurm
-
-# 2) Full validation (process + soak + held-out + intensive)
-sbatch scripts/hpc/val_full.slurm
-
-# 3) Production bead (auto step count + research bundle)
-sbatch --export=ALL,WAAM_JOB=jobs/examples/bead_calibrate.yaml,WAAM_PRESET=high \
-  scripts/hpc/run_production.slurm
-```
-
-Headless CLI (same runner the production SLURM job uses):
-
-```bash
-python scripts/hpc/run_batch.py \
-  --job jobs/examples/bead_calibrate.yaml \
-  --preset high \
-  --n-steps auto \
-  --out runs/calibrate_high
-```
-
-Edit `#SBATCH` resource lines and `module load` comments in the `.slurm` files
-for your site. Outputs land in `logs/` and `runs/` (gitignored contents).
 
 ### Interactive viewer
 
@@ -791,9 +901,9 @@ WAAM_STANDARD_VALIDATION=1 WAAM_BACKEND=cpu \
   python3 -m waam_twin.validation.run_all
 ```
 
-On HPC, prefer the shipped SLURM templates (`scripts/hpc/val_core.slurm`,
-`val_full.slurm`) — see [docs/HPC.md](docs/HPC.md). Leave `WAAM_PRESET=minimal`
-for validation; tests own their grids.
+On HPC, prefer the copy-paste GPU shell workflow in the Quick start / HPC
+section (`run_batch.py` + `bead_on_plate_hires.yaml`). Leave `WAAM_PRESET=minimal`
+when you do run validation; tests own their grids.
 
 **Tools:**
 
@@ -925,7 +1035,7 @@ Tracked operational docs (in git):
 - [LBM numerics](docs/physics/LBM.md) — lattice units, collision, forcing  
 - [Materials](docs/MATERIALS.md) — YAML schema, placeholder vs calibrated  
 - [Hardware & presets](docs/HARDWARE.md) — backends, VRAM, environment variables  
-- [HPC / SLURM](docs/HPC.md) — cluster setup, validation tiers, `run_batch.py` 
+- [HPC — production bead runs](docs/HPC.md) — copy-paste GPU shell instructions 
 
 Validation and reference data live in code, not markdown reports:
 
