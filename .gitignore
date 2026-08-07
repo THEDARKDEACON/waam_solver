@@ -29,6 +29,10 @@ htmlcov/
 viewer_output/
 cloud_runs/
 run_out/
+runs/*
+!runs/.gitkeep
+logs/*
+!logs/.gitkeep
 jobs/notebook_session/
 jobs/generated/
 !jobs/notebook_session/.gitkeep
@@ -40,6 +44,12 @@ tracers.vtp
 sequence/
 sequence_*/
 bundle_step_*/
+
+# ── HPC / SLURM local artifacts ───────────────────────────────────────────────
+slurm-*.out
+slurm-*.err
+scripts/hpc/local.env
+scripts/hpc/*.local.slurm
 
 # ── User-local material overrides ─────────────────────────────────────────────
 materials/user/*

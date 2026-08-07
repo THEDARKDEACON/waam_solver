@@ -43,7 +43,10 @@ waam_twin/                    ← git repository root (this folder)
 │   ├── validated/            # Calibrated alloys
 │   ├── calibration/          # η, σ fits per process
 │   └── user/                 # Local overrides (gitignored)
-├── docs/                     # HARDWARE, MATERIALS, VTK, LBM, weld-pool physics
+├── docs/                     # HARDWARE, HPC, MATERIALS, VTK, LBM, weld-pool physics
+├── scripts/hpc/              # SLURM templates + headless run_batch.py
+├── runs/                     # Batch outputs (gitignored contents)
+├── logs/                     # SLURM / local logs (gitignored contents)
 ├── physics/                  # Modular operators (re-export kernels)
 │   ├── thermal.py
 │   ├── phase_change.py
@@ -158,17 +161,26 @@ See [docs/weld_pool_physics.md](docs/weld_pool_physics.md), [`solvers/coupled_st
 
 ## Installation
 
-**Requirements:** Python 3.11+, Linux recommended (Taichi CPU/Vulkan/CUDA).
+**Requirements:** Python **3.10+** (3.11 recommended), Linux preferred (Taichi CPU/Vulkan/CUDA).
 
 ```bash
 git clone https://github.com/THEDARKDEACON/waam_solver.git waam_twin
 cd waam_twin
+python3 -m venv .venv && source .venv/bin/activate
+pip install -U pip
 pip install -e .
 ```
 
-Editable install is now the preferred path. It avoids the old "clone folder must
-be named `waam_twin`" constraint. That naming rule still matters only if you skip
+Editable install is the preferred path. It avoids the old "clone folder must be
+named `waam_twin`" constraint. That naming rule still matters only if you skip
 installation and rely on `PYTHONPATH` import resolution instead.
+
+After install, verify the GPU backend before any long job:
+
+```bash
+nvidia-smi
+python -c "import taichi as ti; ti.init(arch=ti.cuda); print(ti.cfg.arch)"
+```
 
 ### CUDA / GPU backends
 
@@ -244,16 +256,26 @@ twin.reset()
 twin.step(0.015, 0.010, is_welding=True)
 ```
 
+### Where to run (pick one)
+
+| Environment | Best for | Entry point |
+|-------------|----------|-------------|
+| **Local desktop** | Interactive debugging, viewer | `python -m waam_twin.viewer …` |
+| **Colab / Jupyter** | Editable jobs, Drive sync, moderate beads | `notebooks/cloud_production_workflow.ipynb` |
+| **HPC (SLURM)** | Full validation, long beads, overnight batch | [`scripts/hpc/`](scripts/hpc/) + [docs/HPC.md](docs/HPC.md) |
+
 ### Notebook / Colab workflow
 
 The production notebook is `notebooks/cloud_production_workflow.ipynb`.
 
 Use it when you want:
 
-- long unattended runs
 - Google Drive persistence
 - in-run VTK sequence export
 - editable job/path/preset cells without touching tracked example files
+
+For **cluster overnight / full validation**, prefer HPC SLURM scripts (below) —
+the notebook is not a substitute for `validation.run_all` or queue accounting.
 
 The notebook keeps three editable text blocks in memory, then writes them into a session workspace inside the repo:
 
@@ -272,13 +294,14 @@ Current notebook assumptions:
 - presets are hardware/VRAM profiles only; geometry stays in `JOB_YAML`
 - `strict_mode: true` is recommended for long cloud runs
 - session jobs are schema-validated when loaded
+- `PRESET_OVERRIDE = None` means **use `simulation.preset` from the job** (not the `WAAM_PRESET` env default)
 
 Main notebook run controls:
 
 | Variable | Meaning |
 |----------|---------|
 | `PRESET_OVERRIDE` | runtime preset override without editing the job YAML |
-| `N_STEPS` | total simulation steps for a batch run |
+| `N_STEPS` | total simulation steps for a batch run (**see warning below**) |
 | `EXPORT_BUNDLE` | write a final research bundle |
 | `EXPORT_SEQUENCE` | export time-series VTK frames during the main run |
 | `SEQUENCE_EVERY` | export every N steps when sequence export is enabled |
@@ -288,13 +311,49 @@ Main notebook run controls:
 | `SYNC_TO_DRIVE` | copy outputs to mounted Google Drive |
 | `SYNC_EACH_EXPORT` | sync after each export instead of only at the end |
 
+**`N_STEPS` warning:** the torch advances at real travel speed using fixed LBM
+`dt` (`dt = 0.1 · dx`). A fixed step count that is too small **ends mid-bead**.
+Steps needed ≈ `path_length_m / (travel_speed_m_s · dt)`. On HPC, prefer
+`--n-steps auto` / `run_path(..., n_steps=None)` so the path is fully covered.
+
 Path behavior is intentionally consistent:
 
 - local CLI/Python runs usually point at `jobs/examples/...`
 - notebook runs usually point at `jobs/notebook_session/...`
 - both are resolved relative to the `waam_twin` repo root
 
-For quick local debugging, use the normal CLI/viewer workflow below. For long production runs, prefer the notebook.
+### HPC / SLURM (production batch)
+
+Full guide: **[docs/HPC.md](docs/HPC.md)**.
+
+Shipped templates (submit from the **repo root** after `pip install -e .`):
+
+```bash
+mkdir -p logs runs
+
+# 1) Core validation (CI-equivalent)
+sbatch scripts/hpc/val_core.slurm
+
+# 2) Full validation (process + soak + held-out + intensive)
+sbatch scripts/hpc/val_full.slurm
+
+# 3) Production bead (auto step count + research bundle)
+sbatch --export=ALL,WAAM_JOB=jobs/examples/bead_calibrate.yaml,WAAM_PRESET=high \
+  scripts/hpc/run_production.slurm
+```
+
+Headless CLI (same runner the production SLURM job uses):
+
+```bash
+python scripts/hpc/run_batch.py \
+  --job jobs/examples/bead_calibrate.yaml \
+  --preset high \
+  --n-steps auto \
+  --out runs/calibrate_high
+```
+
+Edit `#SBATCH` resource lines and `module load` comments in the `.slurm` files
+for your site. Outputs land in `logs/` and `runs/` (gitignored contents).
 
 ### Interactive viewer
 
@@ -302,10 +361,14 @@ Real-time **Taichi GGUI** particle view of the melt pool (voxel-based, not ParaV
 
 ```bash
 # From FYP22-01 parent (PYTHONPATH=.) or any parent of waam_twin/
+# Prefer: pip install -e . inside waam_twin/ (then PYTHONPATH is optional)
 export PYTHONPATH=.
 export WAAM_BACKEND=cuda   # or cpu / vulkan
 
-# Calibration job (recommended for W/D / deposition)
+# Nested under FYP22-01:
+python3 -m waam_twin.viewer --job waam_twin/jobs/examples/bead_calibrate.yaml
+
+# Standalone clone (cwd = waam_twin repo root):
 python3 -m waam_twin.viewer --job jobs/examples/bead_calibrate.yaml
 
 # Interactive playground (mirrors calibrate heat schedule)
@@ -695,31 +758,42 @@ Core CI gates (current defaults; tightening progression):
 | Poiseuille profile L2 | 15% → 10% | **8%** | 5% |
 | Stefan front | 15% → 10% | **8%** | 5% |
 | Calibrated pool | 30% | **25%** | 15% |
-| Job parity | 35% → 70%* | **50%** | 25% |
+| Job parity (smoke / FULL geometric) | 35% → 70%* | **50% smoke / 15% FULL** | 25% / 10% |
 | Pool geometry (minimal) | 35% | **30%** | 20% |
 
-\*Job-parity briefly loosened during a method change; now tightened again.
-These are interim CI gates, not claims of absolute accuracy. Telemetry reports
-pool W/D to 0.001 mm for debugging convenience — do not confuse that display
-precision with validation tolerance.
+\*Job-parity briefly loosened during a method change; smoke remains structural.
+`WAAM_FULL_VALIDATION=1` tightens geometric pool parity to **15%**. These are
+interim CI gates, not claims of absolute accuracy. Telemetry reports pool W/D
+to 0.001 mm for debugging — do not confuse display precision with tolerance.
 
 ```bash
-# Core CI (~2 min on CPU)
-WAAM_BACKEND=cpu PYTHONPATH=... python3 -m waam_twin.validation.run_all
+# Core CI (~2 min on CPU; use cuda on HPC for speed)
+WAAM_BACKEND=cpu WAAM_PRESET=minimal python3 -m waam_twin.validation.run_all
 
 # Full suite (process + soak + held-out sims + recoil smoke + intensive)
-WAAM_FULL_VALIDATION=1 WAAM_BACKEND=cuda PYTHONPATH=... python3 -m waam_twin.validation.run_all
+WAAM_FULL_VALIDATION=1 WAAM_BACKEND=cuda WAAM_PRESET=minimal \
+  python3 -m waam_twin.validation.run_all
+
+# Full + bead macrograph gates
+WAAM_FULL_VALIDATION=1 WAAM_BEAD_VALIDATION=1 WAAM_BACKEND=cuda WAAM_PRESET=minimal \
+  python3 -m waam_twin.validation.run_all
 
 # Held-out prediction sims only (locked Goldak/η/recoil, process varies)
-WAAM_HELDOUT_VALIDATION=1 WAAM_BACKEND=cuda PYTHONPATH=... \
+WAAM_HELDOUT_VALIDATION=1 WAAM_BACKEND=cuda \
   python3 -m waam_twin.validation.test_heldout_prediction
 
 # Intensive physics only (coupled forces / vapor / Lorentz / calibrate soak)
-WAAM_INTENSIVE_PHYSICS=1 WAAM_BACKEND=cuda PYTHONPATH=... python3 -m waam_twin.validation.run_all
+WAAM_INTENSIVE_PHYSICS=1 WAAM_BACKEND=cuda WAAM_PRESET=minimal \
+  python3 -m waam_twin.validation.run_all
 
 # Standard cell size pool gate
-WAAM_STANDARD_VALIDATION=1 WAAM_BACKEND=cpu PYTHONPATH=... python3 -m waam_twin.validation.run_all
+WAAM_STANDARD_VALIDATION=1 WAAM_BACKEND=cpu \
+  python3 -m waam_twin.validation.run_all
 ```
+
+On HPC, prefer the shipped SLURM templates (`scripts/hpc/val_core.slurm`,
+`val_full.slurm`) — see [docs/HPC.md](docs/HPC.md). Leave `WAAM_PRESET=minimal`
+for validation; tests own their grids.
 
 **Tools:**
 
@@ -749,6 +823,7 @@ Legacy entry: `python3 -m waam_twin.verify` (delegates to `run_all`).
 | `WAAM_BEAD_STEPS` | int — force bead validation step count | unset |
 | `WAAM_MAX_BEAD_STEPS` | int — cap long path-derived runs | unset |
 | `WAAM_FULL_VALIDATION` | `1` = process + soak + held-out sims + recoil smoke + intensive | off |
+| `WAAM_BEAD_VALIDATION` | `1` = bead aspect / wetting toe / macrograph gates | off |
 | `WAAM_HELDOUT_VALIDATION` | `1` = held-out prediction sims (process-only variants) | off |
 | `WAAM_INTENSIVE_PHYSICS` | `1` = coupled-force / vapor / Lorentz stress tests | off |
 | `WAAM_STANDARD_VALIDATION` | `1` = standard-dx pool test | off |
@@ -794,14 +869,22 @@ No robot logic lives inside this package — only frame mapping, CSV paths, and 
 
 ## Hardware profiles (`preset`)
 
-| Profile | Typical dx start | Cell / VRAM cap | Collision |
-|---------|------------------|-----------------|-----------|
-| `minimal` | 0.5 mm | 4e5 cells / 512 MB | SRT |
-| `standard` | 0.3 mm | 2.5e6 cells / 1.5 GB | SRT |
-| `high` | 0.2 mm | 1.2e7 cells / 8 GB | MRT (two-rate) |
-| `ultra` | 0.15 mm | 4e7 cells / 16 GB | MRT (two-rate) |
+Values match [`config/presets.yaml`](config/presets.yaml):
 
-`auto_grid()` keeps job `domain_mm` and coarsens `dx` to fit the profile. See [docs/HARDWARE.md](docs/HARDWARE.md).
+| Profile | Typical dx start | `max_cells` / `vram_budget_mb` | Collision |
+|---------|------------------|-------------------------------|-----------|
+| `minimal` | 0.5 mm | 4e6 / 1024 | SRT |
+| `standard` | 0.3 mm | 2.5e7 / 2048 | SRT |
+| `high` | 0.2 mm | 1.2e8 / 8192 | MRT (two-rate) |
+| `ultra` | 0.15 mm | 4e8 / 16384 | MRT (two-rate) |
+
+`auto_grid()` keeps job `domain_mm` and coarsens `dx` to fit the profile. The
+VRAM estimator is optimistic — full physics + viewer can OOM under `ultra` on a
+true 16 GB card. See [docs/HARDWARE.md](docs/HARDWARE.md) and
+[docs/HPC.md](docs/HPC.md).
+
+**Timestep:** `dt = 0.1 · dx` (seconds). Not exposed as a job knob; change
+accuracy via domain / `dx` / `physics_tier`, and duration via step count.
 
 **Collision honesty note:** "MRT" here is a **two-relaxation-rate central-moment
 collision** — the deviatoric second moments relax at ω_s (sets viscosity) and
@@ -842,6 +925,7 @@ Tracked operational docs (in git):
 - [LBM numerics](docs/physics/LBM.md) — lattice units, collision, forcing  
 - [Materials](docs/MATERIALS.md) — YAML schema, placeholder vs calibrated  
 - [Hardware & presets](docs/HARDWARE.md) — backends, VRAM, environment variables  
+- [HPC / SLURM](docs/HPC.md) — cluster setup, validation tiers, `run_batch.py` 
 
 Validation and reference data live in code, not markdown reports:
 

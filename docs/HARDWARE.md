@@ -2,6 +2,8 @@
 
 `waam_twin` targets **any machine** with a supported Taichi backend.
 
+For cluster / SLURM workflows see **[HPC.md](HPC.md)**.
+
 ## Two layers (do not conflate)
 
 | Layer | Owns | Examples |
@@ -24,8 +26,14 @@ cost ≈ N_cells × physics_tier × steps
 
 `auto_grid` coarsens `dx` until **both** fit:
 
-1. `vram_budget_mb` (memory estimate)
+1. `vram_budget_mb` × 0.85 (optimistic memory estimate + headroom)
 2. `max_cells` (explicit compute throttle)
+
+The planner uses a simplified bytes-per-cell estimate. Full-physics allocations
+(Lorentz, VOF, material tables, force snaps, viewer buffers) can use more VRAM
+than estimated — `ultra` on a true 16 GB card can still OOM. Prefer trimming
+`domain_mm`, enabling `enable_moving_window`, or using `high` with a realistic
+`dx` before filling the card.
 
 Viewer **FPS is not a control target**. FPS is a side effect of cell count,
 physics tier, and steps-per-frame. Empty GPU VRAM with `minimal` is expected.
@@ -42,17 +50,30 @@ export WAAM_BACKEND=cuda   # or vulkan, cpu
 
 ## Hardware profiles
 
-| Profile | Typical use | Default budget |
-|---------|-------------|----------------|
-| `minimal` | CI, interactive smoke, coarsest mesh | 512 MB / 4e5 cells |
-| `standard` | Default development | 1.5 GB / 2.5e6 cells |
-| `high` | Workstation GPU | 8 GB |
-| `ultra` | Large VRAM (≥16 GB) | 16 GB |
+Values match [`config/presets.yaml`](../config/presets.yaml):
+
+| Profile | Typical use | `vram_budget_mb` | `max_cells` | `target_dx_mm` |
+|---------|-------------|------------------|-------------|---------------|
+| `minimal` | CI, interactive smoke | 1024 | 4e6 | 0.5 |
+| `standard` | Default development | 2048 | 2.5e7 | 0.3 |
+| `high` | Workstation GPU | 8192 | 1.2e8 | 0.2 |
+| `ultra` | Large VRAM (≥16 GB) | 16384 | 4e8 | 0.15 |
 
 ```bash
 export WAAM_PRESET=standard
 python3 -m waam_twin.viewer --job jobs/examples/bead_on_plate.yaml --preset minimal
 ```
+
+## Timestep (not user-tunable)
+
+```text
+dt = dx · u_ref_lu / u_ref_phys = 0.1 · dx   [s]
+```
+
+There is no job-YAML `dt` knob. Accuracy knobs are domain, `dx`, and
+`physics_tier`. Run duration is controlled by **step count** (`n_steps` /
+notebook `N_STEPS`), which must cover
+`path_length / (travel_speed · dt)` or use `n_steps=None` / `--n-steps auto`.
 
 ## Moving window
 

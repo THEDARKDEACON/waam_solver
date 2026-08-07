@@ -11,7 +11,7 @@ simulation:
   physics_tier: full
   # domain derived from plate + margin if omitted; explicit keeps path room:
   domain_mm: [80, 80, 25]
-  dx_mm: 1
+  dx_mm: 0.5
   enable_vof: true
   enable_csf_tension: true
   enable_wetting: true
@@ -28,9 +28,9 @@ simulation:
 
 plate:
   thickness_mm: 10.0
-  size_mm: [30, 50]   # coupon L×W (mm) — this is the square you should see from +Z
+  size_mm: [60, 60]   # coupon L×W (mm) — this is the square you should see from +Z
 
-material: materials/placeholders/Crown-FH-30.yaml
+material: materials/placeholders/ER70S-6.yaml
 calibration: null
 torch_path_csv: jobs/paths/bead_line.csv
 
@@ -65,11 +65,11 @@ advanced_physics:
   gas_shear_coeff: 1.0
 
 process:
-  current_A: 100
-  voltage_V: 15
+  current_A: 131
+  voltage_V: 13.4
   arc_efficiency: 0.72
-  travel_speed_mm_s: 6.5
-  wire_feed_m_min: 3.2
+  travel_speed_mm_s: 10 
+  wire_feed_m_min: 4.0
   wire_diameter_mm: 1.2
   droplet_length_mm: 3.0
   T_ambient_K: 293
@@ -93,15 +93,15 @@ heat_loss:
   radiation: true
   h_conv: 35.0
 
-reference:
-  pool_width_mm: 7.0
-  pool_depth_mm: 3.0
-  source: macrograph_ER70S-6_bead_on_plate
-
-model_reference:
-  pool_width_mm: 6.8
-  pool_depth_mm: 3.2
-  n_steps: 8000
+#reference:
+#  pool_width_mm: 7.0
+#  pool_depth_mm: 3.0
+#  source: macrograph_ER70S-6_bead_on_plate
+#
+#model_reference:
+#  pool_width_mm: 6.8
+#  pool_depth_mm: 3.2
+#  n_steps: 8000
 
 probes:
   - name: substrate_behind_arc
