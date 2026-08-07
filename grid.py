@@ -1,7 +1,7 @@
 """
 grid.py — GPU field allocation (strict SoA, waam_twin v2)
 ==========================================================
-VRAM scales with grid size; use platform.auto_grid() to fit host memory.
+VRAM scales with grid size; use runtime.auto_grid() to fit host memory.
 Typical budget at 256×128×64: ~400–500 MB for LBM fields + tracers.
 
 SoA rule: all fields are ti.field(shape=(nx, ny, nz)) or (Q, nx, ny, nz).

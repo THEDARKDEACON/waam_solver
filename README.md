@@ -20,7 +20,7 @@ waam_twin/                    ← git repository root (this folder)
 ├── README.md
 ├── requirements.txt
 ├── paths.py                  # PROJECT_ROOT = repo root
-├── runtime.py                # Taichi init, presets, auto_grid (was platform.py — renamed to avoid shadowing stdlib)
+├── runtime.py                # Taichi init, presets, auto_grid
 ├── twin.py                   # WAAMTwin orchestrator
 ├── grid.py                   # SoA Taichi fields
 ├── kernels.py                # Taichi kernels (migrating → physics/)
@@ -87,7 +87,7 @@ flowchart TB
     PATH[Torch path CSV/YAML]
   end
 
-  subgraph platform [Platform]
+  subgraph runtime [Runtime]
     INIT[runtime.init_taichi]
     PRE[presets.yaml + auto_grid]
   end
@@ -182,10 +182,8 @@ nvidia-smi
 python -c "import taichi as ti; ti.init(arch=ti.cuda); print(ti.cfg.arch)"
 ```
 
-> **Note:** the module formerly named `platform.py` was renamed to **`runtime.py`**
-> so it no longer shadows Python’s stdlib `platform` (that clash broke CI when
-> NumPy/Taichi imported `platform`). Use `from waam_twin.runtime import init_taichi`.
-> `from waam_twin import platform` still works as an alias to `runtime`.
+> Backend / preset helpers: `from waam_twin.runtime import init_taichi`
+> (module file: `runtime.py`).
 
 ### CUDA / GPU backends
 
