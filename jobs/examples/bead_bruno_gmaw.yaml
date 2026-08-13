@@ -1,0 +1,128 @@
+# =============================================================================
+# Held-out: Bruno GMAW bead-on-plate (Figshare 27325698 / PIONEER Bruno_Dataset)
+# =============================================================================
+# MATERIAL CAUTION:
+#   data.cnf lists Material = "Carbon Steel", wire Ø1 mm — grade is NOT certified
+#   as ER70S-6. We still load ER70S-6.v1 so Goldak/η/recoil stay comparable to the
+#   calibrate lock, but treat absolute errors as provisional (soft material match).
+#   Do NOT retune the calibrate lock to fit Bruno.
+#
+# Locked Goldak/η/recoil = bead_calibrate.yaml. Process matched to Bruno logs.
+# Surface bead W/H from laser scan (scan.csv). Penetration D not yet digitized.
+#
+#   python3 -m waam_twin.tools.prediction_report --with-bruno
+#   docs/validation/PIONEER_BRUNO_DATASET.md
+# =============================================================================
+
+simulation:
+  preset: standard
+  backend: cuda
+  physics_tier: full
+  domain_mm: [80, 40, 25]
+  dx_mm: 0.4
+  enable_vof: true
+  enable_csf_tension: true
+  enable_wetting: true
+  enable_hydrostatic_gravity: true
+  enable_bead_freeze: true
+  enable_droplet_impact_pressure: true
+  enable_recoil: true
+  use_recoil_clausius_clapeyron: true
+  enable_lorentz: true
+  enable_gas_shear: true
+  enable_enthalpy_cap: true
+  enable_evaporative_cooling: true
+  arc_surface_weighting: true
+
+plate:
+  thickness_mm: 6.0
+  size_mm: [50, 20]
+
+material: materials/validated/ER70S-6.v1.yaml
+calibration: null
+torch_path_csv: jobs/paths/bead_calibrate.csv
+
+heat_source: goldak
+goldak:
+  ff: 0.6
+  fr: 1.4
+  a_front_mm: 2.2
+  a_rear_mm: 4.2
+  b_mm: 3.0
+  c_mm: 1.5
+
+arc_physics:
+  sigma_mm: 2.0
+  penetration_mm: 2.1
+  T_vapor_cap_K: 3200.0
+  surface_weighting: true
+  pressure_model: lin_eagar
+  pressure_pa: 150.0
+
+advanced_physics:
+  evap_cooling_scale: 25.0
+  T_boiling_K: 3000.0
+  recoil_accommodation: 0.25
+  L_vapor_J_kg: 6.0e6
+  R_spec_vapor_J_kgK: 450.0
+  lorentz_jacobi_iters: 300
+  lorentz_jacobi_tol: 1.0e-3
+  sigma_liquid_Sm: 1.0e6
+  sigma_solid_Sm: 1.0e5
+  gas_jet_velocity_m_s: 12.0
+  gas_shear_coeff: 1.0
+
+process:
+  current_A: 110
+  voltage_V: 19.7
+  arc_efficiency: 0.72
+  travel_speed_mm_s: 6.0
+  wire_feed_m_min: 3.5
+  wire_diameter_mm: 1.0
+  droplet_length_mm: 2.5
+  T_ambient_K: 293
+  stickout_mm: 12.0
+  ctwd_mm: 15.0
+  transfer_mode: auto
+  droplet_size_jitter: 0.05
+  impact_lead_angle_deg: 5.0
+
+deposition:
+  superheat_K: 400.0
+  footprint_sigma_scale: 1.0
+  trailing_solidify_lookback_mm: 6.0
+  trailing_solidify_temp_margin_K: 10.0
+
+surface_wetting:
+  contact_angle_deg: 80.0
+
+heat_loss:
+  convection: true
+  radiation: true
+  h_conv: 35.0
+
+prediction:
+  role: heldout_external_dataset
+  baseline_job: jobs/examples/bead_calibrate.yaml
+  dataset: Bruno_Dataset/27325698
+  vary: [current_A, voltage_V, travel_speed_mm_s, wire_feed_m_min, wire_diameter_mm]
+
+reference:
+  # Surface geometry from laser profilometer (not a polished fusion macro).
+  gate: surface_bead
+  awaiting_measurement: false
+  pool_width_mm: 4.33
+  pool_depth_mm: null
+  bead_width_mm: 4.33
+  bead_height_mm: 2.14
+  material_match: soft
+  experimental_wire: carbon_steel_uncertified_1mm
+  source: bruno_figshare_27325698_scan_csv_mid_bead
+  note: >
+    Width/height are external bead dimensions. Wire grade not certified ER70S-6.
+    Penetration depth left null until met-data.dat is digitized.
+
+model_reference:
+  n_steps: 8000
+  bead_height_mm_min: 0.5
+  f_recoil_active: true

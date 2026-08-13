@@ -1,0 +1,149 @@
+# =============================================================================
+# PIONEER M1 (ER70S-6) — process-matched short wall / multipass reference
+# =============================================================================
+# MATERIAL: PIONEER M1 wire is Böhler Q G 3 = AWS ER70S-6 (certificate in
+#   1. INITIAL REQUIREMENTS/MATERIAL DATA/M1/). OK to keep ER70S-6.v1.
+#   Do NOT use this job for PIONEER M2 (ER110SG) — different alloy.
+#
+# Source: WAAM Open Repository (Zenodo) local copy under PIONEER_PROJECT.
+# Locked Goldak/η/recoil = bead_calibrate.yaml. Process from robot logs
+# (TCP ~10 mm/s while arc-on; AML "50 mm/s" is NOT used).
+#
+# This job is a short 2-layer credibility run, not a 32-layer wall rebuild.
+#
+#   python3 -m waam_twin.tools.multipass_report --job jobs/examples/wall_pioneer_m1.yaml
+#   docs/validation/PIONEER_BRUNO_DATASET.md
+# =============================================================================
+
+simulation:
+  preset: standard
+  backend: cuda
+  physics_tier: full
+  domain_mm: [80, 40, 30]
+  dx_mm: 0.4
+  enable_vof: true
+  enable_csf_tension: true
+  enable_wetting: true
+  enable_hydrostatic_gravity: true
+  enable_bead_freeze: true
+  enable_droplet_impact_pressure: true
+  enable_recoil: true
+  use_recoil_clausius_clapeyron: true
+  enable_lorentz: true
+  enable_gas_shear: true
+  enable_enthalpy_cap: true
+  enable_evaporative_cooling: true
+  enable_substrate_growth: true
+  use_torch_z: true
+  arc_surface_weighting: true
+
+plate:
+  thickness_mm: 12.0
+  size_mm: [50, 20]
+
+material: materials/validated/ER70S-6.v1.yaml
+calibration: null
+
+heat_source: goldak
+goldak:
+  ff: 0.6
+  fr: 1.4
+  a_front_mm: 2.2
+  a_rear_mm: 4.2
+  b_mm: 3.0
+  c_mm: 1.5
+
+arc_physics:
+  sigma_mm: 2.0
+  penetration_mm: 2.1
+  T_vapor_cap_K: 3200.0
+  surface_weighting: true
+  pressure_model: lin_eagar
+  pressure_pa: 150.0
+
+advanced_physics:
+  evap_cooling_scale: 25.0
+  T_boiling_K: 3000.0
+  recoil_accommodation: 0.25
+  L_vapor_J_kg: 6.0e6
+  R_spec_vapor_J_kgK: 450.0
+  lorentz_jacobi_iters: 300
+  lorentz_jacobi_tol: 1.0e-3
+  sigma_liquid_Sm: 1.0e6
+  sigma_solid_Sm: 1.0e5
+  gas_jet_velocity_m_s: 12.0
+  gas_shear_coeff: 1.0
+
+process:
+  current_A: 132
+  voltage_V: 14.3
+  arc_efficiency: 0.72
+  travel_speed_mm_s: 10.0
+  wire_feed_m_min: 4.5
+  wire_diameter_mm: 1.2
+  droplet_length_mm: 3.0
+  T_ambient_K: 293
+  stickout_mm: 12.0
+  ctwd_mm: 15.0
+
+deposition:
+  superheat_K: 400.0
+  footprint_sigma_scale: 1.0
+
+surface_wetting:
+  contact_angle_deg: 80.0
+
+heat_loss:
+  convection: true
+  radiation: true
+  h_conv: 35.0
+
+interpass:
+  # Proxy for dwell=30 s (dataset). Scale steps with dt on the target mesh.
+  cooling_steps: 2000
+  dwell_s: 30
+
+# Path in absolute DOMAIN mm. Plate 50×20 centered in 80×40 →
+# plate spans x∈[15,65], y∈[10,30].
+# Two layers: L1 along +x at z=0 (build height above plate), lift, L2 return at z=layer_height.
+# z_mm is bead/layer height above plate top (NOT robot TCP). use_torch_z: true.
+torch_path:
+  - {x_mm: 20, y_mm: 20, z_mm: 0}
+  - {x_mm: 50, y_mm: 20, z_mm: 0}
+  - {x_mm: 50, y_mm: 20, z_mm: 1.49}
+  - {x_mm: 20, y_mm: 20, z_mm: 1.49}
+
+layer_height_mm: 1.49
+
+prediction:
+  role: multipass_external_dataset
+  baseline_job: jobs/examples/bead_calibrate.yaml
+  dataset: PIONEER_PROJECT M1_30
+  vary: [current_A, voltage_V, travel_speed_mm_s, wire_feed_m_min]
+
+reference:
+  awaiting_measurement: false
+  gate: wall_multipass
+  material_match: true
+  experimental_wire: ER70S-6_Bohler_QG3
+  # Steady wall width from M1-30 macro (5 mm scale bar); layer height from metrology xlsx.
+  wall_width_mm: 5.41
+  layer_height_mm: 1.488
+  wall_height_mm: 47.6
+  dwell_s: 30
+  # Root fusion into plate from M1-30 macro (darker etch under wall; dual method ~1.9–2.2 mm).
+  remelt_depth_mm: 2.0
+  haz_width_mm: null
+  haz_T_peak_min_K: 800
+  haz_T_peak_max_K: 3200
+  remelt_liquid_min: 5
+  tolerance_pct: 40.0
+  source: pioneer_M1_30_macro_remelt_and_WALLSpecimensMeasurements
+  note: >
+    Full walls are 32 layers; this job only runs 2 layers at the measured layer
+    height. remelt_depth_mm is first-layer root into the plate (not interlayer
+    remelt). HAZ width not digitized. M2 (ER110SG) is out of scope here.
+
+model_reference:
+  n_steps: 12000
+  interpass_steps: 2000

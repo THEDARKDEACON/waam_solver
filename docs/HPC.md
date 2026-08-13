@@ -1,11 +1,71 @@
 # HPC — production bead runs (waam_twin v2)
 
-Operators: start with the **copy-paste** section. You need a terminal on a
-**GPU node** (or an interactive GPU allocation). No scheduler scripts required.
+Operators: you need a **GPU** shell (or interactive GPU allocation). Two supported
+paths:
+
+| Path | When to use |
+|------|-------------|
+| **Docker** (below) | Preferred if your HPC allows Docker + NVIDIA Container Toolkit |
+| **venv + modules** | Fallback when Docker is unavailable |
 
 For local GGUI use the viewer; for Colab use `notebooks/cloud_production_workflow.ipynb`.
 
-## Copy-paste: higher-resolution bead
+## Copy-paste: Docker (preferred when available)
+
+From the repo root (folder with `Dockerfile` / `pyproject.toml`):
+
+```bash
+cd /path/to/waam_twin
+
+# One-time build (reuse the image afterward)
+docker build -t waam-twin:latest .
+
+# Prove the container sees the GPU
+docker run --rm --gpus all nvidia/cuda:12.2.0-base-ubuntu22.04 nvidia-smi
+
+mkdir -p runs
+docker run --rm --gpus all \
+  -e WAAM_BACKEND=cuda \
+  -v "$PWD/runs:/app/runs" \
+  waam-twin:latest \
+  python scripts/hpc/run_batch.py \
+    --job jobs/examples/bead_on_plate_hires.yaml \
+    --n-steps auto \
+    --out runs/bead_on_plate_hires
+```
+
+Outputs land on the **host** under `./runs/...` (bind-mounted). Open in ParaView:
+
+```text
+runs/bead_on_plate_hires/final.pvd
+runs/bead_on_plate_hires/sequence/sequence.pvd
+runs/bead_on_plate_hires/bundle/
+```
+
+Useful overrides:
+
+```bash
+# Coarser smoke job
+docker run --rm --gpus all -e WAAM_BACKEND=cuda -v "$PWD/runs:/app/runs" waam-twin:latest \
+  python scripts/hpc/run_batch.py --job jobs/examples/bead_on_plate.yaml \
+  --n-steps auto --out runs/bead_on_plate
+
+# Lower preset inside the container
+docker run --rm --gpus all -e WAAM_BACKEND=cuda -v "$PWD/runs:/app/runs" waam-twin:latest \
+  python scripts/hpc/run_batch.py --job jobs/examples/bead_on_plate_hires.yaml \
+  --preset standard --n-steps auto --out runs/bead_on_plate_hires_std
+
+# Final VTK only (no sequence frames)
+docker run --rm --gpus all -e WAAM_BACKEND=cuda -v "$PWD/runs:/app/runs" waam-twin:latest \
+  python scripts/hpc/run_batch.py --job jobs/examples/bead_on_plate_hires.yaml \
+  --n-steps auto --sequence-every 0 --out runs/bead_on_plate_hires
+```
+
+If Taichi initializes on **CPU** inside the container, the image CUDA tag likely
+mismatches the host driver — rebuild from a different `nvidia/cuda:…` base or
+ask the site which CUDA container tags they support.
+
+## Copy-paste: venv (no Docker)
 
 ```bash
 cd /path/to/waam_twin          # folder that contains pyproject.toml

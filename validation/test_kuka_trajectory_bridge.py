@@ -51,8 +51,14 @@ def test_torch_z_raises_arc_k() -> None:
     twin.reset()
     g = twin.grid
     k_flat = _resolve_arc_k(twin, g, 12.0, 8.0, None)
-    k_z = _resolve_arc_k(twin, g, 12.0, 8.0, 0.020)
-    assert k_z >= k_flat, f"torch Z should not lower arc_k: {k_z} vs {k_flat}"
+    # Robot TCP convention: Z ≥ CTWD
+    k_tcp = _resolve_arc_k(twin, g, 12.0, 8.0, 0.020)
+    assert k_tcp >= k_flat, f"TCP torch Z should not lower arc_k: {k_tcp} vs {k_flat}"
+    # Job layer-height convention: z ≪ CTWD (1.2 mm build height)
+    k_layer = _resolve_arc_k(twin, g, 12.0, 8.0, 0.0012)
+    assert k_layer > k_flat + 0.5, (
+        f"layer-height torch Z should raise arc_k: {k_layer} vs flat {k_flat}"
+    )
 
 
 def run() -> None:

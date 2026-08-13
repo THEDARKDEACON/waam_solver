@@ -108,18 +108,23 @@ heat_loss:
   h_conv: 35.0
 
 reference:
-  # No Crown FH-30 macrograph lock yet — envelopes are placeholders
-  pool_width_mm: 7.0
-  pool_depth_mm: 3.0
-  source: Crown_FH-30_datasheet_short_circuit_035_mid_window
+  # OPEN gate — placeholder numbers are NOT an experimental lock.
+  awaiting_measurement: true
+  gate: macro_wd
+  material_match: false
+  pool_width_mm: null
+  pool_depth_mm: null
+  source: TBD_Crown_FH-30_bead_on_plate_macrograph
+  note: >
+    Material is placeholder (4130-class thermophysics). After a coupon cut,
+    paste W/D here, set awaiting_measurement false, then:
+      python3 -m waam_twin.tools.seed_goldak_from_pool --width W --depth D
+    and promote materials/placeholders/Crown-FH-30.yaml → validated/.
 
 model_reference:
-  pool_width_mm: 6.5
-  pool_depth_mm: 2.8
   n_steps: 8000
   notes: >
-    Starter envelope only. Material is placeholder (4130 thermophysics).
-    Replace reference after coupon macrographs under this process window.
+    Starter job only. Do not cite as calibrated until macrograph + material promotion.
 
 probes:
   - name: substrate_behind_arc

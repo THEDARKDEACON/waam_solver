@@ -92,11 +92,14 @@ heat_loss:
 interpass:
   cooling_steps: 200
 
-# Path fits plate size_mm [50,20]; z rises for layer 2 (use_torch_z).
+# Path fits plate size_mm [50,20] centered in domain [80,40] →
+# plate x∈[15,65], y∈[10,30]. Absolute domain mm.
+# Layer 1 +x at z=0; lift; layer 2 −x at z=layer_height (build height, not TCP).
 torch_path:
-  - {x_mm: 10, y_mm: 10, z_mm: 0}
-  - {x_mm: 40, y_mm: 10, z_mm: 0}
-  - {x_mm: 10, y_mm: 10, z_mm: 1.2}
+  - {x_mm: 20, y_mm: 20, z_mm: 0}
+  - {x_mm: 50, y_mm: 20, z_mm: 0}
+  - {x_mm: 50, y_mm: 20, z_mm: 1.2}
+  - {x_mm: 20, y_mm: 20, z_mm: 1.2}
 
 layer_height_mm: 1.2
 

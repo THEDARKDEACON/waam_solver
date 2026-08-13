@@ -20,6 +20,8 @@ CALIBRATE_JOB = "jobs/examples/bead_calibrate.yaml"
 HELDOUT_FAST_JOB = "jobs/examples/bead_calibrate_heldout_fast.yaml"
 HELDOUT_HOT_JOB = "jobs/examples/bead_calibrate_heldout_hot.yaml"
 HELDOUT_MACRO2_JOB = "jobs/examples/bead_calibrate_heldout_macro2.yaml"
+HELDOUT_BRUNO_JOB = "jobs/examples/bead_bruno_gmaw.yaml"
+PIONEER_WALL_JOB = "jobs/examples/wall_pioneer_m1.yaml"
 
 # Keys that must match the calibrate lock exactly for a held-out to be "prediction".
 _LOCKED_PROCESS = ("arc_efficiency",)
@@ -149,22 +151,41 @@ def run_job_metrics(
         "awaiting_measurement": bool(ref.get("awaiting_measurement", False)),
     }
     W_ref, D_ref = ref.get("pool_width_mm"), ref.get("pool_depth_mm")
-    if (
-        not out["awaiting_measurement"]
-        and W_ref is not None
-        and D_ref is not None
-    ):
+    gate = str(ref.get("gate") or "macro_wd")
+    out["reference_gate"] = gate
+    if not out["awaiting_measurement"] and W_ref is not None and D_ref is not None:
         out["macro_err_pct"] = pool_error_pct(W_mm, D_mm, float(W_ref), float(D_ref))
         out["macro_W_ref"] = float(W_ref)
         out["macro_D_ref"] = float(D_ref)
+    # Surface-bead datasets (laser scan): compare external width/height when present.
+    Bw_ref, Bh_ref = ref.get("bead_width_mm"), ref.get("bead_height_mm")
+    if not out["awaiting_measurement"] and Bw_ref is not None:
+        out["bead_W_ref"] = float(Bw_ref)
+        bw = max(out["bead_width_mm"], out["pool_width_mm"])
+        out["bead_width_err_pct"] = abs(bw - float(Bw_ref)) / max(float(Bw_ref), 1e-6) * 100.0
+    if not out["awaiting_measurement"] and Bh_ref is not None:
+        out["bead_H_ref"] = float(Bh_ref)
+        out["bead_height_err_pct"] = (
+            abs(out["bead_height_mm"] - float(Bh_ref)) / max(float(Bh_ref), 1e-6) * 100.0
+        )
+    if gate == "surface_bead" and out.get("bead_width_err_pct") is not None:
+        errs = [out["bead_width_err_pct"]]
+        if out.get("bead_height_err_pct") is not None:
+            errs.append(out["bead_height_err_pct"])
+        out["macro_err_pct"] = max(errs)
+        out["macro_W_ref"] = float(Bw_ref) if Bw_ref is not None else float(W_ref or 0)
+        out["macro_D_ref"] = float(Bh_ref) if Bh_ref is not None else float("nan")
     return out
 
 
 def reference_ready(job: dict[str, Any]) -> bool:
-    """True when experimental W/D is filled and not awaiting measurement."""
+    """True when experimental geometry is filled and not awaiting measurement."""
     ref = job.get("reference") or {}
     if ref.get("awaiting_measurement"):
         return False
+    gate = str(ref.get("gate") or "macro_wd")
+    if gate == "surface_bead":
+        return ref.get("bead_width_mm") is not None or ref.get("pool_width_mm") is not None
     return ref.get("pool_width_mm") is not None and ref.get("pool_depth_mm") is not None
 
 
@@ -175,7 +196,9 @@ def assert_macrograph_prediction(
     threshold_pct: float = 40.0,
     label: str = "heldout",
 ) -> str:
-    """Absolute W/D gate when reference is filled; otherwise PENDING."""
+    """Absolute geometry gate when reference is filled; otherwise PENDING."""
+    ref = job.get("reference") or {}
+    gate = str(ref.get("gate") or metrics.get("reference_gate") or "macro_wd")
     if not reference_ready(job):
         msg = (
             f"{label}: PENDING macrograph "
@@ -184,14 +207,22 @@ def assert_macrograph_prediction(
         print(f"  {msg}")
         return "pending"
     err = float(metrics.get("macro_err_pct", 100.0))
-    print(
-        f"  {label}: macro err={err:.1f}% vs "
-        f"{metrics.get('macro_W_ref')}×{metrics.get('macro_D_ref')} mm "
-        f"(pred {metrics['pool_width_mm']:.2f}×{metrics['pool_depth_mm']:.2f})"
-    )
+    if gate == "surface_bead":
+        print(
+            f"  {label}: surface-bead err={err:.1f}% vs "
+            f"W_ref={metrics.get('bead_W_ref')} h_ref={metrics.get('bead_H_ref')} mm "
+            f"(pred W={metrics['pool_width_mm']:.2f}/{metrics['bead_width_mm']:.2f} "
+            f"h={metrics['bead_height_mm']:.2f})"
+        )
+    else:
+        print(
+            f"  {label}: macro err={err:.1f}% vs "
+            f"{metrics.get('macro_W_ref')}×{metrics.get('macro_D_ref')} mm "
+            f"(pred {metrics['pool_width_mm']:.2f}×{metrics['pool_depth_mm']:.2f})"
+        )
     if err >= threshold_pct:
         raise AssertionError(
-            f"{label} macrograph error {err:.1f}% >= {threshold_pct}% — "
+            f"{label} geometry error {err:.1f}% >= {threshold_pct}% — "
             "do not retune Goldak/η/recoil; investigate process match first"
         )
     return "pass"

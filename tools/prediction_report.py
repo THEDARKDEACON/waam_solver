@@ -21,6 +21,7 @@ import time
 from waam_twin.job import load_job_config
 from waam_twin.validation.prediction import (
     CALIBRATE_JOB,
+    HELDOUT_BRUNO_JOB,
     HELDOUT_FAST_JOB,
     HELDOUT_HOT_JOB,
     HELDOUT_MACRO2_JOB,
@@ -58,6 +59,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("--json", type=str, default="", help="Write results JSON to path")
     ap.add_argument("--skip-trends", action="store_true", help="Do not fail on trend gates")
+    ap.add_argument(
+        "--with-bruno",
+        action="store_true",
+        help="Also run Bruno GMAW surface-bead held-out (PIONEER Bruno_Dataset)",
+    )
     args = ap.parse_args(argv)
 
     if args.quick and "WAAM_BEAD_STEPS" not in os.environ:
@@ -72,6 +78,8 @@ def main(argv: list[str] | None = None) -> int:
         ("heldout_hot", HELDOUT_HOT_JOB, "larger_pool", "wall"),
         ("heldout_macro2", HELDOUT_MACRO2_JOB, "larger_pool", "distance"),
     ]
+    if args.with_bruno:
+        cases.append(("heldout_bruno", HELDOUT_BRUNO_JOB, None, "distance"))
 
     results: dict[str, dict] = {}
     t0 = time.perf_counter()
@@ -94,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
             f"  material={m['material_name']} status={m['material_status']}  "
             f"steps={m['n_steps']}  dist={m.get('travel_distance_mm', 0):.2f}mm"
         )
-        if path == HELDOUT_MACRO2_JOB:
+        if path in (HELDOUT_MACRO2_JOB, HELDOUT_BRUNO_JOB):
             assert_macrograph_prediction(m, job, label=name)
 
     base = results["calibrate (fitted)"]
@@ -123,6 +131,12 @@ def main(argv: list[str] | None = None) -> int:
         print(
             f"Macro2 slot predicted W/D={m2['pool_width_mm']:.2f}×{m2['pool_depth_mm']:.2f} mm "
             f"— paste measured values into {HELDOUT_MACRO2_JOB} reference when ready."
+        )
+    br = results.get("heldout_bruno")
+    if br:
+        print(
+            f"Bruno surface-bead: pred W/h={br['pool_width_mm']:.2f}/{br['bead_height_mm']:.2f} mm "
+            f"err={br.get('macro_err_pct', float('nan'))} — see docs/validation/PIONEER_BRUNO_DATASET.md"
         )
     print("Held-outs are predictions — do not retune Goldak/η/recoil to match them.")
 

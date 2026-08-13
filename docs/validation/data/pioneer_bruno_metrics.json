@@ -1,0 +1,184 @@
+{
+  "title": "Extracted metrics from PIONEER / Bruno / CMT external datasets",
+  "source_root": "/mnt/shared_ntfs/PIONEER_PROJECT",
+  "zenodo": "https://zenodo.org/records/17608626",
+  "bruno_figshare": "https://doi.org/10.6084/m9.figshare.27325698",
+  "cmt_doi_hint": "Recherche Data Gouv \u2014 Profile of a weld bead deposited by robotized GMAW-CMT process (ENSAM Metz)",
+  "extracted_utc": "2026-08-10",
+  "notes": [
+    "Do not retune Goldak/\u03b7/recoil on the calibrate lock to match these.",
+    "Materials differ across subsets \u2014 see materials_matrix and docs/validation/PIONEER_BRUNO_DATASET.md.",
+    "Bruno pool_width is laser-scanned external bead width (not a cut fusion-zone macro).",
+    "Bruno penetration profile (met-data.dat) was not reduced to a reliable D_mm; depth stays awaiting.",
+    "PIONEER AML lists Travel Velocity=50 mm/s; robot TCP_SPEED while arc-on is ~10 mm/s \u2014 use 10.",
+    "CMT scans contain -99.9999 invalids; W/H digitization needs a careful baseline \u2014 not used as ER70S-6 gate.",
+    "PIONEER remelt_depth_mm digitized 2026-08-10 from macros (etch contrast)."
+  ],
+  "materials_matrix": {
+    "pioneer_m1": {
+      "wire": "ER70S-6 (Bohler Q G 3)",
+      "plate": "steel 12 mm",
+      "er70s6_lock_ok": true
+    },
+    "pioneer_m2": {
+      "wire": "ER110SG (Union X85)",
+      "plate": "steel 12 mm",
+      "er70s6_lock_ok": false
+    },
+    "bruno_gmaw": {
+      "wire": "Carbon steel \u00d81 mm (grade uncertified in data.cnf)",
+      "plate": "6 mm carbon steel",
+      "er70s6_lock_ok": "soft"
+    },
+    "cmt_profiles": {
+      "wire": "ER100 \u00d81.2 mm",
+      "plate": "S235 20 mm",
+      "process": "MIG CMT",
+      "er70s6_lock_ok": false
+    }
+  },
+  "bruno_gmaw": {
+    "job": "jobs/examples/bead_bruno_gmaw.yaml",
+    "material_match": "soft",
+    "process": {
+      "current_A": 110.0,
+      "voltage_V": 19.7,
+      "travel_speed_mm_s": 6.0,
+      "wire_feed_m_min": 3.5,
+      "wire_diameter_mm": 1.0,
+      "ctwd_mm": 15.0,
+      "plate_thickness_mm": 6.0,
+      "gas": "98% Ar + 2% O2"
+    },
+    "reference": {
+      "bead_width_mm": 4.33,
+      "bead_height_mm": 2.14,
+      "pool_width_mm": 4.33,
+      "pool_depth_mm": null,
+      "source": "Bruno_Dataset/27325698 scan.csv mid-bead median (pos interior 50%)",
+      "gate": "surface_bead"
+    }
+  },
+  "pioneer_m1_er70s6": {
+    "material": "ER70S-6 (Bohler QG3)",
+    "material_match": true,
+    "process": {
+      "current_A": 132.0,
+      "voltage_V": 14.3,
+      "travel_speed_mm_s": 10.0,
+      "wire_feed_m_min": 4.5,
+      "wire_diameter_mm": 1.2,
+      "plate": "250x150x12 mm"
+    },
+    "walls": [
+      {
+        "id": "M1_0",
+        "dwell_s": 0,
+        "wall_height_mm": 39.8,
+        "layer_height_mm": 1.244,
+        "wall_width_mm": 6.8,
+        "remelt_depth_mm": 1.8,
+        "layers": 32
+      },
+      {
+        "id": "M1_30",
+        "dwell_s": 30,
+        "wall_height_mm": 47.6,
+        "layer_height_mm": 1.488,
+        "wall_width_mm": 5.41,
+        "remelt_depth_mm": 2.0,
+        "layers": 32
+      },
+      {
+        "id": "M1_60",
+        "dwell_s": 60,
+        "wall_height_mm": 49.0,
+        "layer_height_mm": 1.531,
+        "wall_width_mm": 5.15,
+        "remelt_depth_mm": 2.0,
+        "layers": 32
+      },
+      {
+        "id": "M1_90",
+        "dwell_s": 90,
+        "wall_height_mm": 49.2,
+        "layer_height_mm": 1.538,
+        "wall_width_mm": 5.42,
+        "remelt_depth_mm": 2.0,
+        "layers": 32
+      },
+      {
+        "id": "M1_120",
+        "dwell_s": 120,
+        "wall_height_mm": 49.8,
+        "layer_height_mm": 1.556,
+        "wall_width_mm": 5.03,
+        "remelt_depth_mm": 2.4,
+        "layers": 32
+      },
+      {
+        "id": "M1_240",
+        "dwell_s": 240,
+        "wall_height_mm": 50.7,
+        "layer_height_mm": 1.584,
+        "wall_width_mm": 4.79,
+        "remelt_depth_mm": 1.85,
+        "layers": 32
+      }
+    ],
+    "wall_width_note": "From Macros/M1-*.JPG using 5 mm scale bar; largest-run metal width, plate 12 mm excluded. M1_90 scale-bar detect failed \u2014 width left null.",
+    "job": "jobs/examples/wall_pioneer_m1.yaml",
+    "remelt_note": "Root fusion into plate from Macros/M1-*.JPG: darker-etch band under wall (~plate_med-12) and centerline intensity recovery. M1_30 primary: ~2.0 mm. Not interlayer remelt between beads.",
+    "primary_reference": {
+      "id": "M1_30",
+      "wall_width_mm": 5.41,
+      "remelt_depth_mm": 2.0,
+      "layer_height_mm": 1.488
+    }
+  },
+  "cmt_er100_s235": {
+    "path": "CMT_Profile_dataset/",
+    "wired_as_er70s6_heldout": false,
+    "reason": "Wire is ER100, plate S235, process MIG CMT \u2014 not the ER70S-6 calibrate material/process class.",
+    "constants": {
+      "wire": "ER100",
+      "wire_diameter_mm": 1.2,
+      "plate": "S235 200x250x20 mm",
+      "ctwd_mm": 13.0,
+      "gas": "Ar 82% + CO2 18% @ 18 L/min",
+      "generator": "Fronius TP-180i CMT"
+    },
+    "parameter_sets": [
+      {
+        "nj": 1,
+        "travel_mm_s": 13.3,
+        "wire_feed_m_min": 9.0,
+        "I_A_approx": 270,
+        "V_approx": 17.3
+      },
+      {
+        "nj": 2,
+        "travel_mm_s": 18.3,
+        "wire_feed_m_min": 7.5,
+        "I_A_approx": 270,
+        "V_approx": 17.2
+      },
+      {
+        "nj": 3,
+        "travel_mm_s": 8.3,
+        "wire_feed_m_min": 10.0,
+        "I_A_approx": 270,
+        "V_approx": 17.4
+      },
+      {
+        "nj": 4,
+        "travel_mm_s": 18.3,
+        "wire_feed_m_min": 10.0,
+        "I_A_approx": 270,
+        "V_approx": 17.2
+      }
+    ],
+    "n_beads": 140,
+    "note": "Use only after an ER100 (or dedicated CMT) material card exists; do not score against ER70S-6.v1 lock."
+  }
+}

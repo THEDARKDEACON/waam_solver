@@ -17,9 +17,12 @@
 #   jobs/examples/bead_calibrate_heldout_fast.yaml  — travel 11 mm/s
 #   jobs/examples/bead_calibrate_heldout_hot.yaml   — 120 A
 #   jobs/examples/bead_calibrate_heldout_macro2.yaml — 5 mm/s (paste 2nd macrograph)
+#   jobs/examples/bead_bruno_gmaw.yaml — Bruno/PIONEER laser bead W/H (surface gate)
+#   jobs/examples/wall_pioneer_m1.yaml — PIONEER M1 wall process (2-layer proxy)
 #   docs/validation/heldout_macrograph_slot.md
-#   python3 -m waam_twin.tools.prediction_report
-#   python3 -m waam_twin.tools.multipass_report
+#   docs/validation/PIONEER_BRUNO_DATASET.md
+#   python3 -m waam_twin.tools.prediction_report --with-bruno
+#   python3 -m waam_twin.tools.multipass_report --job jobs/examples/wall_pioneer_m1.yaml
 #   python3 -m waam_twin.tools.recoil_accommodation_sweep
 #
 #   python3 -m waam_twin.viewer --job jobs/examples/bead_calibrate.yaml

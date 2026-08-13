@@ -158,16 +158,17 @@ The macrograph mainly constrains **pool shape** (energy coupling + heat-source s
 ## 7. What you should collect next (priority)
 
 1. **Second bead-on-plate macrograph** at a different travel or current → fill `bead_calibrate_heldout_macro2.yaml` (`heldout_macrograph_slot.md`).  
-2. **Two-layer coupon**: remelt depth + HAZ size → fill `bead_calibrate_twolayer.yaml` `reference`.  
-3. Optional: thermocouple traces behind the arc for cooling-rate credibility.
+2. **External datasets (wired):** Bruno GMAW surface W/H + PIONEER M1 wall — see [PIONEER_BRUNO_DATASET.md](PIONEER_BRUNO_DATASET.md).  
+3. **Two-layer coupon**: remelt depth + HAZ size → fill `bead_calibrate_twolayer.yaml` `reference`.  
+4. Optional: thermocouple traces behind the arc for cooling-rate credibility.
 
 Commands after you have numbers:
 
 ```bash
 cd FYP22-01
 export PYTHONPATH=.
-python3 -m waam_twin.tools.prediction_report
-python3 -m waam_twin.tools.multipass_report
+python3 -m waam_twin.tools.prediction_report --with-bruno
+python3 -m waam_twin.tools.multipass_report --job jobs/examples/wall_pioneer_m1.yaml
 ```
 
 ---

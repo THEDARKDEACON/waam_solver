@@ -49,9 +49,19 @@ def _resolve_arc_k(
         k_surface = float(max(1, twin.nz_solid - 1))
 
     if getattr(twin, "use_torch_z", False) and torch_z_m is not None:
-        # Robot Z + CTWD → local bead-top height above substrate datum.
-        z_bead_m = torch_z_m - twin.ctwd_m
-        z_bead_m = max(twin.substrate_z_m, z_bead_m)
+        # Two conventions for torch_z_m:
+        #   1) Job / inline torch_path z_mm — height of the *bead build* above the
+        #      plate top (layer height). Values are typically ≪ CTWD (mm–cm).
+        #   2) Robot TCP Z — tip height above the substrate datum; bead top is
+        #      TCP − CTWD. Values are typically ≥ CTWD (~10–20 mm).
+        # Treating layer-height paths as TCP (subtracting CTWD) clamps the arc
+        # to the plate forever and breaks multilayer deposition.
+        ctwd = float(getattr(twin, "ctwd_m", 0.0) or 0.0)
+        if ctwd > 1e-9 and float(torch_z_m) + 1e-12 >= ctwd:
+            z_bead_m = float(torch_z_m) - ctwd
+        else:
+            z_bead_m = float(torch_z_m)
+        z_bead_m = max(float(getattr(twin, "substrate_z_m", 0.0)), z_bead_m)
         k_robot = twin.nz_solid + (z_bead_m - twin.substrate_z_m) / g.dx - 1.0
         k_robot = max(float(twin.nz_solid) + 0.5, min(k_robot, float(g.nz) - 2.0))
         return max(k_surface, k_robot)

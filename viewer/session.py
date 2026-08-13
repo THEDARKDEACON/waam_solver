@@ -177,22 +177,25 @@ class ViewerSession:
     def torch_marker_mm(self) -> tuple[float, float, float]:
         """Yellow tip glyph: contact tip above the plate, not path ``z=0``.
 
-        When ``use_torch_z`` is on, robot TCP Z from the path is used.
-        Otherwise tip = free surface + CTWD (clamped into the grid).
+        When ``use_torch_z`` is on, path Z is either bead build height (job YAML)
+        or robot TCP (≥ CTWD). Otherwise tip = free surface + CTWD.
         """
         twin = self.twin
         g = twin.grid
+        dx_mm = g.dx * 1000.0
         x_mm, y_mm, z_surf_mm = self.torch_surface_mm()
         if getattr(twin, "use_torch_z", False):
             _, _, z_path_mm = self.torch_mm()
-            # Prefer robot Z when it is clearly above the substrate datum.
-            if z_path_mm > z_surf_mm * 0.25:
-                return x_mm, y_mm, z_path_mm
-        dx_mm = g.dx * 1000.0
-        tip_mm = z_surf_mm + float(getattr(twin, "ctwd_m", 0.015)) * 1000.0
-        z_max_mm = (g.nz - 1.5) * dx_mm
-        # Keep the tip visible above the plate even if CTWD exceeds the air gap.
-        tip_mm = min(max(tip_mm, z_surf_mm + dx_mm), z_max_mm)
+            # Path z is bead build height (mm above plate) for job YAMLs, or TCP
+            # height when ≥ CTWD. Tip glyph sits CTWD above the bead top.
+            ctwd_mm = float(getattr(twin, "ctwd_m", 0.015)) * 1000.0
+            if z_path_mm + 1e-6 >= ctwd_mm:
+                tip_mm = z_path_mm
+            else:
+                tip_mm = z_surf_mm + max(z_path_mm, 0.0) + ctwd_mm
+        else:
+            tip_mm = z_surf_mm + float(getattr(twin, "ctwd_m", 0.015)) * 1000.0
+        tip_mm = min(max(tip_mm, z_surf_mm + dx_mm), (g.nz - 1.5) * dx_mm)
         return x_mm, y_mm, tip_mm
 
 

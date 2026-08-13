@@ -43,6 +43,7 @@ waam_twin/                    ← git repository root (this folder)
 │   ├── validated/            # Calibrated alloys
 │   ├── calibration/          # η, σ fits per process
 │   └── user/                 # Local overrides (gitignored)
+├── Dockerfile                # GPU headless image (Docker-capable HPC)
 ├── docs/                     # HARDWARE, HPC, MATERIALS, VTK, LBM, weld-pool physics
 ├── scripts/hpc/              # SLURM templates + headless run_batch.py
 ├── runs/                     # Batch outputs (gitignored contents)
@@ -265,23 +266,49 @@ twin.step(0.015, 0.010, is_welding=True)
 |-------------|----------|-------------|
 | **Local desktop** | Interactive debugging, GGUI viewer | `python -m waam_twin.viewer …` |
 | **Colab / Jupyter** | Editable jobs, Drive sync | `notebooks/cloud_production_workflow.ipynb` |
-| **HPC (GPU shell)** | Higher-resolution production beads | Copy-paste section below |
+| **HPC + Docker** | Higher-resolution beads (this site) | `Dockerfile` + copy-paste below |
+| **HPC venv** | Fallback if Docker unavailable | modules + `.venv` below |
 
 ### HPC — production bead run (copy-paste)
 
-For operators with a **terminal already open on a GPU node** (or an interactive
-GPU allocation). No scheduler scripts required. Do **not** use the interactive
-viewer on HPC (no display).
+For operators with a **GPU** terminal. Do **not** use the interactive viewer on
+HPC (no display). Full detail: [docs/HPC.md](docs/HPC.md).
+
+#### A) Docker (preferred when Docker + GPUs are allowed)
+
+```bash
+cd /path/to/waam_twin          # folder with Dockerfile + pyproject.toml
+
+docker build -t waam-twin:latest .
+
+mkdir -p runs
+docker run --rm --gpus all \
+  -e WAAM_BACKEND=cuda \
+  -v "$PWD/runs:/app/runs" \
+  waam-twin:latest \
+  python scripts/hpc/run_batch.py \
+    --job jobs/examples/bead_on_plate_hires.yaml \
+    --n-steps auto \
+    --out runs/bead_on_plate_hires
+```
+
+Outputs on the host:
+
+```text
+runs/bead_on_plate_hires/final.pvd
+runs/bead_on_plate_hires/sequence/sequence.pvd
+runs/bead_on_plate_hires/bundle/
+```
+
+ParaView: **File → Open → `sequence.pvd` → Apply → Play**, or open `final.pvd`.
+
+#### B) venv + modules (no Docker)
 
 Replace `/path/to/waam_twin` with the real clone path. Module names are
 site-specific — run `module avail` if unsure.
 
-#### 1) One-time setup
-
 ```bash
 cd /path/to/waam_twin
-# directory that contains pyproject.toml and jobs/
-
 module load python/3.11          # edit to your site's module
 module load cuda/12.2            # edit to your site's module
 
@@ -290,30 +317,19 @@ source .venv/bin/activate
 pip install -U pip
 pip install -e .
 
-# Prove the GPU works before a long run:
 nvidia-smi
 python -c "import taichi as ti; ti.init(arch=ti.cuda); print(ti.cfg.arch)"
-```
-
-`module load` only selects the centre’s Python/CUDA for this shell; it does not
-install the project. The venv + `pip install -e .` does that.
-
-#### 2) Every session — higher-resolution bead
-
-```bash
-cd /path/to/waam_twin
-source .venv/bin/activate
-# reload modules if this is a new shell:
-# module load python/3.11 cuda/12.2
 
 export WAAM_BACKEND=cuda
 mkdir -p runs
-
 python scripts/hpc/run_batch.py \
   --job jobs/examples/bead_on_plate_hires.yaml \
   --n-steps auto \
   --out runs/bead_on_plate_hires
 ```
+
+`module load` only selects the centre’s Python/CUDA for this shell; the venv +
+`pip install -e .` installs the project.
 
 | Flag | Meaning |
 |------|---------|
@@ -322,21 +338,10 @@ python scripts/hpc/run_batch.py \
 | `--out …` | Writes telemetry + VTK + ParaView PVD under `runs/` |
 | `--sequence-every N` | VTK frame every N steps + `sequence.pvd` (default **500**; `0` = final only) |
 
-When it finishes, collect:
+#### C) Optional — coarser smoke first
 
-```text
-runs/bead_on_plate_hires/telemetry.json
-runs/bead_on_plate_hires/final.pvd          ← open this for the end state
-runs/bead_on_plate_hires/bundle/            ← final .vti / .vtp files
-runs/bead_on_plate_hires/sequence/sequence.pvd  ← open this for the animation
-```
-
-In ParaView: **File → Open → `sequence.pvd` → Apply → Play** (time series), or open
-`final.pvd` for a single end-of-run volume. Copy `runs/` off the cluster first.
-
-#### 3) Optional — coarser smoke first
-
-If the hires job OOMs or is too slow, prove the pipeline with the default job:
+If the hires job OOMs or is too slow, prove the pipeline with the default job
+(Docker or venv — same `run_batch.py` args):
 
 ```bash
 python scripts/hpc/run_batch.py \
@@ -345,7 +350,7 @@ python scripts/hpc/run_batch.py \
   --out runs/bead_on_plate
 ```
 
-#### 4) Curbing OOM (out-of-memory) errors
+#### D) Curbing OOM (out-of-memory) errors
 
 VRAM blow-ups are normal when the mesh is too fine for the GPU. Try these **in
 order** (cheapest first):
@@ -353,6 +358,15 @@ order** (cheapest first):
 **A. Lower the hardware preset** (fewer cells / smaller VRAM budget):
 
 ```bash
+# Docker:
+docker run --rm --gpus all -e WAAM_BACKEND=cuda -v "$PWD/runs:/app/runs" waam-twin:latest \
+  python scripts/hpc/run_batch.py \
+  --job jobs/examples/bead_on_plate_hires.yaml \
+  --preset standard \
+  --n-steps auto \
+  --out runs/bead_on_plate_hires_std
+
+# venv:
 python scripts/hpc/run_batch.py \
   --job jobs/examples/bead_on_plate_hires.yaml \
   --preset standard \
@@ -912,6 +926,11 @@ when you do run validation; tests own their grids.
 
 ```bash
 python3 -m waam_twin.tools.prediction_report          # fitted vs held-out W/D (+ macro2 slot)
+python3 -m waam_twin.tools.prediction_report --with-bruno  # + Bruno GMAW surface bead
+python3 -m waam_twin.tools.multipass_report \
+  --job jobs/examples/wall_pioneer_m1.yaml            # PIONEER M1 wall + remelt
+python3 -m waam_twin.tools.validation_gate_status     # closed vs open experimental gates
+python3 -m waam_twin.tools.seed_goldak_from_pool --width 7 --depth 3
 python3 -m waam_twin.tools.multipass_report            # twolayer remelt / HAZ extents
 python3 -m waam_twin.tools.recoil_accommodation_sweep # C_acc evidence
 python3 -m waam_twin.tools.fit_calibration --write
@@ -1038,7 +1057,7 @@ Tracked operational docs (in git):
 - [LBM numerics](docs/physics/LBM.md) — lattice units, collision, forcing  
 - [Materials](docs/MATERIALS.md) — YAML schema, placeholder vs calibrated  
 - [Hardware & presets](docs/HARDWARE.md) — backends, VRAM, environment variables  
-- [HPC — production bead runs](docs/HPC.md) — copy-paste GPU shell instructions 
+- [HPC — production bead runs](docs/HPC.md) — Docker + venv copy-paste 
 
 Validation and reference data live in code, not markdown reports:
 

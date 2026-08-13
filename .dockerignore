@@ -1,0 +1,24 @@
+# Exclude bulky / local artifacts from the build context
+.git
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache
+*.egg-info
+runs/
+logs/
+viewer_output/
+cloud_runs/
+run_out/
+jobs/notebook_session/
+.ipynb_checkpoints
+*.vti
+*.vtp
+*.pvd
+*.vtk
+imgui.ini
+.cursor
+docs/archive
