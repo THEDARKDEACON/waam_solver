@@ -3,16 +3,34 @@
 # The image installs Python, Quadrants, and this package. It does not start
 # a job. You get a shell and run the same commands you would on the host.
 #
-# Build (from this directory — the repo root with pyproject.toml):
-#   docker build -t waam-twin:latest .
+# The base image is Ubuntu so the container has its own Python and CUDA
+# userland. The host can be RHEL 9.8; it does not need to match.
 #
-# Open a shell on your working tree. -u keeps files you write owned by you.
+# RHEL 9 ships Podman, not Docker. From this directory (pyproject.toml):
+#   podman build -t waam-twin:latest .
+#   podman run -it --rm --device nvidia.com/gpu=all \
+#     -u "$(id -u):$(id -g)" \
+#     -e WAAM_BACKEND=cuda \
+#     -v "$PWD:/app:Z" \
+#     waam-twin:latest \
+#     bash
+#
+# If the site installed the podman-docker wrapper, `docker build` / `docker run`
+# call Podman. `--gpus all` is that Docker-compatible spelling; Podman itself
+# uses `--device nvidia.com/gpu=all`. Drop `:Z` on an NFS home directory if
+# the relabel fails. A site that only allows Apptainer will not run this
+# directly — build a SIF from the image instead.
+#
+# Docker on a machine that actually has the Docker daemon:
+#   docker build -t waam-twin:latest .
 #   docker run -it --rm --gpus all \
 #     -u "$(id -u):$(id -g)" \
 #     -e WAAM_BACKEND=cuda \
 #     -v "$PWD:/app" \
-#     waam-twin:latest
+#     waam-twin:latest \
+#     bash
 #
+# `bash` is the whole command. Nothing runs until you type it.
 # Inside that shell, for example:
 #   python scripts/hpc/run_batch.py \
 #     --job jobs/examples/bead_on_plate.yaml \
