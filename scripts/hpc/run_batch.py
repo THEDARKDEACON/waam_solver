@@ -75,9 +75,9 @@ def _run_path_with_exports(
             twin._torch_dir_xyz = (dxs / norm, dys / norm, dzs / norm)
 
     def _clamp(x_m: float, y_m: float) -> tuple[float, float]:
-        off = twin._window_offset_x_m
-        cx, cy = clamp_torch_to_domain(x_m - off, y_m, g.nx, g.ny, g.dx)
-        return cx + off, cy
+        ox, oy, _ = twin.window_offset_m()
+        cx, cy = clamp_torch_to_domain(x_m - ox, y_m - oy, g.nx, g.ny, g.dx)
+        return cx + ox, cy + oy
 
     seq_dir = out / "sequence"
     vti_paths: list[str] = []
@@ -107,6 +107,7 @@ def _run_path_with_exports(
             include_surface=True,
             include_tracers=(frame == 0 or frame % 5 == 0),
             job_path=str(job_path),
+            allow_skip=not export_vtk,
         )
         if "volume" in paths:
             vti_paths.append(paths["volume"])
@@ -120,9 +121,7 @@ def _run_path_with_exports(
         if interpass > 0 and seg > prev_seg and prev_seg >= 0:
             park = driver.segment_end(prev_seg)
             px, py, pz = park if park else (x, y, z)
-            for _ in range(interpass):
-                cx, cy = _clamp(px, py)
-                twin.step(cx, cy, is_welding=False, torch_z_m=pz)
+            twin._idle_interpass((px, py, pz), (x, y, z), interpass, _clamp)
         prev_seg = seg
         cx, cy = _clamp(x, y)
         twin.step(cx, cy, is_welding=True, torch_z_m=z)
@@ -194,9 +193,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Skip final research bundle under out/bundle/",
     )
     p.add_argument(
+        "--no-vtk",
+        action="store_true",
+        help="Skip VTK writers (telemetry still written). Implies allow_skip.",
+    )
+    p.add_argument(
         "--headless-vtk-skip",
         action="store_true",
-        help="Set WAAM_HEADLESS=1 (skip all VTK writers)",
+        help="Set WAAM_HEADLESS=1 and skip VTK (same as --no-vtk)",
     )
     args = p.parse_args(argv)
 
@@ -205,7 +209,7 @@ def main(argv: list[str] | None = None) -> int:
     if str(root.parent) not in sys.path and str(root) not in sys.path:
         sys.path.insert(0, str(root.parent))
 
-    if args.headless_vtk_skip:
+    if args.headless_vtk_skip or args.no_vtk:
         os.environ["WAAM_HEADLESS"] = "1"
 
     os.environ.setdefault("WAAM_BACKEND", "cuda")
@@ -287,19 +291,20 @@ def main(argv: list[str] | None = None) -> int:
         f"wall={elapsed:.1f}s"
     )
 
-    if not args.no_bundle and export_vtk:
+    if not args.no_bundle:
         bundle_dir = out / "bundle"
-        paths = twin.export_research_bundle(str(bundle_dir))
+        paths = twin.export_research_bundle(
+            str(bundle_dir), allow_skip=not export_vtk,
+        )
         print(f"[run_batch] wrote research bundle → {bundle_dir}")
-        # One-click ParaView open for the final volume
         if isinstance(paths, dict) and paths.get("volume"):
             final_pvd = out / "final.pvd"
             write_pvd(final_pvd, [paths["volume"]], times_s=[twin._step_n * twin.grid.dt])
             print(f"[run_batch] ParaView (final): open {final_pvd}")
-    elif args.no_bundle:
-        print("[run_batch] skipped final bundle (--no-bundle)")
+        elif not export_vtk:
+            print("[run_batch] VTK writers skipped (--no-vtk / WAAM_HEADLESS=1)")
     else:
-        print("[run_batch] skipped VTK (WAAM_HEADLESS=1)")
+        print("[run_batch] skipped final bundle (--no-bundle)")
 
     if seq_info.get("sequence_pvd"):
         print(f"[run_batch] ParaView (animation): open {seq_info['sequence_pvd']}")

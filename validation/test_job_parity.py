@@ -155,7 +155,7 @@ def run(n_steps: int | None = None, threshold_pct: float | None = None) -> float
         raise AssertionError(f"Job parity delta {err:.1f}% >= {threshold_pct}%")
 
     if os.environ.get("WAAM_PARITY_GPU") == "1":
-        for backend in ("cuda", "vulkan"):
+        for backend in ("cuda", "amdgpu", "vulkan"):
             try:
                 init_taichi(backend=backend)
                 wg, dg, _ = _run_apply_job(min(n_steps, 2000), grid)

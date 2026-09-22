@@ -31,10 +31,12 @@ def build_meta_dict(twin: "WAAMTwin", job_path: str | None = None) -> dict[str, 
         },
         "origin_mm": [
             round(twin._window_offset_x_m * 1000.0, 4),
-            0.0,
-            0.0,
+            round(twin._window_offset_y_m * 1000.0, 4),
+            round(twin._window_offset_z_m * 1000.0, 4),
         ],
         "window_offset_x_mm": telem["window_offset_x_mm"],
+        "window_offset_y_mm": telem.get("window_offset_y_mm", 0.0),
+        "window_offset_z_mm": telem.get("window_offset_z_mm", 0.0),
         "preset": twin.preset_name,
         "plate_thickness_mm": (
             None if getattr(twin, "plate_thickness_mm", None) is None
@@ -59,7 +61,19 @@ def build_meta_dict(twin: "WAAMTwin", job_path: str | None = None) -> dict[str, 
             "T_solidus_K": mat.T_solidus,
             "T_liquidus_K": mat.T_liquidus,
             "rho_kgm3": mat.rho,
+            "role": "wire",
         },
+        "plate_material": (
+            None if not getattr(twin, "plate_mat", None) else {
+                "name": twin.plate_mat.name,
+                "status": twin.plate_mat.status,
+                "T_solidus_K": twin.plate_mat.T_solidus,
+                "T_liquidus_K": twin.plate_mat.T_liquidus,
+                "rho_kgm3": twin.plate_mat.rho,
+                "role": "substrate",
+            }
+        ),
+        "dual_alloy": bool(getattr(twin, "use_dual_alloy", False)),
         "physics_flags": {
             "enable_vof": twin.enable_vof,
             "enable_csf_tension": twin.enable_csf_tension,

@@ -41,13 +41,44 @@ def run(min_delta_Fz: float = 1e-10) -> float:
     forces.apply_arc_pressure(
         g.Fz, g.flags, g.phi,
         g.nx // 2, j, k, twin.sigma_cells,
-        twin.arc_pressure, g.dt, g.dx, twin.mat.rho,
+        twin.arc_pressure, g.dt, g.dx, g.alloy_frac, twin.mat.rho, twin.mat.rho,
         g.FLAG_SOLID, g.FLAG_GAS,
     )
     delta = float((g.Fz.to_numpy() - Fz_before)[:, j, k].min())
     print(f"[arc_pressure] min ΔFz = {delta:.3e}  (expect < 0)")
     if delta > -min_delta_Fz:
         raise AssertionError("Arc pressure did not deflect free surface downward")
+
+    # Surface load: r² is in-plane only, so shifting arc_k must not change Fz
+    # at a fixed interface cell (same convention as recoil).
+    i_arc = g.nx // 2
+    forces.clear_forces(g.Fx, g.Fy, g.Fz)
+    forces.apply_arc_pressure(
+        g.Fz, g.flags, g.phi,
+        float(i_arc), float(j), float(k), twin.sigma_cells,
+        twin.arc_pressure, g.dt, g.dx, g.alloy_frac, twin.mat.rho, twin.mat.rho,
+        g.FLAG_SOLID, g.FLAG_GAS,
+    )
+    F_at = float(g.Fz.to_numpy()[i_arc, j, k])
+    forces.clear_forces(g.Fx, g.Fy, g.Fz)
+    forces.apply_arc_pressure(
+        g.Fz, g.flags, g.phi,
+        float(i_arc), float(j), float(k) + 8.0, twin.sigma_cells,
+        twin.arc_pressure, g.dt, g.dx, g.alloy_frac, twin.mat.rho, twin.mat.rho,
+        g.FLAG_SOLID, g.FLAG_GAS,
+    )
+    F_shifted = float(g.Fz.to_numpy()[i_arc, j, k])
+    print(
+        f"[arc_pressure] Fz(arc_k=k)={F_at:.3e}  Fz(arc_k=k+8)={F_shifted:.3e}  "
+        "(expect equal; in-plane r²)"
+    )
+    if F_at >= 0.0:
+        raise AssertionError("Arc pressure at torch axis must be downward")
+    rel = abs(F_at - F_shifted) / max(abs(F_at), 1e-30)
+    if rel > 1e-5:
+        raise AssertionError(
+            f"Arc pressure must not smear in z (at={F_at}, shifted={F_shifted}, rel={rel})"
+        )
 
     # Lin–Eagar: doubling I → 4× peak pressure
     twin.arc_pressure_model = "lin_eagar"

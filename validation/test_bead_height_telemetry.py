@@ -25,6 +25,7 @@ def run() -> None:
         max_tracers=20,
     )
     apply_job_to_twin(twin, job)
+    twin.strict_mode = False  # reduced grid; calibrate strict_mode is gated elsewhere
     twin.apply_plate_geometry(plate_thickness_mm=5.0, plate_size_mm=None)
     twin.reset()
     h0 = twin.get_telemetry()["bead_height_mm"]

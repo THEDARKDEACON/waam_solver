@@ -1,0 +1,20 @@
+# Lock M4: material tables longer than MAX_KNOTS=8 warn (strict_mode raises).
+name: lock_table_knots
+simulation:
+  preset: minimal
+  backend: cpu
+  physics_tier: thermal
+  domain_mm: [16, 12, 10]
+  dx_mm: 1.0
+  strict_mode: false
+plate:
+  thickness_mm: 4.0
+  size_mm: [12, 8]
+material: materials/placeholders/lock_too_many_knots.yaml
+process:
+  current_A: 80
+  voltage_V: 15
+  T_ambient_K: 300
+model_reference:
+  n_knots_src: 9
+  n_knots_gpu: 8

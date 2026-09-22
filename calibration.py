@@ -41,6 +41,7 @@ def apply_calibration(twin, cal: CalibrationProfile) -> None:
         twin.eta = cal.arc_efficiency
     if cal.heat_loss_factor != 1.0:
         twin.h_conv *= cal.heat_loss_factor
+        twin.eps_rad *= cal.heat_loss_factor
     if cal.marangoni_scale != 1.0:
         twin.marangoni_scale = cal.marangoni_scale
     if cal.arc_sigma_scale != 1.0:

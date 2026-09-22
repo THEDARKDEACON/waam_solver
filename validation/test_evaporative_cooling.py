@@ -9,6 +9,7 @@ import sys
 import numpy as np
 
 from waam_twin import WAAMTwin
+from waam_twin.physics import weld_forces
 from waam_twin.runtime import init_taichi
 
 
@@ -69,6 +70,25 @@ def run() -> float:
     )
     if removed <= 0.0 and float(telem.get("evap_energy_J_step", 0.0)) <= 0.0:
         raise AssertionError("Evaporative sink did not remove enthalpy")
+
+    # Job override T_recoil_onset_K must also gate evaporative cooling.
+    twin.T_recoil_onset_K = 5000.0
+    if weld_forces.recoil_onset_K(twin) != 5000.0:
+        raise AssertionError("recoil_onset_K ignored T_recoil_onset_K")
+    T = g.T.to_numpy()
+    H = g.H.to_numpy()
+    T[i0, j0, k0] = 3150.0
+    H[i0, j0, k0] = twin.H_liq + twin.cp_rho * (3150.0 - twin.mat.T_liquidus)
+    g.T.from_numpy(T)
+    g.H.from_numpy(H)
+    twin.step(i0 * g.dx, j0 * g.dx, is_welding=False)
+    gated = float(twin.get_telemetry().get("evap_energy_J_step", 0.0))
+    print(f"[evaporative_cooling] gated_by_onset_override evap_step={gated:.4e}J")
+    if gated != 0.0:
+        raise AssertionError(
+            "evaporative cooling must honor T_recoil_onset_K "
+            f"(got evap_energy_J_step={gated})"
+        )
     return removed
 
 

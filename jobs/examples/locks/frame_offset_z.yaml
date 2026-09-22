@@ -1,0 +1,22 @@
+# Lock M4: sim_origin_offset_m.z is subtracted from torch_z_m in WAAMTwin.step.
+name: lock_frame_offset_z
+simulation:
+  preset: minimal
+  backend: cpu
+  physics_tier: thermal
+  domain_mm: [16, 12, 14]
+  dx_mm: 1.0
+  use_torch_z: true
+plate:
+  thickness_mm: 4.0
+  size_mm: [12, 8]
+material: materials/placeholders/ER70S-6.yaml
+frame: jobs/examples/locks/frame_z.yaml
+process:
+  current_A: 80
+  voltage_V: 15
+  T_ambient_K: 300
+  ctwd_mm: 15.0
+model_reference:
+  offset_z_m: 0.002
+  torch_z_m: 0.004

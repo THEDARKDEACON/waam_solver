@@ -4,7 +4,7 @@ test_viewer_flow_arrows.py — Flow arrow extraction produces visible segments.
 
 from __future__ import annotations
 
-import taichi as ti
+from waam_twin.compiler import ti
 
 from waam_twin import WAAMTwin
 from waam_twin.runtime import init_taichi
@@ -40,7 +40,7 @@ def run(min_arrows: int = 1) -> None:
         1,
         g.FLAG_GAS, g.FLAG_SOLID,
         filt, 1, max_arrows,
-        0, 0, g.ny, g.nz,
+        0, 0, 0, g.nx, g.ny, g.nz,
     )
     n = int(count[None])
     print(f"[viewer_flow_arrows] arrows={n}")

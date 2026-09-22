@@ -16,6 +16,7 @@ from waam_twin.runtime import init_taichi
 
 def run() -> None:
     os.environ.pop("WAAM_HEADLESS", None)
+    os.environ["WAAM_ALLOW_ABSOLUTE_PATHS"] = "1"
     init_taichi(backend="cpu")
     twin = WAAMTwin(nx=18, ny=10, nz=10, dx=3e-4, max_tracers=8, enable_vof=True)
     twin.reset()

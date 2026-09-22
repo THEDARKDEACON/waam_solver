@@ -19,7 +19,7 @@ def _apply(twin, g, i, j, k, C_acc: float, T_onset: float) -> float:
         twin.P_vapor_ref_Pa, twin.T_boiling_K, T_onset,
         twin.L_vapor_J_kg, twin.R_spec_vapor_J_kgK,
         C_acc,
-        g.dt, g.dx, twin.mat.rho,
+        g.dt, g.dx, g.alloy_frac, twin.mat.rho, twin.mat.rho,
         g.FLAG_SOLID, g.FLAG_GAS,
     )
     return float(g.Fz.to_numpy()[i, j, k])

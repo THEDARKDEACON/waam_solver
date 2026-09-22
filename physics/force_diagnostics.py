@@ -74,38 +74,41 @@ def sample_force_diagnostics(twin: "WAAMTwin") -> dict[str, float]:
             )
         )
 
-    if twin.use_material_tables:
-        out["f_marangoni_max"] = _measure(
-            lambda: forces.compute_marangoni_force_variable(
-                g.T, g.phi, g.f_l, g.Fx, g.Fy, g.Fz, g.flags,
-                g.dgamma_lu_field,
-                g.FLAG_SOLID, g.FLAG_GAS, g.nx, g.ny, g.nz,
+    if getattr(twin, "enable_marangoni", True):
+        if twin.use_material_tables:
+            out["f_marangoni_max"] = _measure(
+                lambda: forces.compute_marangoni_force_variable(
+                    g.T, g.phi, g.f_l, g.Fx, g.Fy, g.Fz, g.flags,
+                    g.dgamma_lu_field,
+                    g.FLAG_SOLID, g.FLAG_GAS, g.nx, g.ny, g.nz,
+                )
             )
-        )
-    else:
-        out["f_marangoni_max"] = _measure(
-            lambda: forces.compute_marangoni_force(
-                g.T, g.phi, g.f_l, g.Fx, g.Fy, g.Fz, g.flags,
-                twin.dgamma_dT_lu, g.dx,
-                g.FLAG_SOLID, g.FLAG_GAS, g.nx, g.ny, g.nz,
+        else:
+            out["f_marangoni_max"] = _measure(
+                lambda: forces.compute_marangoni_force(
+                    g.T, g.phi, g.f_l, g.Fx, g.Fy, g.Fz, g.flags,
+                    twin.dgamma_dT_lu, g.dx,
+                    g.FLAG_SOLID, g.FLAG_GAS, g.nx, g.ny, g.nz,
+                )
             )
-        )
 
     if twin.enable_gas_shear:
         out["f_gas_shear_max"] = _measure(
             lambda: weld_forces.apply_gas_shear(twin, g, arc_i, arc_j, arc_k)
         )
 
-    p_arc = weld_forces.arc_pressure_peak_pa(twin)
-    sig = weld_forces.arc_pressure_sigma_cells(twin)
-    out["f_arc_max"] = _measure(
-        lambda: forces.apply_arc_pressure(
-            g.Fz, g.flags, g.phi,
-            arc_i, arc_j, arc_k, sig,
-            p_arc, g.dt, g.dx, twin.mat.rho,
-            g.FLAG_SOLID, g.FLAG_GAS,
+    if getattr(twin, "enable_arc_pressure", True):
+        p_arc = weld_forces.arc_pressure_peak_pa(twin)
+        sig = weld_forces.arc_pressure_sigma_cells(twin)
+        alloy_id, rho_w, rho_p = weld_forces.alloy_rho_args(twin)
+        out["f_arc_max"] = _measure(
+            lambda: forces.apply_arc_pressure(
+                g.Fz, g.flags, g.phi,
+                arc_i, arc_j, arc_k, sig,
+                p_arc, g.dt, g.dx, alloy_id, rho_w, rho_p,
+                g.FLAG_SOLID, g.FLAG_GAS,
+            )
         )
-    )
 
     if twin.enable_recoil:
         out["f_recoil_max"] = _measure(
@@ -120,13 +123,14 @@ def sample_force_diagnostics(twin: "WAAMTwin") -> dict[str, float]:
             )
         )
 
-    out["f_buoyancy_max"] = _measure(
-        lambda: forces.add_buoyancy(
-            g.T, g.Fz, g.f_l, g.flags,
-            twin.g_lu, twin.beta_T, twin.mat.T_liquidus, 1.0,
-            g.FLAG_SOLID, g.FLAG_GAS,
+    if getattr(twin, "enable_buoyancy", True):
+        out["f_buoyancy_max"] = _measure(
+            lambda: forces.add_buoyancy(
+                g.T, g.Fz, g.f_l, g.flags,
+                twin.g_lu, twin.beta_T, twin.mat.T_liquidus, 1.0,
+                g.FLAG_SOLID, g.FLAG_GAS,
+            )
         )
-    )
 
     if twin.enable_lorentz:
         out["f_lorentz_max"] = _measure(

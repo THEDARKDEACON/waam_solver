@@ -5,7 +5,7 @@ test_viewer_streamlines.py — Streamline tracing + GPU buffer upload path.
 from __future__ import annotations
 
 import numpy as np
-import taichi as ti
+from waam_twin.compiler import ti
 
 from waam_twin.runtime import init_taichi
 from waam_twin.viewer.streamlines import (

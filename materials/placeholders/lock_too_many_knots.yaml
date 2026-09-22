@@ -1,0 +1,31 @@
+# Lock M4: 9 cp knots → GPU upload truncates to MAX_KNOTS=8 (warn; strict raises).
+name: lock-too-many-knots
+status: placeholder
+source: "Audit lock — not a real alloy"
+notes: Nine cp knots so gpu_tables.truncated is true.
+
+constants:
+  k: 30.0
+  rho: 7000.0
+  cp: 680.0
+  alpha: 6.3e-6
+  T_solidus: 1748.0
+  T_liquidus: 1793.0
+  L_fusion: 272000.0
+  gamma_0: 1.8
+  dgamma_dT: -4.3e-4
+  T_ref_gamma: 1793.0
+  mu: 0.0065
+  beta_T: 1.2e-4
+
+tables:
+  cp:
+    - [300.0, 480.0]
+    - [500.0, 520.0]
+    - [700.0, 560.0]
+    - [900.0, 600.0]
+    - [1100.0, 640.0]
+    - [1300.0, 680.0]
+    - [1500.0, 720.0]
+    - [1700.0, 760.0]
+    - [1900.0, 800.0]

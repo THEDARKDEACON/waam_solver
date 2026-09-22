@@ -4,7 +4,7 @@ test_viewer_extract.py — Viewer Taichi kernels compile and run after init.
 
 from __future__ import annotations
 
-import taichi as ti
+from waam_twin.compiler import ti
 
 from waam_twin import WAAMTwin
 from waam_twin.runtime import init_taichi

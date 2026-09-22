@@ -1,0 +1,25 @@
+# Lock M11: calibration heat_loss_factor scales h_conv and eps_rad.
+name: lock_heat_loss_factor
+simulation:
+  preset: minimal
+  backend: cpu
+  physics_tier: thermal
+  domain_mm: [16, 12, 10]
+  dx_mm: 1.0
+plate:
+  thickness_mm: 4.0
+  size_mm: [12, 8]
+material: materials/placeholders/ER70S-6.yaml
+calibration: materials/calibration/lock_heat_loss_factor.yaml
+process:
+  current_A: 80
+  voltage_V: 15
+  T_ambient_K: 300
+heat_loss:
+  convection: true
+  radiation: true
+  h_conv: 25.0
+  eps_rad: 0.3
+model_reference:
+  h_conv: 50.0
+  eps_rad: 0.6

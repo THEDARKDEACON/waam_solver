@@ -42,7 +42,8 @@ def _fmt(m: dict) -> str:
         err_s = "  (prediction-only)"
     return (
         f"I={m['current_A']:.0f}A  V={m['voltage_V']:.0f}V  v={m['travel_mm_s']:.1f}mm/s  "
-        f"Q={m['Q_w_W']:.0f}W  η={m['eta']:.2f}  C_acc={m['recoil_accommodation']:.2f}\n"
+        f"Q={m['Q_w_W']:.0f}W  η={m['eta']:.2f}  C_acc={m['recoil_accommodation']:.2f}  "
+        f"evap_scale={m.get('evap_cooling_scale', 25):.1f}\n"
         f"  W={m['pool_width_mm']:.2f}  D={m['pool_depth_mm']:.2f} mm  "
         f"h={m['bead_height_mm']:.2f}  T={m['peak_temp_C']:.0f}C  "
         f"n_cap={m['n_cap']}  f_recoil={m['f_recoil_max']:.2e}"

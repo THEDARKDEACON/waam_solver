@@ -1,4 +1,4 @@
-"""Interactive melt-pool viewer (Taichi GGUI)."""
+"""Interactive melt-pool viewer (PyVista)."""
 
 __all__ = ["main", "run"]
 

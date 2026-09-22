@@ -1,0 +1,23 @@
+# Lock H1: reset() zeros window offset, evap energy, overflow warn, Lorentz counts.
+name: lock_reset_ledgers
+simulation:
+  preset: minimal
+  backend: cpu
+  physics_tier: flow
+  domain_mm: [16, 12, 12]
+  dx_mm: 1.0
+  enable_moving_window: true
+  enable_evaporative_cooling: true
+  enable_lorentz: false
+  enable_recoil: false
+plate:
+  thickness_mm: 4.0
+  size_mm: [12, 8]
+material: materials/placeholders/ER70S-6.yaml
+process:
+  current_A: 80
+  voltage_V: 15
+  T_ambient_K: 300
+model_reference:
+  window_offset_x_m: 0.004
+  evap_energy_J_cum: 12.5

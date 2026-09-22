@@ -123,7 +123,9 @@ def main() -> int:
         "  - heldout_macro2: need ER70S-6 macro at 5 mm/s (or change slot process to match a coupon)\n"
         "  - twolayer_calibrate: need remelt/HAZ at calibrate process (100 A / 6.5 mm/s)\n"
         "  - crown_fh30: need FH-30 coupon + promote material placeholder → validated\n"
-        "  - GPU: prediction_report --with-bruno ; multipass_report --job wall_pioneer_m1.yaml"
+        "  - GPU: prediction_report --with-bruno ; multipass_report --job wall_pioneer_m1.yaml\n"
+        "  - Do not retune Goldak / η / evap_cooling_scale / C_acc — held-out jobs lock them.\n"
+        "    Tighten pool tripwires with WAAM_POOL_GATE_PCT instead."
     )
 
     out = Path("docs/validation/data/gate_status_latest.json")

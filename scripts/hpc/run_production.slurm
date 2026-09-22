@@ -33,7 +33,7 @@ OUT="${WAAM_OUT:-runs/prod_${SLURM_JOB_ID:-manual}}"
 
 echo "[slurm] job=$JOB  preset=$PRESET  out=$OUT"
 nvidia-smi || true
-python -c "import taichi as ti; ti.init(arch=ti.cuda); print('taichi arch=', ti.cfg.arch)"
+python -c "from waam_twin.compiler import ti; ti.init(arch=ti.cuda); print('quadrants arch=', ti.cfg.arch)"
 
 # --n-steps auto covers the full torch path (do not under-size like notebook N_STEPS).
 python scripts/hpc/run_batch.py \

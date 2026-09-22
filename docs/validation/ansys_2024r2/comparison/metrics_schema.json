@@ -1,0 +1,39 @@
+{
+  "$schema_note": "Shared metric envelope for Ansys Tier A and waam_twin compare",
+  "required": ["code", "macro"],
+  "properties": {
+    "code": {"type": "string", "examples": ["ansys_mechanical_2024r2", "waam_twin"]},
+    "tier": {"type": "string"},
+    "source_job": {"type": "string"},
+    "time_s": {"type": "number"},
+    "macro": {
+      "type": "object",
+      "required": ["pool_width_mm", "pool_depth_mm"],
+      "properties": {
+        "pool_width_mm": {"type": "number"},
+        "pool_depth_mm": {"type": "number"},
+        "bead_height_mm": {"type": "number", "description": "Twin only; omit for Ansys Tier A"},
+        "definition": {"type": "string"},
+        "peak_temp_C": {"type": "number"}
+      }
+    },
+    "micro": {
+      "type": "object",
+      "properties": {
+        "probe_peak_temp_C": {"type": ["number", "null"]},
+        "t85_s": {"type": ["number", "null"]},
+        "time_above_800C_s": {"type": ["number", "null"]},
+        "time_above_1100C_s": {"type": ["number", "null"]}
+      }
+    },
+    "experiment": {
+      "type": "object",
+      "description": "Optional macrograph / TC ground truth",
+      "properties": {
+        "pool_width_mm": {"type": "number"},
+        "pool_depth_mm": {"type": "number"},
+        "source": {"type": "string"}
+      }
+    }
+  }
+}

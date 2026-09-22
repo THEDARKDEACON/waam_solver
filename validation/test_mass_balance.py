@@ -25,6 +25,7 @@ def run(tolerance: float = 0.35, n_steps: int = 8000) -> float:
         max_tracers=20,
     )
     apply_job_to_twin(twin, job)
+    twin.strict_mode = False  # this test uses a reduced grid + ±35% wire-mass band
     twin.apply_plate_geometry(plate_thickness_mm=4.0, plate_size_mm=None)
     twin.reset()
     g = twin.grid
@@ -41,6 +42,7 @@ def run(tolerance: float = 0.35, n_steps: int = 8000) -> float:
     ratio = telem["mass_balance_ratio"]
     print(
         f"[mass_balance] deposited={telem['deposited_mass_g']:.4f}g  "
+        f"expected_wire={telem['expected_wire_mass_g']:.4f}g  "
         f"expected_drops={telem['expected_drop_mass_g']:.4f}g  "
         f"n_drops={telem['n_droplets_fired']}  overflow={telem.get('deposition_overflow_count', 0)}  "
         f"ratio={ratio:.3f}  nz_solid={twin.nz_solid}/{g.nz}"
@@ -50,7 +52,17 @@ def run(tolerance: float = 0.35, n_steps: int = 8000) -> float:
     if telem["deposited_mass_g"] <= 0:
         raise AssertionError("No metal deposited — droplet schedule may not have fired")
     if ratio < 1.0 - tolerance or ratio > 1.0 + tolerance:
-        raise AssertionError(f"Mass balance ratio {ratio:.3f} outside ±{tolerance}")
+        raise AssertionError(
+            f"Mass balance ratio {ratio:.3f} (deposited / ṁ·t_weld) outside ±{tolerance}"
+        )
+    drop_g = float(telem["expected_drop_mass_g"])
+    if drop_g > 1e-9:
+        drop_ratio = float(telem["deposited_mass_g"]) / drop_g
+        if drop_ratio < 0.4 or drop_ratio > 2.5:
+            raise AssertionError(
+                f"Drop-count diagnostic ratio {drop_ratio:.3f} wildly off "
+                f"(deposited vs n×instantaneous drop mass)"
+            )
 
     # Arc-off dwell must not inflate the expected-wire ledger (HUD "wire" mass).
     wire_on = float(telem["expected_wire_mass_g"])

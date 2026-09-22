@@ -1,0 +1,19 @@
+# Local Workbench projects and result files (do not commit)
+*.wbpj
+*.wbpj.lock
+*.wbpz
+*.rst
+*.rth
+*.db
+*.dbb
+*.mode
+*.err
+*.log
+*.out
+*.mntr
+*.DSP
+*.page
+*.bat
+*_files/
+*.csv
+!../comparison/*.json

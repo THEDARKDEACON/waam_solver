@@ -17,6 +17,12 @@ def run() -> None:
     twin = WAAMTwin(nx=16, ny=12, nz=12, dx=3e-4, max_tracers=5, welding_current_A=180.0)
     twin.reset()
 
+    apply_physics_tier(twin, "thermal")
+    if twin.enable_marangoni or twin.enable_buoyancy or twin.enable_arc_pressure:
+        raise AssertionError("physics_tier=thermal must disable Marangoni, buoyancy, arc pressure")
+    if twin.enable_vof or twin.enable_lorentz:
+        raise AssertionError("physics_tier=thermal must disable VOF and Lorentz")
+
     apply_physics_tier(twin, "full")
     if not twin.enable_lorentz:
         raise AssertionError("physics_tier=full must enable Lorentz")

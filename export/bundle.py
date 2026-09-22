@@ -42,6 +42,7 @@ def export_research_bundle(
     include_sidecar: bool = True,
     crop_liquid: bool = False,
     job_path: str | None = None,
+    allow_skip: bool | None = None,
 ) -> dict[str, str]:
     """Write a complete research snapshot to *out_dir*."""
     from ..paths import resolve_output_path
@@ -53,19 +54,22 @@ def export_research_bundle(
     paths: dict[str, str] = {}
 
     vol_path = out_dir / f"volume_{step_tag}.vti"
-    p = export_volume(twin, str(vol_path), tiers=tier_tuple, crop_liquid=crop_liquid)
+    p = export_volume(
+        twin, str(vol_path), tiers=tier_tuple, crop_liquid=crop_liquid,
+        allow_skip=allow_skip,
+    )
     if p:
         paths["volume"] = p
 
     if include_surface and twin.enable_vof:
         surf_path = out_dir / f"surface_{step_tag}.vtp"
-        p = export_surface(twin, str(surf_path))
+        p = export_surface(twin, str(surf_path), allow_skip=allow_skip)
         if p:
             paths["surface"] = p
 
     if include_tracers:
         tr_path = out_dir / f"tracers_{step_tag}.vtp"
-        p = export_tracers(twin, str(tr_path))
+        p = export_tracers(twin, str(tr_path), allow_skip=allow_skip)
         if p:
             paths["tracers"] = p
 

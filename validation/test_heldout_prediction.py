@@ -2,7 +2,7 @@
 test_heldout_prediction.py — Physics lock + held-out trend / macrograph gates.
 
 1. Always: held-out YAMLs must not retune Goldak/η/recoil vs bead_calibrate.
-2. Under WAAM_HELDOUT_VALIDATION=1 (or FULL wrapper): run baseline + held-outs,
+2. Under WAAM_HELDOUT_VALIDATION=1: run baseline + held-outs,
    assert directional trends, and absolute macrograph error when reference is filled.
 """
 

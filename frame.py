@@ -20,12 +20,22 @@ class WeldFrame:
 
 
 def load_weld_frame(path: str | None = None) -> WeldFrame:
-    """Load frame YAML or fall back to WAAM_FRAME env / default weld_table."""
+    """Load frame YAML or fall back to WAAM_FRAME env / default weld_table.
+
+    An explicit ``path`` or ``WAAM_FRAME`` that does not exist raises.
+    The implicit default file missing still returns ``WeldFrame()``.
+    """
     from .paths import resolve_project_path
 
-    ref = path or os.environ.get("WAAM_FRAME", "jobs/frames/weld_table.yaml")
+    env = os.environ.get("WAAM_FRAME")
+    explicit = path is not None or (env is not None and str(env).strip() != "")
+    ref = path or env or "jobs/frames/weld_table.yaml"
     p = resolve_project_path(ref)
     if not p.exists():
+        if explicit:
+            raise FileNotFoundError(
+                f"Weld frame file not found: {p} (ref={ref!r})"
+            )
         return WeldFrame()
     try:
         import yaml
@@ -55,9 +65,10 @@ def apply_frame_to_twin(twin, frame: WeldFrame) -> None:
     twin.weld_frame = frame
     twin.frame_origin_mm = frame.origin_mm
     twin.substrate_z_m = frame.substrate_z_m
-    ox, oy, _ = frame.sim_origin_offset_m
+    ox, oy, oz = frame.sim_origin_offset_m
     twin._sim_origin_offset_x_m = ox
     twin._sim_origin_offset_y_m = oy
+    twin._sim_origin_offset_z_m = oz
 
 
 def apply_frame_from_job(twin, job: dict[str, Any]) -> None:

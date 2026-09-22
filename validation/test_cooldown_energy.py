@@ -8,6 +8,7 @@ Catches two regressions that made liquid lifetime look unrealistically long:
 
 from __future__ import annotations
 
+import os
 import numpy as np
 import yaml
 from pathlib import Path
@@ -74,6 +75,7 @@ def _metrics(twin: WAAMTwin):
 
 
 def run() -> None:
+    os.environ["WAAM_ALLOW_ABSOLUTE_PATHS"] = "1"
     reset_taichi()
     init_taichi(backend="cpu")
 

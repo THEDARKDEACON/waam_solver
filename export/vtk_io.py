@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Sequence
 import numpy as np
 
 from .. import kernels
+from .. import logging_util as log
 
 if TYPE_CHECKING:
     from ..twin import WAAMTwin
@@ -30,11 +31,16 @@ def _headless() -> bool:
     return os.environ.get("WAAM_HEADLESS") == "1"
 
 
-def _require_pyvista():
+def _require_pyvista(*, allow_skip: bool = False):
     try:
         import pyvista as pv  # noqa: F401
     except ImportError:
-        return None
+        if allow_skip:
+            return None
+        raise ImportError(
+            "pyvista is required for VTK export. Install with: pip install pyvista "
+            "or pass allow_skip=True / --no-vtk for headless skip."
+        ) from None
     import pyvista as pv
     return pv
 
@@ -54,7 +60,11 @@ def _image_grid(twin: "WAAMTwin"):
     grid_pv = pv.ImageData()
     grid_pv.dimensions = (g.nx + 1, g.ny + 1, g.nz + 1)
     grid_pv.spacing = (g.dx * 1000.0,) * 3
-    grid_pv.origin = (twin._window_offset_x_m * 1000.0, 0.0, 0.0)
+    grid_pv.origin = (
+        twin._window_offset_x_m * 1000.0,
+        twin._window_offset_y_m * 1000.0,
+        twin._window_offset_z_m * 1000.0,
+    )
     return pv, grid_pv
 
 
@@ -82,12 +92,15 @@ def export_volume(
     path: str,
     tiers: Sequence[int] = (TIER_CORE, TIER_DERIVED),
     crop_liquid: bool = False,
+    *,
+    allow_skip: bool | None = None,
 ) -> str | None:
-    if _headless():
+    skip = bool(allow_skip) if allow_skip is not None else False
+    if skip and _headless():
         return None
-    pv = _require_pyvista()
+    pv = _require_pyvista(allow_skip=skip)
     if pv is None:
-        print("[export] pyvista not installed. Skipping volume VTK.")
+        log.warning("[export] pyvista not installed. Skipping volume VTK.")
         return None
 
     g = twin.grid
@@ -112,6 +125,8 @@ def export_volume(
         grid_pv.cell_data["Liquid_Fraction"] = fl_np.ravel(order="F")
         grid_pv.cell_data["VOF_phi"] = g.phi.to_numpy().ravel(order="F")
         grid_pv.cell_data["Cell_Flags"] = g.flags.to_numpy().ravel(order="F")
+        grid_pv.cell_data["Alloy_id"] = g.alloy_id.to_numpy().ravel(order="F")
+        grid_pv.cell_data["Alloy_frac"] = g.alloy_frac.to_numpy().ravel(order="F")
         grid_pv.cell_data["T_max_K"] = g.T_max.to_numpy().ravel(order="F")
         grid_pv.cell_data["T_prev_K"] = g.T_prev.to_numpy().ravel(order="F")
         # dT_dt is (T − T_prev)/dt, i.e. positive while HEATING. The cooling
@@ -173,7 +188,7 @@ def export_volume(
     out = vtk_imagedata_path(path)
     pathlib.Path(out).parent.mkdir(parents=True, exist_ok=True)
     grid_pv.save(out)
-    print(f"[export] Volume VTK → {out}  ({len(grid_pv.cell_data)} arrays)")
+    log.info(f"[export] Volume VTK → {out}  ({len(grid_pv.cell_data)} arrays)")
     return out
 
 
@@ -181,12 +196,15 @@ def export_surface(
     twin: "WAAMTwin",
     path: str,
     include_kappa: bool = True,
+    *,
+    allow_skip: bool | None = None,
 ) -> str | None:
-    if _headless():
+    skip = bool(allow_skip) if allow_skip is not None else False
+    if skip and _headless():
         return None
-    pv = _require_pyvista()
+    pv = _require_pyvista(allow_skip=skip)
     if pv is None:
-        print("[export] pyvista not installed. Skipping surface VTK.")
+        log.warning("[export] pyvista not installed. Skipping surface VTK.")
         return None
 
     g = twin.grid
@@ -223,19 +241,25 @@ def export_surface(
             surf = candidate
             break
     if surf is None or surf.n_cells == 0:
-        print("[export] No φ/f_l=0.5 surface found; skipping surface VTK.")
+        log.warning("[export] No φ/f_l=0.5 surface found; skipping surface VTK.")
         return None
 
     pathlib.Path(path).parent.mkdir(parents=True, exist_ok=True)
     surf.save(path)
-    print(f"[export] Surface VTK → {path}  ({surf.n_cells} cells)")
+    log.info(f"[export] Surface VTK → {path}  ({surf.n_cells} cells)")
     return path
 
 
-def export_tracers(twin: "WAAMTwin", path: str) -> str | None:
-    if _headless():
+def export_tracers(
+    twin: "WAAMTwin",
+    path: str,
+    *,
+    allow_skip: bool | None = None,
+) -> str | None:
+    skip = bool(allow_skip) if allow_skip is not None else False
+    if skip and _headless():
         return None
-    pv = _require_pyvista()
+    pv = _require_pyvista(allow_skip=skip)
     if pv is None:
         return None
 
@@ -244,12 +268,16 @@ def export_tracers(twin: "WAAMTwin", path: str) -> str | None:
     active = g.porosity_active.to_numpy()
     mask = active > 0
     if not mask.any():
-        print("[export] No active tracers; skipping tracer VTK.")
+        log.warning("[export] No active tracers; skipping tracer VTK.")
         return None
 
     ox = twin._window_offset_x_m
+    oy = twin._window_offset_y_m
+    oz = twin._window_offset_z_m
     pts = pos[mask].copy()
     pts[:, 0] += ox
+    pts[:, 1] += oy
+    pts[:, 2] += oz
     pts *= 1000.0  # mm
 
     cloud = pv.PolyData(pts)
@@ -258,7 +286,7 @@ def export_tracers(twin: "WAAMTwin", path: str) -> str | None:
 
     pathlib.Path(path).parent.mkdir(parents=True, exist_ok=True)
     cloud.save(path)
-    print(f"[export] Tracers VTK → {path}  ({cloud.n_points} points)")
+    log.info(f"[export] Tracers VTK → {path}  ({cloud.n_points} points)")
     return path
 
 

@@ -123,8 +123,9 @@ def _run_case(case: AblationCase, n_steps: int, dx: float) -> dict[str, Any]:
         travel_speed_m_s=0.005,
         droplet_freq_hz=40.0,
         max_tracers=20,
-        lorentz_jacobi_iters=80,
+        lorentz_jacobi_iters=400,
     )
+    twin.lorentz_jacobi_tol = 1e-3
     twin.wire_feed_m_s = 0.5 / 60.0
     _configure(twin, case)
     twin.reset()

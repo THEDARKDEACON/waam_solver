@@ -69,6 +69,7 @@ def run() -> None:
         welding_current_A=180.0,
         lorentz_jacobi_iters=40,
     )
+    twin3.lorentz_jacobi_cold_iters = 1200
     twin3.wire_feed_m_s = 8.0 / 60.0
     twin3.reset()
     g3 = twin3.grid

@@ -15,9 +15,12 @@ from waam_twin import WAAMTwin
 from waam_twin.benchmark import measure_pool_mm, pool_error_pct
 from waam_twin.job import load_job_config
 from waam_twin.validation.bead_helpers import plan_linear_bead_run, run_bead_travel
+from waam_twin.validation.gate_thresholds import process_gate_pct
 
 
-def run(n_steps: int | None = None, threshold_pct: float = 25.0) -> float:
+def run(n_steps: int | None = None, threshold_pct: float | None = None) -> float:
+    if threshold_pct is None:
+        threshold_pct = process_gate_pct(25.0)
     init_taichi(backend=os.environ.get("WAAM_BACKEND", "cuda"))
     job_path = "jobs/examples/bead_calibrate.yaml"
     job = load_job_config(job_path)

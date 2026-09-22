@@ -100,6 +100,29 @@ material: materials/validated/ER70S-6.v1.yaml
 calibration: materials/calibration/ER70S-6.bead_on_plate.yaml
 ```
 
+## Wire vs plate (dissimilar coupon)
+
+Top-level `material:` is the **wire / deposit**. Optional `plate.material:` is the **substrate**. Omit it (or set the same alloy) and the solver stays on the single-alloy path — `bead_calibrate.yaml` is unchanged.
+
+```yaml
+material: materials/placeholders/ER70S-6.yaml          # wire
+plate:
+  thickness_mm: 10.0
+  size_mm: [50, 50]
+  material: materials/validated/SS316L.v1.yaml         # substrate
+```
+
+Plate cells are tagged at init (`alloy_id=1`, `alloy_frac=1`) and keep that birth
+tag when they melt. Gas→metal deposit is wire (`alloy_id=0`, `alloy_frac=0`).
+Set `simulation.enable_alloy_mixing: true` to Jacobi-average `alloy_frac` among
+neighbouring liquid cells (dilution). Birth `alloy_id` is unchanged; properties
+lerp on `alloy_frac`. Mixing is **off** by default so the ER70S-6 calibrate lock
+is unchanged.
+
+Thermal `k`, `cp`, melting range, and latent heat are per cell. LBM still uses lattice density 1; hydrodynamic `force_scale` for the pool is the wire density. VTK `Alloy_id` is 0=wire, 1=plate.
+
+See `jobs/examples/bead_dissimilar_ss316l_plate.yaml`.
+
 ## Promotion workflow (placeholder → calibrated)
 
 1. **Copy** `materials/placeholders/<alloy>.yaml` → `materials/validated/<alloy>.v1.yaml`.

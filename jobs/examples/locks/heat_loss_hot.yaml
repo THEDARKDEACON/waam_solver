@@ -1,0 +1,31 @@
+# Lock H1: heat-loss uses cell T (capped at T_vapor_cap_K), not a 2500 K floor.
+name: lock_heat_loss_hot
+simulation:
+  preset: minimal
+  backend: cpu
+  physics_tier: flow
+  domain_mm: [16, 12, 10]
+  dx_mm: 1.0
+  enable_vof: false
+  enable_enthalpy_cap: true
+  enable_lorentz: false
+  enable_recoil: false
+  enable_evaporative_cooling: false
+plate:
+  thickness_mm: 4.0
+  size_mm: [12, 8]
+material: materials/placeholders/ER70S-6.yaml
+process:
+  current_A: 80
+  voltage_V: 15
+  T_ambient_K: 300
+arc_physics:
+  T_vapor_cap_K: 3200.0
+heat_loss:
+  convection: true
+  radiation: true
+  h_conv: 35.0
+  eps_rad: 0.3
+model_reference:
+  T_seed_K: 3200
+  T_legacy_cap_K: 2500

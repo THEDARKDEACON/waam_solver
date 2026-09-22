@@ -4,9 +4,10 @@
   "type": "object",
   "additionalProperties": true,
   "properties": {
+    "name": { "type": "string" },
     "simulation": {
       "type": "object",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "properties": {
         "preset": { "type": "string" },
         "backend": { "type": "string" },
@@ -21,7 +22,69 @@
           "maxItems": 3
         },
         "dx_mm": { "type": "number", "exclusiveMinimum": 0 },
-        "strict_mode": { "type": "boolean" }
+        "strict_mode": { "type": "boolean" },
+        "enable_vof": { "type": "boolean" },
+        "enable_csf_tension": { "type": "boolean" },
+        "enable_wetting": { "type": "boolean" },
+        "enable_hydrostatic_gravity": { "type": "boolean" },
+        "enable_bead_freeze": { "type": "boolean" },
+        "enable_droplet_impact_pressure": { "type": "boolean" },
+        "enable_recoil": { "type": "boolean" },
+        "use_recoil_clausius_clapeyron": { "type": "boolean" },
+        "enable_lorentz": { "type": "boolean" },
+        "enable_gas_shear": { "type": "boolean" },
+        "enable_enthalpy_cap": { "type": "boolean" },
+        "enable_evaporative_cooling": { "type": "boolean" },
+        "arc_surface_weighting": { "type": "boolean" },
+        "enable_substrate_growth": { "type": "boolean" },
+        "enable_ctwd": { "type": "boolean" },
+        "enable_marangoni": { "type": "boolean" },
+        "enable_buoyancy": { "type": "boolean" },
+        "enable_arc_pressure": { "type": "boolean" },
+        "enable_deposition_momentum": { "type": "boolean" },
+        "use_torch_z": { "type": "boolean" },
+        "enable_torch_z": { "type": "boolean" },
+        "enable_moving_window": {
+          "type": "boolean",
+          "description": "Slide the local mesh with the torch in +X, ±Y, and ±Z (Z only when use_torch_z is set). New strips are filled with ambient plate/gas."
+        },
+        "enable_alloy_mixing": {
+          "type": "boolean",
+          "description": "Diffuse alloy_frac among neighbouring liquid cells in the fusion zone. Default false — birth composition is unchanged. Dual-alloy jobs only."
+        },
+        "alloy_mix_rate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Jacobi mix rate per step when enable_alloy_mixing is true (default 0.25)."
+        },
+        "dt_scale": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Optional multiplier on WAAMGrid.dt (default 1.0). τ>0.5 and α_lu≤1/6 guards still apply."
+        },
+        "warn_on_force_clamp": {
+          "type": "boolean",
+          "description": "Log a warning when the body-force clamp fires. Default false. strict_mode abort is unchanged."
+        },
+        "plate_thickness_mm": { "type": "number" },
+        "plate_size_mm": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "plate_origin_mm": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "plate_length_mm": { "type": "number" },
+        "plate_width_mm": { "type": "number" },
+        "substrate_thickness_mm": { "type": "number" },
+        "domain_margin_mm": { "type": "number" },
+        "air_gap_mm": { "type": "number" }
       }
     },
     "plate": {
@@ -40,11 +103,13 @@
           "items": { "type": "number" },
           "minItems": 2,
           "maxItems": 2
-        }
+        },
+        "material": { "type": ["string", "object"] }
       }
     },
     "material": { "type": ["string", "object"] },
     "calibration": { "type": ["string", "object", "null"] },
+    "frame": { "type": "string" },
     "torch_path_csv": { "type": "string" },
     "torch_path": {
       "type": "array",
@@ -64,24 +129,122 @@
         "goldak", "goldak3d", "doubleellipsoid"
       ]
     },
-    "goldak": { "type": "object", "additionalProperties": true },
+    "goldak": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ff": { "type": "number" },
+        "fr": { "type": "number" },
+        "a_front_mm": { "type": "number" },
+        "a_rear_mm": { "type": "number" },
+        "b_mm": { "type": "number" },
+        "c_mm": { "type": "number" },
+        "depth_front_mm": { "type": "number" },
+        "depth_rear_mm": { "type": "number" },
+        "sigma_scale": { "type": "number" }
+      }
+    },
     "process": {
       "type": "object",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "properties": {
         "current_A": { "type": "number" },
         "voltage_V": { "type": "number" },
         "arc_efficiency": { "type": "number", "minimum": 0, "maximum": 1 },
         "travel_speed_mm_s": { "type": "number" },
         "wire_feed_m_min": { "type": "number" },
-        "wire_diameter_mm": { "type": "number", "exclusiveMinimum": 0 }
+        "wire_diameter_mm": { "type": "number", "exclusiveMinimum": 0 },
+        "droplet_length_mm": { "type": "number" },
+        "T_ambient_K": { "type": "number" },
+        "stickout_mm": { "type": "number" },
+        "ctwd_mm": { "type": "number" },
+        "transfer_mode": { "type": "string" },
+        "droplet_transfer_mode": { "type": "string" },
+        "droplet_size_jitter": { "type": "number" },
+        "impact_lead_angle_deg": { "type": "number" },
+        "droplet_freq_hz": { "type": "number" },
+        "pulse_frequency_hz": { "type": "number" },
+        "power_factor": { "type": "number" },
+        "duty_cycle": { "type": "number" },
+        "arc_sigma_mm": { "type": "number" }
       }
     },
-    "arc_physics": { "type": "object", "additionalProperties": true },
-    "advanced_physics": { "type": "object", "additionalProperties": true },
-    "deposition": { "type": "object", "additionalProperties": true },
-    "surface_wetting": { "type": "object", "additionalProperties": true },
-    "heat_loss": { "type": "object", "additionalProperties": true },
+    "arc_physics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sigma_mm": { "type": "number" },
+        "penetration_mm": { "type": "number" },
+        "T_vapor_cap_K": { "type": "number" },
+        "surface_weighting": { "type": "boolean" },
+        "pressure_model": { "type": "string" },
+        "pressure_pa": { "type": "number" },
+        "pressure_sigma_mm": { "type": ["number", "null"] }
+      }
+    },
+    "advanced_physics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "gas_jet_velocity_m_s": { "type": "number" },
+        "gas_shear_coeff": { "type": "number" },
+        "sigma_liquid_Sm": { "type": "number" },
+        "sigma_solid_Sm": { "type": "number" },
+        "lorentz_jacobi_iters": { "type": "integer" },
+        "lorentz_jacobi_cold_iters": { "type": "integer" },
+        "lorentz_jacobi_tol": { "type": "number" },
+        "T_boiling_K": { "type": "number" },
+        "T_recoil_onset_K": { "type": "number" },
+        "L_vapor_J_kg": { "type": "number" },
+        "R_spec_vapor_J_kgK": { "type": "number" },
+        "recoil_accommodation": { "type": "number" },
+        "evap_cooling_scale": { "type": "number" }
+      }
+    },
+    "deposition": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "superheat_K": { "type": "number" },
+        "footprint_sigma_scale": { "type": "number" },
+        "trailing_solidify_lookback_mm": { "type": "number" },
+        "trailing_solidify_temp_margin_K": { "type": "number" }
+      }
+    },
+    "surface_wetting": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "contact_angle_deg": { "type": "number" }
+      }
+    },
+    "heat_loss": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "convection": { "type": "boolean" },
+        "radiation": { "type": "boolean" },
+        "h_conv": { "type": "number" },
+        "eps_rad": { "type": "number" }
+      }
+    },
+    "interpass": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cooling_steps": { "type": "integer" },
+        "travel_speed_mm_s": { "type": "number" }
+      }
+    },
+    "electrical": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "rho_e_ohm_m": { "type": "number" },
+        "eta_stick": { "type": "number" }
+      }
+    },
+    "layer_height_mm": { "type": "number" },
     "reference": { "type": "object", "additionalProperties": true },
     "model_reference": { "type": "object", "additionalProperties": true },
     "probes": { "type": "array", "items": { "type": "object" } }

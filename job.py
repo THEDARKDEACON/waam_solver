@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pathlib
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -80,6 +81,30 @@ def validate_job_config(data: dict[str, Any], path: pathlib.Path | None = None) 
         raise
 
 
+def _maybe_yaml_float(value: Any) -> Any:
+    """PyYAML 1.2 leaves unquoted 1.0e5 as a string; coerce scientific/decimals."""
+    if not isinstance(value, str):
+        return value
+    s = value.strip()
+    if not s or s[0] not in "+-0123456789.":
+        return value
+    import re
+    if re.fullmatch(r"[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?", s):
+        try:
+            return float(s)
+        except ValueError:
+            return value
+    return value
+
+
+def _coerce_yaml_numbers(obj: Any) -> Any:
+    if isinstance(obj, dict):
+        return {k: _coerce_yaml_numbers(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_coerce_yaml_numbers(v) for v in obj]
+    return _maybe_yaml_float(obj)
+
+
 def load_job_config(path: str | pathlib.Path) -> dict[str, Any]:
     from .paths import resolve_project_path
 
@@ -94,6 +119,7 @@ def load_job_config(path: str | pathlib.Path) -> dict[str, Any]:
         data = yaml.safe_load(f) or {}
     if not isinstance(data, dict):
         raise ValueError(f"Job file must be a mapping: {path}")
+    data = _coerce_yaml_numbers(data)
     validate_job_config(data, path)
     return data
 
@@ -136,6 +162,9 @@ def apply_physics_tier(twin, tier: str) -> None:
         twin.enable_gas_shear = False
         twin.enable_droplet_impact_pressure = False
         twin.enable_recoil = False
+        twin.enable_marangoni = False
+        twin.enable_buoyancy = False
+        twin.enable_arc_pressure = False
         twin.arc_pressure_model = "constant"
         return
     if key == "flow":
@@ -149,6 +178,9 @@ def apply_physics_tier(twin, tier: str) -> None:
         twin.enable_gas_shear = False
         twin.enable_droplet_impact_pressure = True
         twin.enable_recoil = False
+        twin.enable_marangoni = True
+        twin.enable_buoyancy = True
+        twin.enable_arc_pressure = True
         twin.arc_pressure_model = "constant"
         return
     if key != "full":
@@ -167,6 +199,9 @@ def apply_physics_tier(twin, tier: str) -> None:
     twin.grid.ensure_lorentz_fields()
     twin.enable_gas_shear = True
     twin.enable_droplet_impact_pressure = True
+    twin.enable_marangoni = True
+    twin.enable_buoyancy = True
+    twin.enable_arc_pressure = True
     # recoil stays off unless job explicitly enables (conduction-mode WAAM)
     twin.arc_pressure_model = "lin_eagar"
     twin.physics_tier = "full"
@@ -190,6 +225,7 @@ def resolve_plate_and_domain(
         thickness_mm: 10.0
         size_mm: [50, 50]
         origin_mm: [15, 15]          # optional; default = centered
+        material: materials/validated/SS316L.v1.yaml  # optional substrate alloy
         domain_margin_mm: 15         # XY pad when domain is derived
         air_gap_mm: 15               # Z above plate when domain is derived
       simulation:
@@ -293,8 +329,13 @@ def _apply_heat_source(twin, job: dict[str, Any]) -> None:
     twin.heat_source_name = name
 
 
-def electrical_arc_power_W(process: dict[str, Any]) -> float:
+def electrical_arc_power_W(process: dict[str, Any], *, required: bool = False) -> float:
     """Arc electrical power Q_w = V·I·PF·duty (η applied separately in kernels)."""
+    if required and ("voltage_V" not in process or "current_A" not in process):
+        raise ValueError(
+            "Job process must set current_A and voltage_V "
+            "(electrical power is V·I; defaults are refused on from_job)."
+        )
     return (
         float(process.get("voltage_V", 20.0))
         * float(process.get("current_A", 140.0))
@@ -317,9 +358,134 @@ def clone_job_with_process(
     return out
 
 
-def apply_job_to_twin(twin, job: dict[str, Any]) -> None:
+_KNOWN_SIM_KEYS = frozenset({
+    "preset", "backend", "physics_tier", "domain_mm", "dx_mm", "strict_mode",
+    "enable_vof", "enable_csf_tension", "enable_wetting", "enable_hydrostatic_gravity",
+    "enable_bead_freeze", "enable_droplet_impact_pressure", "enable_recoil",
+    "use_recoil_clausius_clapeyron", "enable_lorentz", "enable_gas_shear",
+    "enable_enthalpy_cap", "enable_evaporative_cooling", "arc_surface_weighting",
+    "enable_substrate_growth", "enable_moving_window", "enable_alloy_mixing",
+    "enable_ctwd",
+    "enable_marangoni", "enable_buoyancy", "enable_arc_pressure",
+    "enable_deposition_momentum", "use_torch_z", "enable_torch_z",
+    "plate_thickness_mm", "plate_size_mm", "plate_origin_mm",
+    "plate_length_mm", "plate_width_mm", "substrate_thickness_mm",
+    "domain_margin_mm", "air_gap_mm",
+    "dt_scale", "warn_on_force_clamp", "alloy_mix_rate",
+})
+
+_KNOWN_PROCESS_KEYS = frozenset({
+    "current_A", "voltage_V", "arc_efficiency", "travel_speed_mm_s",
+    "wire_feed_m_min", "wire_diameter_mm", "droplet_length_mm", "T_ambient_K",
+    "stickout_mm", "ctwd_mm", "transfer_mode", "droplet_transfer_mode",
+    "droplet_size_jitter", "impact_lead_angle_deg", "droplet_freq_hz",
+    "pulse_frequency_hz", "power_factor", "duty_cycle", "arc_sigma_mm",
+})
+
+_KNOWN_GOLDAK_KEYS = frozenset({
+    "ff", "fr", "a_front_mm", "a_rear_mm", "b_mm", "c_mm",
+    "depth_front_mm", "depth_rear_mm", "sigma_scale",
+})
+
+_KNOWN_ARC_PHYSICS_KEYS = frozenset({
+    "sigma_mm", "penetration_mm", "T_vapor_cap_K", "surface_weighting",
+    "pressure_model", "pressure_pa", "pressure_sigma_mm",
+})
+
+_KNOWN_ADVANCED_PHYSICS_KEYS = frozenset({
+    "gas_jet_velocity_m_s", "gas_shear_coeff",
+    "sigma_liquid_Sm", "sigma_solid_Sm",
+    "lorentz_jacobi_iters", "lorentz_jacobi_cold_iters", "lorentz_jacobi_tol",
+    "T_boiling_K", "T_recoil_onset_K", "L_vapor_J_kg", "R_spec_vapor_J_kgK",
+    "recoil_accommodation", "evap_cooling_scale",
+})
+
+_KNOWN_DEPOSITION_KEYS = frozenset({
+    "superheat_K", "footprint_sigma_scale",
+    "trailing_solidify_lookback_mm", "trailing_solidify_temp_margin_K",
+})
+
+_KNOWN_WETTING_KEYS = frozenset({"contact_angle_deg"})
+
+_KNOWN_HEAT_LOSS_KEYS = frozenset({
+    "convection", "radiation", "h_conv", "eps_rad",
+})
+
+_KNOWN_ELECTRICAL_KEYS = frozenset({"rho_e_ohm_m", "eta_stick"})
+
+
+@dataclass
+class JobConfig:
+    """Typed wrapper for the YAML → twin application path (from_job only).
+
+    ``WAAMTwin.__init__`` kwargs are unchanged. ``from_job`` fills this and
+    ``apply_job_to_twin`` consumes it (dicts are still accepted).
+    """
+
+    raw: dict[str, Any]
+    simulation: dict[str, Any] = field(default_factory=dict)
+    process: dict[str, Any] = field(default_factory=dict)
+    advanced_physics: dict[str, Any] = field(default_factory=dict)
+    goldak: dict[str, Any] = field(default_factory=dict)
+    arc_physics: dict[str, Any] = field(default_factory=dict)
+    deposition: dict[str, Any] = field(default_factory=dict)
+    surface_wetting: dict[str, Any] = field(default_factory=dict)
+    heat_loss: dict[str, Any] = field(default_factory=dict)
+    electrical: dict[str, Any] = field(default_factory=dict)
+    plate: dict[str, Any] = field(default_factory=dict)
+    interpass: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, job: dict[str, Any]) -> "JobConfig":
+        data = job if isinstance(job, dict) else dict(job)
+        return cls(
+            raw=data,
+            simulation=dict(data.get("simulation") or {}),
+            process=dict(data.get("process") or {}),
+            advanced_physics=dict(data.get("advanced_physics") or {}),
+            goldak=dict(data.get("goldak") or {}),
+            arc_physics=dict(data.get("arc_physics") or {}),
+            deposition=dict(data.get("deposition") or {}),
+            surface_wetting=dict(data.get("surface_wetting") or {}),
+            heat_loss=dict(data.get("heat_loss") or {}),
+            electrical=dict(data.get("electrical") or {}),
+            plate=dict(data.get("plate") or {}),
+            interpass=dict(data.get("interpass") or {}),
+        )
+
+
+def _warn_unknown_section(log, section: str, data: dict, known: frozenset) -> None:
+    if not isinstance(data, dict):
+        return
+    unknown = sorted(k for k in data if k not in known)
+    if unknown:
+        log.warning(f"[job] unknown {section} keys (ignored): {unknown}")
+
+
+def _warn_unknown_job_keys(job: dict[str, Any]) -> None:
+    """Belt-and-braces: schema should already reject these on YAML load."""
+    from . import logging_util as log
+
+    _warn_unknown_section(log, "simulation", job.get("simulation") or {}, _KNOWN_SIM_KEYS)
+    _warn_unknown_section(log, "process", job.get("process") or {}, _KNOWN_PROCESS_KEYS)
+    _warn_unknown_section(log, "goldak", job.get("goldak") or {}, _KNOWN_GOLDAK_KEYS)
+    _warn_unknown_section(log, "arc_physics", job.get("arc_physics") or {}, _KNOWN_ARC_PHYSICS_KEYS)
+    _warn_unknown_section(
+        log, "advanced_physics", job.get("advanced_physics") or {}, _KNOWN_ADVANCED_PHYSICS_KEYS,
+    )
+    _warn_unknown_section(log, "deposition", job.get("deposition") or {}, _KNOWN_DEPOSITION_KEYS)
+    _warn_unknown_section(
+        log, "surface_wetting", job.get("surface_wetting") or {}, _KNOWN_WETTING_KEYS,
+    )
+    _warn_unknown_section(log, "heat_loss", job.get("heat_loss") or {}, _KNOWN_HEAT_LOSS_KEYS)
+    _warn_unknown_section(log, "electrical", job.get("electrical") or {}, _KNOWN_ELECTRICAL_KEYS)
+
+
+def apply_job_to_twin(twin, job: dict[str, Any] | JobConfig) -> None:
     """Apply heat-loss, process, and calibration sections to an existing twin."""
-    process = job.get("process", {})
+    cfg = job if isinstance(job, JobConfig) else JobConfig.from_dict(job)
+    job = cfg.raw
+    process = cfg.process or job.get("process", {})
     freq = _wire_droplet_freq_hz(process)
     if freq is not None:
         twin.droplet_freq = freq
@@ -368,6 +534,8 @@ def apply_job_to_twin(twin, job: dict[str, Any]) -> None:
         twin.sigma_solid_Sm = float(adv["sigma_solid_Sm"])
     if "lorentz_jacobi_iters" in adv:
         twin.lorentz_jacobi_iters = int(adv["lorentz_jacobi_iters"])
+    if "lorentz_jacobi_cold_iters" in adv:
+        twin.lorentz_jacobi_cold_iters = int(adv["lorentz_jacobi_cold_iters"])
     if "lorentz_jacobi_tol" in adv:
         twin.lorentz_jacobi_tol = float(adv["lorentz_jacobi_tol"])
     if "T_boiling_K" in adv:
@@ -388,6 +556,8 @@ def apply_job_to_twin(twin, job: dict[str, Any]) -> None:
         apply_physics_tier(twin, str(sim["physics_tier"]))
     if "strict_mode" in sim:
         twin.strict_mode = bool(sim["strict_mode"])
+    if "warn_on_force_clamp" in sim:
+        twin.warn_on_force_clamp = bool(sim["warn_on_force_clamp"])
     import os
     if os.environ.get("WAAM_STRICT", "").strip() in ("1", "true", "True", "yes"):
         twin.strict_mode = True
@@ -400,6 +570,12 @@ def apply_job_to_twin(twin, job: dict[str, Any]) -> None:
         twin.enable_lorentz = bool(sim["enable_lorentz"])
         if twin.enable_lorentz:
             twin.grid.ensure_lorentz_fields()
+    if "enable_marangoni" in sim:
+        twin.enable_marangoni = bool(sim["enable_marangoni"])
+    if "enable_buoyancy" in sim:
+        twin.enable_buoyancy = bool(sim["enable_buoyancy"])
+    if "enable_arc_pressure" in sim:
+        twin.enable_arc_pressure = bool(sim["enable_arc_pressure"])
     if "enable_gas_shear" in sim:
         twin.enable_gas_shear = bool(sim["enable_gas_shear"])
     if "enable_droplet_impact_pressure" in sim:
@@ -420,6 +596,10 @@ def apply_job_to_twin(twin, job: dict[str, Any]) -> None:
         twin.enable_substrate_growth = bool(sim["enable_substrate_growth"])
     if "enable_moving_window" in sim:
         twin.enable_moving_window = bool(sim["enable_moving_window"])
+    if "enable_alloy_mixing" in sim:
+        twin.enable_alloy_mixing = bool(sim["enable_alloy_mixing"])
+    if "alloy_mix_rate" in sim:
+        twin.alloy_mix_rate = float(sim["alloy_mix_rate"])
     if "enable_wetting" in sim:
         twin.enable_wetting = bool(sim["enable_wetting"])
     if "enable_hydrostatic_gravity" in sim:
@@ -510,7 +690,7 @@ def apply_job_to_twin(twin, job: dict[str, Any]) -> None:
     interpass = job.get("interpass", {})
     if interpass:
         twin._interpass_cooling_steps = int(interpass.get("cooling_steps", 0))
-        twin._interpass_travel_mm_s = float(interpass.get("travel_speed_mm_s", 0)) / 1000.0 or None
+        twin._interpass_travel_m_s = float(interpass.get("travel_speed_mm_s", 0)) / 1000.0 or None
 
     heat = job.get("heat_loss", {})
     if heat:
@@ -526,6 +706,25 @@ def apply_job_to_twin(twin, job: dict[str, Any]) -> None:
     if cal_path:
         from .calibration import apply_calibration, load_calibration
         apply_calibration(twin, load_calibration(cal_path))
+
+    _warn_unknown_job_keys(job)
+    _raise_if_truncated_tables(twin)
+
+
+def _raise_if_truncated_tables(twin) -> None:
+    if not getattr(twin, "strict_mode", False):
+        return
+    from .gpu_tables import MAX_KNOTS
+
+    for tbl, label in (
+        (getattr(twin, "gpu_tables", None), "wire"),
+        (getattr(twin, "gpu_tables_plate", None), "plate"),
+    ):
+        if tbl is not None and getattr(tbl, "truncated", False):
+            raise ValueError(
+                f"Material {label} tables truncated to {MAX_KNOTS} knots "
+                f"(strict_mode). Reduce table length or disable strict_mode."
+            )
 
 
 def from_process_sheet(

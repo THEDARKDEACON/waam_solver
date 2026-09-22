@@ -7,9 +7,11 @@ advect_diffuse_variable = kernels.advect_diffuse_temperature_variable
 apply_boundary_losses = kernels.apply_thermal_boundary_losses
 apply_boundary_losses_variable = kernels.apply_thermal_boundary_losses_variable
 refresh_properties = kernels.refresh_thermal_properties
+refresh_properties_dual = kernels.refresh_thermal_properties_dual
 update_T_max = kernels.update_T_max
 update_cooling_rate = kernels.update_cooling_rate
 update_phase_variable_cp = kernels.update_phase_variable_cp
+update_phase_dual = kernels.update_phase_dual
 prescribe_gaussian_pulse = kernels.prescribe_gaussian_pulse
 sync_T_from_H = kernels.sync_T_from_H
 init_stefan_liquid_column = kernels.init_stefan_liquid_column
@@ -18,6 +20,7 @@ clamp_enthalpy_floor = kernels.clamp_enthalpy_floor
 clamp_enthalpy_floor_scalar = kernels.clamp_enthalpy_floor_scalar
 clamp_enthalpy_ceiling_scalar = kernels.clamp_enthalpy_ceiling_scalar
 clamp_enthalpy_ceiling_variable_cp = kernels.clamp_enthalpy_ceiling_variable_cp
+clamp_enthalpy_ceiling_dual = kernels.clamp_enthalpy_ceiling_dual
 apply_evaporative_enthalpy_sink = kernels.apply_evaporative_enthalpy_sink
 
 __all__ = [
@@ -26,9 +29,11 @@ __all__ = [
     "apply_boundary_losses",
     "apply_boundary_losses_variable",
     "refresh_properties",
+    "refresh_properties_dual",
     "update_T_max",
     "update_cooling_rate",
     "update_phase_variable_cp",
+    "update_phase_dual",
     "prescribe_gaussian_pulse",
     "sync_T_from_H",
     "init_stefan_liquid_column",
@@ -37,5 +42,6 @@ __all__ = [
     "clamp_enthalpy_floor_scalar",
     "clamp_enthalpy_ceiling_scalar",
     "clamp_enthalpy_ceiling_variable_cp",
+    "clamp_enthalpy_ceiling_dual",
     "apply_evaporative_enthalpy_sink",
 ]

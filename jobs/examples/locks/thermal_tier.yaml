@@ -1,0 +1,20 @@
+# Lock M1: physics_tier thermal disables Marangoni, buoyancy, and arc pressure.
+name: lock_thermal_tier
+simulation:
+  preset: minimal
+  backend: cpu
+  physics_tier: thermal
+  domain_mm: [16, 12, 10]
+  dx_mm: 1.0
+plate:
+  thickness_mm: 4.0
+  size_mm: [12, 8]
+material: materials/placeholders/ER70S-6.yaml
+process:
+  current_A: 80
+  voltage_V: 15
+  T_ambient_K: 300
+  travel_speed_mm_s: 8
+model_reference:
+  n_steps: 8
+  force_eps: 1.0e-12

@@ -1,0 +1,26 @@
+# Lock H4: unconverged Jacobi skips J×B; streak still counted; strict_mode aborts >10.
+name: lock_lorentz_strict
+simulation:
+  preset: minimal
+  backend: cpu
+  physics_tier: full
+  strict_mode: true
+  domain_mm: [16, 12, 12]
+  dx_mm: 1.0
+  enable_lorentz: true
+  enable_vof: false
+  enable_recoil: false
+  enable_gas_shear: false
+plate:
+  thickness_mm: 4.0
+  size_mm: [12, 8]
+material: materials/placeholders/ER70S-6.yaml
+process:
+  current_A: 180
+  voltage_V: 20
+  T_ambient_K: 300
+advanced_physics:
+  lorentz_jacobi_iters: 2
+  lorentz_jacobi_tol: 1.0e-8
+model_reference:
+  n_steps: 3

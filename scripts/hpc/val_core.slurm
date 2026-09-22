@@ -33,7 +33,7 @@ export WAAM_PRESET="${WAAM_PRESET:-minimal}"
 
 echo "[slurm] host=$(hostname)  cuda_visible=${CUDA_VISIBLE_DEVICES:-unset}"
 nvidia-smi || true
-python -c "import taichi as ti; ti.init(arch=ti.cuda); print('taichi arch=', ti.cfg.arch)"
+python -c "from waam_twin.compiler import ti; ti.init(arch=ti.cuda); print('quadrants arch=', ti.cfg.arch)"
 
 python -m waam_twin.validation.run_all
 echo "[slurm] val_core finished OK"

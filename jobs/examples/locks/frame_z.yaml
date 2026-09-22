@@ -1,0 +1,10 @@
+name: lock_frame_offset_z
+origin_mm:
+  x: 0.0
+  y: 0.0
+  z: 0.0
+substrate_z_mm: 0.0
+sim_origin_offset_m:
+  x: 0.0
+  y: 0.0
+  z: 0.002

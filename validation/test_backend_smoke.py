@@ -33,14 +33,14 @@ def run() -> None:
     print("[backend_smoke] cpu OK")
 
     if os.environ.get("WAAM_BACKEND_MATRIX") == "1":
-        for backend in ("vulkan", "cuda"):
+        for backend in ("vulkan", "cuda", "amdgpu"):
             try:
                 _smoke_backend(backend)
                 print(f"[backend_smoke] {backend} OK")
             except Exception as exc:
                 print(f"[backend_smoke] {backend} skip: {exc}")
     else:
-        print("[backend_smoke] optional vulkan/cuda skipped (set WAAM_BACKEND_MATRIX=1)")
+        print("[backend_smoke] optional vulkan/cuda/amdgpu skipped (set WAAM_BACKEND_MATRIX=1)")
 
 
 if __name__ == "__main__":

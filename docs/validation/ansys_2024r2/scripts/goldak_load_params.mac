@@ -1,0 +1,18 @@
+! goldak_load_params.mac
+! Parameters for waam_twin jobs/examples/bead_on_plate.yaml
+! Ansys Mechanical 2024 R2 — Transient Thermal
+! Lengths in mm, time in s, power in W (see goldak_heat_source.mac for HGEN units)
+
+QNET  = 981.1008    ! eta*I*V = 0.72*131*10.4
+VTRAV = 10.0        ! mm/s
+X0    = 30.0        ! mm torch X (fixed)
+Y0    = 20.0        ! mm torch Y at t=0
+ZTOP  = 10.0        ! mm top surface Z
+AF    = 2.2         ! mm Goldak a_front
+AR    = 4.2         ! mm Goldak a_rear
+BB    = 3.0         ! mm Goldak b (half-width)
+CC    = 1.5         ! mm Goldak c (depth)
+FF    = 0.6         ! front fraction
+FR    = 1.4         ! rear fraction (ff+fr=2)
+TWELD = 2.0         ! s weld duration
+PI    = 3.141592653589793

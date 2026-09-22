@@ -12,7 +12,7 @@ from waam_twin.runtime import init_taichi
 from waam_twin import WAAMTwin
 
 
-def run(n_steps: int = 600) -> float:
+def run(n_steps: int = 1500) -> float:
     init_taichi(backend="cpu")
     twin = WAAMTwin.from_job("jobs/examples/multi_bead.yaml")
     twin.enable_vof = False

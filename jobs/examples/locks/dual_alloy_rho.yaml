@@ -1,0 +1,29 @@
+# Lock M6: weld body forces convert with per-cell alloy density (wire vs plate).
+name: lock_dual_alloy_rho
+simulation:
+  preset: minimal
+  backend: cpu
+  physics_tier: full
+  domain_mm: [16, 12, 12]
+  dx_mm: 1.0
+  enable_vof: true
+  enable_lorentz: false
+  enable_recoil: false
+  enable_gas_shear: false
+  enable_arc_pressure: true
+plate:
+  thickness_mm: 4.0
+  size_mm: [12, 8]
+  material: materials/placeholders/lock_light_plate.yaml
+material: materials/placeholders/ER70S-6.yaml
+process:
+  current_A: 100
+  voltage_V: 20
+  T_ambient_K: 300
+arc_physics:
+  pressure_model: constant
+  pressure_pa: 5000.0
+model_reference:
+  rho_wire: 7000.0
+  rho_plate: 3500.0
+  force_ratio: 2.0

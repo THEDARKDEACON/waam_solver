@@ -138,6 +138,7 @@ def run_job_metrics(
         "Q_w_W": float(twin.Q_w),
         "eta": float(twin.eta),
         "recoil_accommodation": float(twin.recoil_accommodation),
+        "evap_cooling_scale": float(getattr(twin, "evap_cooling_scale", 25.0)),
         "pool_width_mm": float(W_mm),
         "pool_depth_mm": float(D_mm),
         "n_liquid": int(n_liq),

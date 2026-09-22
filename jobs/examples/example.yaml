@@ -29,8 +29,8 @@ simulation:
   preset: standard
 
   # Preferred GPU/CPU hint for notebooks/docs. Runtime still follows
-  # WAAM_BACKEND / init_taichi (auto | cpu | cuda | vulkan).
-  # Options: auto | cpu | cuda | vulkan
+  # WAAM_BACKEND / init_taichi (auto | cpu | cuda | amdgpu | vulkan).
+  # Options: auto | cpu | cuda | amdgpu | vulkan
   backend: cuda
 
   # Named physics bundle (PHYSICS_FORCE_CORRECTNESS_SPEC §4.3).
@@ -40,7 +40,9 @@ simulation:
   #             no Lorentz / gas shear; arc pressure = constant
   #   full    — flow + Lorentz + gas shear; arc pressure = lin_eagar;
   #             recoil still OFF unless enable_recoil: true
-  # Aliases "base"/"default" → flow (with warning). Unknown → full (with warning).
+  # Aliases "base"/"default"/"standard_physics" → flow (with warning).
+  # Unknown names raise ValueError (they do not silently become full).
+  # thermal also turns off Marangoni, buoyancy, and arc pressure.
   physics_tier: full
 
   # Abort on Lorentz non-convergence, NaN force diagnostics, or bad mass balance.
@@ -67,7 +69,7 @@ simulation:
   # Remelt / grow solid substrate when hot (multi-layer studies).
   enable_substrate_growth: false
 
-  # Shift domain with torch for long beads (moving window).
+  # Shift domain with torch (+X, ±Y; ±Z when use_torch_z).
   enable_moving_window: false
 
   # Vapor recoil pressure on the free surface (excavates / can splash).
@@ -84,6 +86,11 @@ simulation:
 
   # Shielding-gas surface traction (uses advanced_physics.gas_*).
   enable_gas_shear: true
+
+  # Surface-tension gradient, buoyancy, arc pressure (thermal tier sets these false).
+  enable_marangoni: true
+  enable_buoyancy: true
+  enable_arc_pressure: true
 
   # Instantaneous droplet impact momentum / pressure pulse.
   enable_droplet_impact_pressure: true

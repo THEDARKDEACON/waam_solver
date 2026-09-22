@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from ..physics import thermal, phase_change, forces, free_surface, lbm, deposition, weld_forces
 from ..physics.electrical_stickout import droplet_entry_temperature_K, update_ctwd
 from .. import kernels
+from .. import logging_util as log
 
 if TYPE_CHECKING:
     from ..twin import WAAMTwin
@@ -16,6 +17,14 @@ if TYPE_CHECKING:
 
 def _clamp_enthalpy_ceiling(twin: "WAAMTwin", g) -> None:
     if not twin.enable_enthalpy_cap:
+        return
+    if getattr(twin, "use_dual_alloy", False):
+        thermal.clamp_enthalpy_ceiling_dual(
+            g.H, g.flags, g.cp_rho_field, g.alloy_frac,
+            twin.H_liq, twin.mat.T_liquidus,
+            twin.plate_H_liq, twin.plate_mat.T_liquidus,
+            twin.T_vapor_cap_K, g.FLAG_GAS,
+        )
         return
     if twin.use_material_tables:
         thermal.clamp_enthalpy_ceiling_variable_cp(
@@ -72,11 +81,91 @@ def _resolve_arc_k(
 def _solidify_if_enabled(twin: "WAAMTwin", g) -> None:
     if not twin.enable_substrate_growth and not twin.enable_bead_freeze:
         return
+    if getattr(twin, "use_dual_alloy", False):
+        free_surface.solidify_cooled_metal_dual(
+            g.T, g.H, g.f_l, g.phi, g.flags, g.ux, g.uy, g.uz, g.alloy_frac,
+            twin.H_sol, twin.mat.T_solidus,
+            twin.plate_H_sol, twin.plate_mat.T_solidus,
+            twin.enable_bead_freeze or twin.enable_substrate_growth,
+            g.FLAG_SOLID, g.FLAG_FLUID, g.FLAG_GAS,
+        )
+        return
     free_surface.solidify_cooled_metal(
         g.T, g.H, g.f_l, g.phi, g.flags, g.ux, g.uy, g.uz,
         twin.H_sol, twin.mat.T_solidus,
         twin.enable_bead_freeze or twin.enable_substrate_growth,
         g.FLAG_SOLID, g.FLAG_FLUID, g.FLAG_GAS,
+    )
+
+
+def _refresh_thermal(twin: "WAAMTwin", g) -> bool:
+    """Fill per-cell cp/α/dγ/τ. Returns True when the field thermal path is active."""
+    if getattr(twin, "use_dual_alloy", False):
+        wt = twin.gpu_tables
+        pt = twin.gpu_tables_plate
+        thermal.refresh_properties_dual(
+            g.T, g.cp_rho_field, g.alpha_lu_field, g.dgamma_lu_field, g.tau_field,
+            g.alloy_frac, g.flags,
+            wt.cp_T, wt.cp_V, wt.k_T, wt.k_V, wt.mu_T, wt.mu_V,
+            wt.dgamma_T, wt.dgamma_V, wt.n_cp, wt.n_k, wt.n_mu, wt.n_dgamma,
+            pt.cp_T, pt.cp_V, pt.k_T, pt.k_V, pt.mu_T, pt.mu_V,
+            pt.dgamma_T, pt.dgamma_V, pt.n_cp, pt.n_k, pt.n_mu, pt.n_dgamma,
+            g.dt, g.dx,
+            twin.mat.rho, twin.plate_mat.rho,
+            wt.cp_fallback, wt.k_fallback, wt.mu_fallback, wt.dgamma_fallback,
+            pt.cp_fallback, pt.k_fallback, pt.mu_fallback, pt.dgamma_fallback,
+            twin.force_scale / g.dx, twin.plate_force_scale / g.dx,
+            twin.cp_rho, twin.plate_cp_rho,
+            twin.alpha_lu, twin.plate_alpha_lu,
+            twin.dgamma_dT_lu, twin.plate_dgamma_dT_lu,
+            g.tau, twin.plate_tau,
+            twin.marangoni_scale,
+            1 if wt.enabled else 0,
+            1 if pt.enabled else 0,
+            g.FLAG_GAS,
+        )
+        return True
+    if twin.use_material_tables:
+        tbl = twin.gpu_tables
+        thermal.refresh_properties(
+            g.T, g.cp_rho_field, g.alpha_lu_field, g.dgamma_lu_field, g.tau_field,
+            tbl.cp_T, tbl.cp_V, tbl.k_T, tbl.k_V,
+            tbl.mu_T, tbl.mu_V,
+            tbl.dgamma_T, tbl.dgamma_V,
+            tbl.n_cp, tbl.n_k, tbl.n_mu, tbl.n_dgamma,
+            g.mat.rho, g.dt, g.dx,
+            tbl.cp_fallback, tbl.k_fallback, tbl.mu_fallback, tbl.dgamma_fallback,
+            twin.force_scale / g.dx,
+            twin.cp_rho, twin.alpha_lu, twin.dgamma_dT_lu, g.tau,
+            twin.marangoni_scale,
+            1, g.flags, g.FLAG_SOLID, g.FLAG_GAS,
+        )
+        return True
+    return False
+
+
+def _update_phase(twin: "WAAMTwin", g) -> None:
+    if getattr(twin, "use_dual_alloy", False):
+        thermal.update_phase_dual(
+            g.H, g.T, g.f_l, g.cp_rho_field, g.alloy_frac,
+            twin.L_rho, twin.mat.T_solidus, twin.mat.T_liquidus,
+            twin.H_sol, twin.H_liq,
+            twin.plate_L_rho, twin.plate_mat.T_solidus, twin.plate_mat.T_liquidus,
+            twin.plate_H_sol, twin.plate_H_liq,
+        )
+        return
+    if twin.use_material_tables:
+        thermal.update_phase_variable_cp(
+            g.H, g.T, g.f_l, g.cp_rho_field,
+            twin.L_rho,
+            twin.mat.T_solidus, twin.mat.T_liquidus,
+            twin.H_sol, twin.H_liq,
+        )
+        return
+    phase_change.update_phase(
+        g.H, g.T, g.f_l,
+        twin.cp_rho, twin.L_rho,
+        twin.mat.T_solidus, twin.mat.T_liquidus,
     )
 
 
@@ -164,7 +253,7 @@ def coupled_step(
                     twin._deposition_overflow += 1
                     if not twin._warned_overflow and twin._deposition_overflow >= 20:
                         twin._warned_overflow = True
-                        print(
+                        log.warning(
                             f"[coupled_step] WARNING: {twin._deposition_overflow} droplets "
                             f"deposited less volume than the wire feed supplies "
                             f"(latest: {placed_real / max(drop_vol, 1e-30):.0%} of target). "
@@ -175,21 +264,8 @@ def coupled_step(
                 twin._n_droplets_fired += 1
                 weld_forces.apply_droplet_impact(twin, g, arc_i, arc_j, arc_k, drop_r, drop_mass)
 
-    if twin.use_material_tables:
-        tbl = twin.gpu_tables
-        thermal.refresh_properties(
-            g.T, g.cp_rho_field, g.alpha_lu_field, g.dgamma_lu_field, g.tau_field,
-            tbl.cp_T, tbl.cp_V, tbl.k_T, tbl.k_V,
-            tbl.mu_T, tbl.mu_V,
-            tbl.dgamma_T, tbl.dgamma_V,
-            tbl.n_cp, tbl.n_k, tbl.n_mu, tbl.n_dgamma,
-            g.mat.rho, g.dt, g.dx,
-            tbl.cp_fallback, tbl.k_fallback, tbl.mu_fallback, tbl.dgamma_fallback,
-            twin.force_scale / g.dx,  # Marangoni prefactor: scale_F/dx (lattice ∇)
-            twin.cp_rho, twin.alpha_lu, twin.dgamma_dT_lu, g.tau,
-            twin.marangoni_scale,
-            1, g.flags, g.FLAG_SOLID, g.FLAG_GAS,
-        )
+    use_fields = _refresh_thermal(twin, g)
+    if use_fields:
         thermal.advect_diffuse_variable(
             g.H, g.T, g.ux, g.uy, g.uz, g.flags,
             g.alpha_lu_field, g.cp_rho_field, 1.0,
@@ -205,14 +281,15 @@ def coupled_step(
         )
 
     if twin.enable_heat_loss:
-        if twin.use_material_tables:
+        t_cap = float(twin.T_vapor_cap_K) if twin.enable_enthalpy_cap else 0.0
+        if use_fields:
             thermal.apply_boundary_losses_variable(
                 g.H, g.T, g.flags, g.cp_rho_field,
                 twin.T_amb,
                 twin.h_conv, twin.eps_rad,
                 1 if twin.enable_convection else 0,
                 1 if twin.enable_radiation else 0,
-                g.dt, g.dx, twin.sigma_sb,
+                g.dt, g.dx, twin.sigma_sb, t_cap,
                 g.FLAG_SOLID, g.FLAG_GAS,
                 g.nx, g.ny, g.nz,
             )
@@ -226,7 +303,7 @@ def coupled_step(
                 twin.h_conv, twin.eps_rad,
                 1 if twin.enable_convection else 0,
                 1 if twin.enable_radiation else 0,
-                twin.cp_rho, g.dt, g.dx, twin.sigma_sb,
+                twin.cp_rho, g.dt, g.dx, twin.sigma_sb, t_cap,
                 g.FLAG_SOLID, g.FLAG_GAS,
                 g.nx, g.ny, g.nz,
             )
@@ -234,25 +311,14 @@ def coupled_step(
                 g.H, twin.cp_rho, g.flags, twin.T_amb, g.FLAG_GAS,
             )
 
-    if twin.use_material_tables:
-        thermal.update_phase_variable_cp(
-            g.H, g.T, g.f_l, g.cp_rho_field,
-            twin.L_rho,
-            twin.mat.T_solidus, twin.mat.T_liquidus,
-            twin.H_sol, twin.H_liq,
-        )
-    else:
-        phase_change.update_phase(
-            g.H, g.T, g.f_l,
-            twin.cp_rho, twin.L_rho,
-            twin.mat.T_solidus, twin.mat.T_liquidus,
-        )
+    _update_phase(twin, g)
 
     # Evaporative energy sink on the free surface (before hard vapor ceiling).
+    # Onset must match CC recoil, including twin.T_recoil_onset_K if set.
     if getattr(twin, "enable_evaporative_cooling", False):
         T_boil = float(twin.T_boiling_K)
-        T_onset = max(float(twin.mat.T_liquidus) + 200.0, 0.85 * T_boil)
-        use_field = 1 if twin.use_material_tables else 0
+        T_onset = weld_forces.recoil_onset_K(twin)
+        use_field = 1 if use_fields else 0
         thermal.apply_evaporative_enthalpy_sink(
             g.H, g.T, g.phi, g.f_l, g.flags,
             g.cp_rho_field,
@@ -273,38 +339,23 @@ def coupled_step(
         e_step = float(g.evap_energy_J_buf[None])
         twin._evap_energy_J_step = e_step
         twin._evap_energy_J_cum = float(getattr(twin, "_evap_energy_J_cum", 0.0)) + e_step
-        # Recover T after sink so the ceiling sees post-evaporation state.
-        if twin.use_material_tables:
-            thermal.update_phase_variable_cp(
-                g.H, g.T, g.f_l, g.cp_rho_field,
-                twin.L_rho,
-                twin.mat.T_solidus, twin.mat.T_liquidus,
-                twin.H_sol, twin.H_liq,
-            )
-        else:
-            phase_change.update_phase(
-                g.H, g.T, g.f_l,
-                twin.cp_rho, twin.L_rho,
-                twin.mat.T_solidus, twin.mat.T_liquidus,
-            )
+        _update_phase(twin, g)
     else:
         twin._evap_energy_J_step = 0.0
 
     # Cap H, then re-recover T so telemetry / T_max cannot retain a
     # post-phase spike above T_vapor_cap while H was already clamped.
     _clamp_enthalpy_ceiling(twin, g)
-    if twin.use_material_tables:
-        thermal.update_phase_variable_cp(
-            g.H, g.T, g.f_l, g.cp_rho_field,
-            twin.L_rho,
-            twin.mat.T_solidus, twin.mat.T_liquidus,
-            twin.H_sol, twin.H_liq,
-        )
-    else:
-        phase_change.update_phase(
-            g.H, g.T, g.f_l,
-            twin.cp_rho, twin.L_rho,
-            twin.mat.T_solidus, twin.mat.T_liquidus,
+    _update_phase(twin, g)
+
+    if (
+        getattr(twin, "enable_alloy_mixing", False)
+        and getattr(twin, "use_dual_alloy", False)
+    ):
+        kernels.mix_alloy_fusion_zone(
+            g.alloy_frac, g.alloy_frac_buf, g.f_l, g.flags,
+            float(getattr(twin, "alloy_mix_rate", 0.25)),
+            g.FLAG_GAS, g.nx, g.ny, g.nz,
         )
 
     thermal.update_T_max(g.T, g.T_max, g.flags, g.FLAG_GAS)
@@ -357,33 +408,36 @@ def coupled_step(
             theta_rad=twin.theta_rad,
         )
 
-    if twin.use_material_tables:
-        forces.compute_marangoni_force_variable(
-            g.T, g.phi, g.f_l, g.Fx, g.Fy, g.Fz, g.flags,
-            g.dgamma_lu_field,
-            g.FLAG_SOLID, g.FLAG_GAS,
-            g.nx, g.ny, g.nz,
-        )
-    else:
-        forces.compute_marangoni_force(
-            g.T, g.phi, g.f_l,
-            g.Fx, g.Fy, g.Fz,
-            g.flags,
-            twin.dgamma_dT_lu, g.dx,
-            g.FLAG_SOLID, g.FLAG_GAS,
-            g.nx, g.ny, g.nz,
-        )
+    if getattr(twin, "enable_marangoni", True):
+        if twin.use_material_tables:
+            forces.compute_marangoni_force_variable(
+                g.T, g.phi, g.f_l, g.Fx, g.Fy, g.Fz, g.flags,
+                g.dgamma_lu_field,
+                g.FLAG_SOLID, g.FLAG_GAS,
+                g.nx, g.ny, g.nz,
+            )
+        else:
+            forces.compute_marangoni_force(
+                g.T, g.phi, g.f_l,
+                g.Fx, g.Fy, g.Fz,
+                g.flags,
+                twin.dgamma_dT_lu, g.dx,
+                g.FLAG_SOLID, g.FLAG_GAS,
+                g.nx, g.ny, g.nz,
+            )
 
     if is_welding and twin.enable_gas_shear:
         weld_forces.apply_gas_shear(twin, g, arc_i, arc_j, arc_k)
 
-    if is_welding:
+    if is_welding and getattr(twin, "enable_arc_pressure", True):
+        alloy_id, rho_w, rho_p = weld_forces.alloy_rho_args(twin)
         forces.apply_arc_pressure(
             g.Fz, g.flags, g.phi,
             arc_i, arc_j, arc_k, pressure_sigma_cells,
-            current_pressure, g.dt, g.dx, twin.mat.rho,
+            current_pressure, g.dt, g.dx, alloy_id, rho_w, rho_p,
             g.FLAG_SOLID, g.FLAG_GAS,
         )
+    if is_welding:
         weld_forces.apply_recoil(twin, g, arc_i, arc_j, arc_k)
 
     # rho_ref = 1.0: lattice force densities under the ρ_lu ≈ 1 convention.
@@ -393,13 +447,14 @@ def coupled_step(
             g.FLAG_SOLID, g.FLAG_GAS,
         )
 
-    forces.add_buoyancy(
-        g.T, g.Fz, g.f_l, g.flags,
-        twin.g_lu, twin.beta_T,
-        twin.mat.T_liquidus,
-        1.0,
-        g.FLAG_SOLID, g.FLAG_GAS,
-    )
+    if getattr(twin, "enable_buoyancy", True):
+        forces.add_buoyancy(
+            g.T, g.Fz, g.f_l, g.flags,
+            twin.g_lu, twin.beta_T,
+            twin.mat.T_liquidus,
+            1.0,
+            g.FLAG_SOLID, g.FLAG_GAS,
+        )
 
     if is_welding and twin.enable_lorentz:
         weld_forces.solve_lorentz(twin, g, arc_i, arc_j, arc_k)
@@ -420,6 +475,12 @@ def coupled_step(
         twin._force_clamp_hits_step = n_f
         twin._force_clamp_hits_cum = int(getattr(twin, "_force_clamp_hits_cum", 0)) + n_f
         twin._force_clamp_steps = int(getattr(twin, "_force_clamp_steps", 0)) + (1 if n_f > 0 else 0)
+        if n_f > 0 and getattr(twin, "warn_on_force_clamp", False):
+            from .. import logging_util as log
+            log.warning(
+                f"[coupled_step] body-force clamp hit {n_f} cells this step "
+                f"(cap={F_cap:g} lu/ts²)"
+            )
 
     if twin.use_material_tables and twin.use_variable_tau:
         lbm.collide_srt_variable_tau(
@@ -480,16 +541,32 @@ def coupled_step(
         g.FLAG_SOLID, g.FLAG_GAS,
     )
 
-    kernels.update_time_above_T(
-        g.T, g.flags,
-        g.time_above_800_s, g.time_above_1100_s, g.time_above_solidus_s,
-        g.dt, 800.0 + 273.15, 1100.0 + 273.15, twin.mat.T_solidus,
-        g.FLAG_GAS,
-    )
+    if getattr(twin, "use_dual_alloy", False):
+        kernels.update_time_above_T_dual(
+            g.T, g.flags, g.alloy_frac,
+            g.time_above_800_s, g.time_above_1100_s, g.time_above_solidus_s,
+            g.dt, 800.0 + 273.15, 1100.0 + 273.15,
+            twin.mat.T_solidus, twin.plate_mat.T_solidus,
+            g.FLAG_GAS,
+        )
+    else:
+        kernels.update_time_above_T(
+            g.T, g.flags,
+            g.time_above_800_s, g.time_above_1100_s, g.time_above_solidus_s,
+            g.dt, 800.0 + 273.15, 1100.0 + 273.15, twin.mat.T_solidus,
+            g.FLAG_GAS,
+        )
     kernels.snapshot_forces(g.Fx, g.Fy, g.Fz, g.Fx_snap, g.Fy_snap, g.Fz_snap)
 
     if twin.enable_substrate_growth or twin.enable_bead_freeze:
-        if twin.use_material_tables:
+        if getattr(twin, "use_dual_alloy", False):
+            free_surface.remelt_hot_solid_dual(
+                g.T, g.H, g.f_l, g.phi, g.flags, g.alloy_frac,
+                twin.L_rho, twin.H_sol, twin.H_liq,
+                twin.plate_L_rho, twin.plate_H_sol, twin.plate_H_liq,
+                g.FLAG_SOLID, g.FLAG_FLUID,
+            )
+        elif twin.use_material_tables:
             free_surface.remelt_hot_solid(
                 g.T, g.H, g.f_l, g.phi, g.flags,
                 twin.L_rho, twin.H_sol, twin.H_liq,
@@ -505,7 +582,17 @@ def coupled_step(
             dir_x, dir_y, dir_z = getattr(twin, "_torch_dir_xyz", (1.0, 0.0, 0.0))
             lookback_cells = max(2.0, twin.trailing_solidify_lookback_mm / (g.dx * 1000.0))
             T_freeze = twin.mat.T_liquidus + twin.trailing_solidify_temp_margin_K
-            if twin.use_material_tables:
+            if getattr(twin, "use_dual_alloy", False):
+                T_freeze_p = twin.plate_mat.T_liquidus + twin.trailing_solidify_temp_margin_K
+                kernels.solidify_trailing_pool_dual(
+                    g.T, g.H, g.f_l, g.phi, g.flags, g.ux, g.uy, g.uz,
+                    g.cp_rho_field, g.alloy_frac,
+                    arc_i, arc_j, arc_k, dir_x, dir_y, dir_z, lookback_cells,
+                    T_freeze, twin.mat.T_solidus,
+                    T_freeze_p, twin.plate_mat.T_solidus,
+                    g.FLAG_SOLID, g.FLAG_FLUID, g.FLAG_GAS,
+                )
+            elif twin.use_material_tables:
                 kernels.solidify_trailing_pool(
                     g.T, g.H, g.f_l, g.phi, g.flags, g.ux, g.uy, g.uz, g.cp_rho_field,
                     arc_i, arc_j, arc_k, dir_x, dir_y, dir_z, lookback_cells, T_freeze,

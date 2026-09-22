@@ -44,6 +44,7 @@ tracers.vtp
 sequence/
 sequence_*/
 bundle_step_*/
+.waam_sweep_tmp/
 
 # ── HPC / SLURM local artifacts ───────────────────────────────────────────────
 slurm-*.out

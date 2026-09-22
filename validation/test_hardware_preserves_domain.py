@@ -30,16 +30,16 @@ def run() -> None:
     dx_mm = g.dx * 1e3
     dom = (g.nx * dx_mm, g.ny * dx_mm, g.nz * dx_mm)
 
-    # Job asks for domain 80×80×25 and plate 50×50.
+    # Job asks for domain 80×80×25 and plate 60×60.
     assert abs(dom[0] - 80.0) < 5.0, f"domain X rewritten: {dom}"
     assert abs(dom[1] - 80.0) < 5.0, f"domain Y rewritten: {dom}"
-    assert twin.plate_size_mm == (50.0, 50.0)
+    assert twin.plate_size_mm == (60.0, 60.0)
 
     i0, i1, j0, j1 = twin.resolve_plate_ij()
     span_x = (i1 - i0) * dx_mm
     span_y = (j1 - j0) * dx_mm
-    assert abs(span_x - 50.0) < dx_mm * 2.0, f"plate X span={span_x}"
-    assert abs(span_y - 50.0) < dx_mm * 2.0, f"plate Y span={span_y}"
+    assert abs(span_x - 60.0) < dx_mm * 2.0, f"plate X span={span_x}"
+    assert abs(span_y - 60.0) < dx_mm * 2.0, f"plate Y span={span_y}"
     assert abs(span_x / span_y - 1.0) < 0.05, "top view should be square"
 
     # Derive domain from plate when domain_mm omitted.
@@ -61,7 +61,7 @@ def run() -> None:
 
     print(
         f"[hardware_domain] OK  domain≈{dom[0]:.0f}×{dom[1]:.0f}×{dom[2]:.0f} mm  "
-        f"plate=50×50  dx={dx_mm:.3f} mm  grid={g.nx}×{g.ny}×{g.nz}"
+        f"plate=60×60  dx={dx_mm:.3f} mm  grid={g.nx}×{g.ny}×{g.nz}"
     )
 
 

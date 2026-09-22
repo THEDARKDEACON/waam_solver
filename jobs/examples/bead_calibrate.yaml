@@ -48,6 +48,7 @@ simulation:
   enable_enthalpy_cap: true
   enable_evaporative_cooling: true
   arc_surface_weighting: true
+  strict_mode: true
 
 plate:
   thickness_mm: 8.0

@@ -16,7 +16,7 @@ WHAT THIS IS (be precise in publications):
   in central-moment coordinates.
 """
 
-import taichi as ti
+from waam_twin.compiler import ti
 from .grid import Q
 
 

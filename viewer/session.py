@@ -122,9 +122,9 @@ class ViewerSession:
                 x, y, z = self.path_driver.position_at_time(sim_t)
                 # Clamp in window-local coordinates (world x is valid up to
                 # offset + nx·dx when the moving window has shifted).
-                off = self.twin._window_offset_x_m
-                cx, cy = clamp_torch_to_domain(x - off, y, g.nx, g.ny, g.dx)
-                x, y = cx + off, cy
+                ox, oy, _ = self.twin.window_offset_m()
+                cx, cy = clamp_torch_to_domain(x - ox, y - oy, g.nx, g.ny, g.dx)
+                x, y = cx + ox, cy + oy
                 self.torch_x_m, self.torch_y_m, self.torch_z_m = x, y, z
             else:
                 self.torch_x_m += self._bounce_dir * self.torch_spd_m_s * g.dt
@@ -150,7 +150,10 @@ class ViewerSession:
         """
         x, y, z = self.torch_position_now()
         if self.path_driver is None:
-            x += self.twin._window_offset_x_m
+            ox, oy, oz = self.twin.window_offset_m()
+            x += ox
+            y += oy
+            z += oz
         return x * 1000.0, y * 1000.0, z * 1000.0
 
     def torch_surface_mm(self) -> tuple[float, float, float]:
@@ -161,9 +164,9 @@ class ViewerSession:
         g = twin.grid
         x_mm, y_mm, _ = self.torch_mm()
         dx_mm = g.dx * 1000.0
-        off_mm = twin._window_offset_x_m * 1000.0
-        i0 = max(0, min(int((x_mm - off_mm) / dx_mm), g.nx - 1))
-        j0 = max(0, min(int(y_mm / dx_mm), g.ny - 1))
+        ox, oy, _ = twin.window_offset_m()
+        i0 = max(0, min(int((x_mm / 1000.0 - ox) / g.dx), g.nx - 1))
+        j0 = max(0, min(int((y_mm / 1000.0 - oy) / g.dx), g.ny - 1))
         free_surface.surface_height_at(
             g.phi, g.flags, g.surface_k_buf,
             i0, j0, twin.nz_solid, g.FLAG_GAS, g.nz,

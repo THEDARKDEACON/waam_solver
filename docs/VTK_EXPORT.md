@@ -18,9 +18,9 @@ This document lists every array written to VTK files by `waam_twin`, how each qu
 | `twin.export_research_bundle(out_dir/)` | volume + surface + tracers + JSON | 0, 1, 3 |
 | `python3 -m waam_twin.export ...` | Time series + `sequence.pvd` | CLI wrapper |
 
-**Requirements:** PyVista installed (`pip install pyvista`). Set `WAAM_HEADLESS=1` to skip VTK in batch runs.
+**Requirements:** PyVista installed (`pip install pyvista`). VTK export raises if PyVista is missing unless the caller passes `allow_skip=True` (batch `--no-vtk` / `WAAM_HEADLESS=1` with skip).
 
-**Coordinates:** Volume files use **millimetres**. Origin X includes the moving-window offset (`window_offset_x_mm`). Spacing = `dx_mm` in all three axes.
+**Coordinates:** Volume files use **millimetres**. Origin is the moving-window offset `(window_offset_x_mm, window_offset_y_mm, window_offset_z_mm)`. Spacing = `dx_mm` in all three axes.
 
 **Storage layout:** Cell-centred arrays, Fortran order (`order="F"`), on PyVista `ImageData` with dimensions `(nx+1, ny+1, nz+1)`.
 
@@ -50,6 +50,8 @@ These are **live GPU fields** on `WAAMGrid`, updated each LBM timestep in [`solv
 | `Liquid_Fraction` | `f_l` | 0–1 | From `H`: 0 in solid, 1 in liquid, linear in mushy zone between H_sol and H_liq. |
 | `VOF_phi` | `phi` | 0–1 | Volume-of-fluid metal fraction (0 = gas, 1 = bulk metal). Advected with LBM velocity; reinitialized each step when `enable_vof`. |
 | `Cell_Flags` | `flags` | bitmask | `0` fluid, `1` solid (substrate/walls), `2` gas, `4` interface (VOF). Updated from φ when VOF is on. |
+| `Alloy_id` | `alloy_id` | int | Birth alloy: `0` wire/deposit, `1` plate. Mixing does not rewrite this tag. |
+| `Alloy_frac` | `alloy_frac` | float | Composition in `[0, 1]` (0=wire, 1=plate). Stays 0/1 unless `enable_alloy_mixing`. |
 | `T_max_K` | `T_max` | K | Running maximum of `T` per cell (HAZ envelope). Updated after thermal step; gas cells skipped. [`kernels.update_T_max`] |
 | `T_prev_K` | `T_prev` | K | Temperature at the **previous** timestep (used internally for cooling rate). |
 | `dTdt_Ks` | `dT_dt` | K/s | Raw `(T − T_prev) / dt` (positive while heating). Gas cells skipped. [`kernels.update_cooling_rate`] |
@@ -128,7 +130,7 @@ Lorentz fields (only if `enable_lorentz`):
 
 ## Tier 3 — Derived at export (`.vti`)
 
-Computed in Taichi/NumPy when Tier 3 is requested; not stored on GPU between steps.
+Computed in Quadrants/NumPy when Tier 3 is requested; not stored on GPU between steps.
 
 | VTK array | Units | How it is computed |
 |-----------|-------|-------------------|
@@ -224,4 +226,4 @@ python3 -m waam_twin.export \
 ## Related docs
 
 - [README.md § VTK export](../README.md) — quick start commands
-- [README.md § Interactive viewer](../README.md) — live GGUI keys and export shortcuts
+- [README.md § Interactive viewer](../README.md) — live viewer keys and export shortcuts

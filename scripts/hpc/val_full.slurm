@@ -36,7 +36,7 @@ export WAAM_FULL_VALIDATION=1
 
 echo "[slurm] host=$(hostname)  FULL_VALIDATION=1  BEAD=${WAAM_BEAD_VALIDATION:-0}"
 nvidia-smi || true
-python -c "import taichi as ti; ti.init(arch=ti.cuda); print('taichi arch=', ti.cfg.arch)"
+python -c "from waam_twin.compiler import ti; ti.init(arch=ti.cuda); print('quadrants arch=', ti.cfg.arch)"
 
 python -m waam_twin.validation.run_all
 echo "[slurm] val_full finished OK"

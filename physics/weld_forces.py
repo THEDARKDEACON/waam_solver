@@ -5,6 +5,8 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING
 
+from .. import logging_util as log
+
 from .deposition_balance import droplet_mass_kg, infer_transfer_mode
 
 if TYPE_CHECKING:
@@ -12,6 +14,28 @@ if TYPE_CHECKING:
     from ..grid import WAAMGrid
 
 MU0 = 4.0e-7 * math.pi
+
+
+def alloy_rho_args(twin: "WAAMTwin"):
+    """(alloy_frac field, rho_wire, rho_plate) for per-cell force conversion."""
+    rho_w = float(twin.mat.rho)
+    pmat = getattr(twin, "plate_mat", None)
+    rho_p = (
+        float(pmat.rho)
+        if getattr(twin, "use_dual_alloy", False) and pmat is not None
+        else rho_w
+    )
+    return twin.grid.alloy_frac, rho_w, rho_p
+
+
+def lorentz_cold_max_iters(twin: "WAAMTwin", g: "WAAMGrid") -> int:
+    """Bounded Jacobi budget for the first Lorentz solve of a run."""
+    job_iters = max(int(twin.lorentz_jacobi_iters), 1)
+    explicit = getattr(twin, "lorentz_jacobi_cold_iters", None)
+    if explicit is not None and int(explicit) > 0:
+        return max(job_iters, int(explicit), 20)
+    n_max = max(g.nx, g.ny, g.nz)
+    return max(job_iters, 8 * n_max, 20)
 
 
 def _kwf():
@@ -128,7 +152,11 @@ def gas_shear_tau_pa(twin: "WAAMTwin") -> float:
 
 
 def recoil_onset_K(twin: "WAAMTwin") -> float:
-    """Soft-onset temperature for CC recoil (matches evaporative cooling schedule)."""
+    """Soft-onset temperature shared by CC recoil and evaporative cooling.
+
+    Override with ``twin.T_recoil_onset_K``; default is
+    ``max(0.85 * T_boil, T_liq + 200)``.
+    """
     explicit = getattr(twin, "T_recoil_onset_K", None)
     if explicit is not None:
         return float(explicit)
@@ -140,6 +168,7 @@ def recoil_onset_K(twin: "WAAMTwin") -> float:
 def apply_recoil(twin: "WAAMTwin", g: "WAAMGrid", arc_i: float, arc_j: float, arc_k: float) -> None:
     if not twin.enable_recoil:
         return
+    alloy_id, rho_w, rho_p = alloy_rho_args(twin)
     if twin.use_recoil_clausius_clapeyron:
         _kwf().apply_vapor_recoil_clausius_clapeyron(
             g.Fz, g.T, g.phi, g.flags,
@@ -147,7 +176,7 @@ def apply_recoil(twin: "WAAMTwin", g: "WAAMGrid", arc_i: float, arc_j: float, ar
             twin.P_vapor_ref_Pa, twin.T_boiling_K, recoil_onset_K(twin),
             twin.L_vapor_J_kg, twin.R_spec_vapor_J_kgK,
             float(getattr(twin, "recoil_accommodation", 0.54)),
-            g.dt, g.dx, twin.mat.rho,
+            g.dt, g.dx, alloy_id, rho_w, rho_p,
             g.FLAG_SOLID, g.FLAG_GAS,
         )
     else:
@@ -156,7 +185,7 @@ def apply_recoil(twin: "WAAMTwin", g: "WAAMGrid", arc_i: float, arc_j: float, ar
             g.Fz, g.T, g.phi, g.flags,
             arc_i, arc_j, arc_k, twin.sigma_cells,
             twin.recoil_pressure_pa, twin.mat.T_liquidus,
-            g.dt, g.dx, twin.mat.rho,
+            g.dt, g.dx, alloy_id, rho_w, rho_p,
             g.FLAG_SOLID, g.FLAG_GAS,
         )
 
@@ -165,11 +194,12 @@ def apply_gas_shear(twin: "WAAMTwin", g: "WAAMGrid", arc_i: float, arc_j: float,
     if not twin.enable_gas_shear:
         return
     tau = gas_shear_tau_pa(twin)
+    alloy_id, rho_w, rho_p = alloy_rho_args(twin)
     kwf = _kwf()
     kwf.apply_gas_shear_stress(
         g.Fx, g.Fy, g.phi, g.flags,
         arc_i, arc_j, arc_k, twin.sigma_cells,
-        tau, g.dt, g.dx, twin.mat.rho,
+        tau, g.dt, g.dx, alloy_id, rho_w, rho_p,
         g.FLAG_SOLID, g.FLAG_GAS,
     )
 
@@ -195,11 +225,12 @@ def apply_droplet_impact(
         g.FLAG_GAS, g.nx, g.ny, g.nz,
     )
     if twin.enable_droplet_impact_pressure:
+        alloy_id, rho_w, rho_p = alloy_rho_args(twin)
         kwf.apply_droplet_impact_pressure(
             g.Fz, g.flags, g.phi, g.f_l,
             arc_i, arc_j, arc_k, drop_r,
             droplet_impact_pressure_pa(twin, drop_mass_kg, drop_r * g.dx),
-            g.dt, g.dx, twin.mat.rho,
+            g.dt, g.dx, alloy_id, rho_w, rho_p,
             g.FLAG_SOLID, g.FLAG_GAS,
         )
 
@@ -235,10 +266,10 @@ def solve_lorentz(twin: "WAAMTwin", g: "WAAMGrid", arc_i: float, arc_j: float, a
     # when the relative L1 change drops below tolerance. Jacobi needs
     # O(N²·ln 1/tol) iterations from a cold start, so the first solve gets a
     # grid-scaled cap; warm-started steps use the configured budget.
-    max_iters = max(int(twin.lorentz_jacobi_iters), 20)
+    max_iters = max(int(twin.lorentz_jacobi_iters), 1)
     if cold_start:
-        n_max = max(g.nx, g.ny, g.nz)
-        max_iters = max(max_iters, 2 * n_max * n_max)
+        max_iters = lorentz_cold_max_iters(twin, g)
+    twin._lorentz_max_iters_last = max_iters
     tol = float(getattr(twin, "lorentz_jacobi_tol", 1e-4))
     check_every = 10
     converged = False
@@ -257,17 +288,27 @@ def solve_lorentz(twin: "WAAMTwin", g: "WAAMGrid", arc_i: float, arc_j: float, a
         if rel < tol:
             converged = True
             break
+    twin._lorentz_iters_last = iters_done
+    if cold_start:
+        log.info(
+            f"[weld_forces] Lorentz cold-start Jacobi iters={iters_done}/{max_iters} "
+            f"converged={int(converged)}"
+        )
     if not converged:
         twin._lorentz_unconverged = getattr(twin, "_lorentz_unconverged", 0) + 1
         twin._lorentz_unconverged_streak = getattr(twin, "_lorentz_unconverged_streak", 0) + 1
         if twin._lorentz_unconverged in (1, 10, 100) or twin._lorentz_unconverged % 1000 == 0:
-            print(
+            log.warning(
                 f"[weld_forces] WARNING: Lorentz Jacobi hit {max_iters} iters "
                 f"without converging (rel Δ={rel:.2e} > {tol:.0e}); "
-                f"raise lorentz_jacobi_iters. ({twin._lorentz_unconverged} occurrences)"
+                f"J×B skipped this step. Raise lorentz_jacobi_iters. "
+                f"({twin._lorentz_unconverged} occurrences)"
             )
     else:
         twin._lorentz_unconverged_streak = 0
+
+    if not converged:
+        return
 
     kwf.elec_compute_J(
         g.Jx, g.Jy, g.Jz, g.phi_elec, g.sigma_elec, g.flags, g.dx,
@@ -285,8 +326,9 @@ def solve_lorentz(twin: "WAAMTwin", g: "WAAMGrid", arc_i: float, arc_j: float, a
         g.Bx, g.By, g.Bz, g.elec_rad_bins,
         arc_i, arc_j, g.dx, bin_dr_cells, MU0, g.n_elec_bins, g.nz,
     )
+    alloy_id, rho_w, rho_p = alloy_rho_args(twin)
     kwf.apply_lorentz_JxB(
         g.Fx, g.Fy, g.Fz,
         g.Jx, g.Jy, g.Jz, g.Bx, g.By, g.Bz,
-        g.f_l, g.flags, g.dt, g.dx, twin.mat.rho, g.FLAG_GAS,
+        g.f_l, g.flags, g.dt, g.dx, alloy_id, rho_w, rho_p, g.FLAG_GAS,
     )

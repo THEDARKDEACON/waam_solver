@@ -1,0 +1,58 @@
+! goldak_heat_source.mac
+! Double-ellipsoid Goldak volumetric heat source for Transient Thermal.
+! Requires goldak_load_params.mac already executed (QNET, VTRAV, X0, Y0, ...).
+!
+! Call each substep from a Mechanical Commands object, e.g.:
+!   /INPUT,'.../goldak_load_params','mac'
+!   /INPUT,'.../goldak_heat_source','mac'
+!
+! Assumes:
+!   - Geometry lengths in mm (Workbench metric mm)
+!   - Time in seconds
+!   - BFE HGEN in W/mm^3  (typical Workbench mm thermal)
+! If your unit system expects W/m^3, scale QV by 1e9.
+!
+! Torch motion: X fixed at X0, Y = Y0 + VTRAV * t, depth from ZTOP downward.
+! Travel direction +Y: front hemisphere is YI >= 0, rear YI < 0.
+
+*GET,TNOW,ACTIVE,,TIME,ACT
+*IF,TNOW,GT,TWELD,THEN
+  BFE,ALL,HGEN,,0
+  *RETURN
+*ENDIF
+
+YC = Y0 + VTRAV * TNOW
+XC = X0
+
+P32 = PI * SQRT(PI)
+CF  = 6.0 * SQRT(3.0) * QNET / P32
+
+ESEL,ALL
+*GET,NCOUNT,ELEM,,COUNT
+*GET,EID,ELEM,,NUM,MIN
+*DO,II,1,NCOUNT,1
+  *GET,EX,ELEM,EID,CENT,X
+  *GET,EY,ELEM,EID,CENT,Y
+  *GET,EZ,ELEM,EID,CENT,Z
+  XI = EX - XC
+  YI = EY - YC
+  ZI = ZTOP - EZ
+  *IF,ZI,LT,0,THEN
+    ZI = 0
+  *ENDIF
+  *IF,YI,GE,0,THEN
+    AA = AF
+    FFAC = FF
+  *ELSE
+    AA = AR
+    FFAC = FR
+  *ENDIF
+  ARG = 3.0*((XI*XI)/(BB*BB) + (YI*YI)/(AA*AA) + (ZI*ZI)/(CC*CC))
+  *IF,ARG,LT,9.0,THEN
+    QV = CF * FFAC / (AA*BB*CC) * EXP(-ARG)
+  *ELSE
+    QV = 0
+  *ENDIF
+  BFE,EID,HGEN,,QV
+  *GET,EID,ELEM,EID,NXTH
+*ENDDO

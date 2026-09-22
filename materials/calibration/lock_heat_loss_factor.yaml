@@ -1,0 +1,7 @@
+# Lock M11: heat_loss_factor scales convection and radiation.
+material: materials/placeholders/ER70S-6.yaml
+process: audit_lock
+arc_efficiency: 1.0
+heat_loss_factor: 2.0
+marangoni_scale: 1.0
+arc_sigma_scale: 1.0

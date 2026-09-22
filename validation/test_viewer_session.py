@@ -1,5 +1,5 @@
 """
-test_viewer_session.py — Viewer session loads job twin without opening GGUI.
+test_viewer_session.py — Viewer session loads job twin without opening a window.
 """
 
 from __future__ import annotations

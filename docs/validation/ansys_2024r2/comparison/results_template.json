@@ -1,0 +1,38 @@
+{
+  "code": "ansys_mechanical_2024r2",
+  "tier": "A_thermal_goldak",
+  "source_job": "jobs/examples/bead_on_plate.yaml",
+  "ansys_version": "2024 R2",
+  "time_s": 2.0,
+  "mesh": {
+    "n_elements": null,
+    "weld_band_dx_mm": 0.5,
+    "notes": ""
+  },
+  "macro": {
+    "pool_width_mm": null,
+    "pool_depth_mm": null,
+    "peak_temp_C": null,
+    "definition": "T >= T_liquidus isotherm",
+    "n_fused_nodes": null
+  },
+  "micro": {
+    "probe_name": "substrate_behind_arc",
+    "probe_xyz_mm": [20.0, 10.0, 2.0],
+    "probe_peak_temp_C": null,
+    "t85_s": null,
+    "time_above_800C_s": null,
+    "time_above_1100C_s": null
+  },
+  "experiment": {
+    "pool_width_mm": 7.0,
+    "pool_depth_mm": 3.0,
+    "source": "optional — paste measured macrograph when available"
+  },
+  "checks": {
+    "Q_net_W_verified": null,
+    "latent_heat_enabled": false,
+    "radiation_enabled": true,
+    "h_conv": 35.0
+  }
+}

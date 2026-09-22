@@ -1,9 +1,9 @@
-# waam_twin v2 — simulation engine (CI, headless, viewer)
+# waam_twin v2 — simulation engine (CI, headless)
 # Prefer: pip install -e .
+# VTK export: pip install -e ".[export]"
+# Cumulant derivation: pip install -e ".[derive]"
 # Upper bounds keep installs reproducible without requiring a lockfile.
-taichi>=1.7.0,<2
+quadrants>=1.3.0,<1.4
 numpy>=1.24.0,<3
 pyyaml>=6.0,<7
-sympy>=1.12,<2
-pyvista>=0.43.0,<0.46
 jsonschema>=4.0.0,<5

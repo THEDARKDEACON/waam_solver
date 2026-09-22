@@ -9,10 +9,9 @@ import pathlib
 from dataclasses import dataclass
 from typing import Any
 
-import taichi as ti
+from .compiler import ti
 
-# Bytes per cell (approx): 2×19×4 dist + 7×4 scalar + 6×4 vector + flags
-_BYTES_PER_CELL = 2 * 19 * 4 + 7 * 4 + 6 * 4 + 4
+from .lattice import estimate_fields_vram_mb
 
 from .paths import PROJECT_ROOT as _PROJECT_ROOT
 
@@ -138,7 +137,23 @@ def _detect_vram_mb() -> int | None:
         )
         return int(out.strip().split("\n")[0])
     except Exception:
+        pass
+    try:
+        import subprocess
+        out = subprocess.check_output(
+            ["rocm-smi", "--showmeminfo", "vram", "--csv"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        # CSV rows look like: device,VRAM Total Memory (B),VRAM Total Used Memory (B)
+        for line in out.splitlines():
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) < 2 or not parts[1].isdigit():
+                continue
+            return max(1, int(parts[1]) // (1024 * 1024))
+    except Exception:
         return None
+    return None
 
 
 def _detect_ram_mb() -> int:
@@ -159,8 +174,29 @@ def _runtime_is_live() -> bool:
         return False
 
 
+# Named Quadrants arches this twin will try. ``python`` is opt-in (debugger).
+BACKENDS: tuple[str, ...] = ("cpu", "cuda", "amdgpu", "vulkan", "metal", "python")
+_AUTO_ORDER: tuple[tuple[str, object], ...] = (
+    ("cuda", ti.cuda),
+    ("amdgpu", ti.amdgpu),
+    ("vulkan", ti.vulkan),
+    ("cpu", ti.cpu),
+)
+_ARCH_BY_NAME = {
+    "cpu": ti.cpu,
+    "cuda": ti.cuda,
+    "amdgpu": ti.amdgpu,
+    "vulkan": ti.vulkan,
+    "metal": ti.metal,
+    "python": ti.python,
+}
+
+
 def init_taichi(backend: str | None = None) -> PlatformProfile:
-    """Initialize Taichi once: CUDA → Vulkan → CPU.
+    """Initialize the Quadrants runtime once.
+
+    Auto order is native GPU first (CUDA, then ROCm/HIP), then Vulkan, then CPU.
+    Fastcache and GPU graphs are not enabled here.
 
     Backend selection priority:
       1. ``WAAM_FORCE_BACKEND`` — sticky override (survives tests that mutate
@@ -173,14 +209,17 @@ def init_taichi(backend: str | None = None) -> PlatformProfile:
         _taichi_initialized = False
         _profile = None
 
+    allowed = set(BACKENDS) | {"auto"}
     force = (os.environ.get("WAAM_FORCE_BACKEND") or "").strip().lower()
     env_backend = (os.environ.get("WAAM_BACKEND") or "").strip().lower()
-    if force in ("cpu", "cuda", "vulkan", "auto"):
+    if force in allowed:
         requested = force
-    elif env_backend in ("cpu", "cuda", "vulkan", "auto"):
+    elif env_backend in allowed:
         requested = env_backend
     else:
         requested = (backend or "auto").lower()
+        if requested not in allowed:
+            requested = "auto"
 
     # Re-init if caller/env asks for a different device than the live runtime.
     if _taichi_initialized and _profile is not None:
@@ -192,17 +231,12 @@ def init_taichi(backend: str | None = None) -> PlatformProfile:
     arch = None
     backend_used = "cpu"
 
-    if requested == "cpu":
-        arch = ti.cpu
-        backend_used = "cpu"
-    elif requested == "cuda":
-        arch = ti.cuda
-        backend_used = "cuda"
-    elif requested == "vulkan":
-        arch = ti.vulkan
-        backend_used = "vulkan"
+    if requested in _ARCH_BY_NAME:
+        arch = _ARCH_BY_NAME[requested]
+        backend_used = requested
+        ti.init(arch=arch, log_level=ti.WARN)
     else:
-        for candidate, name in ((ti.cuda, "cuda"), (ti.vulkan, "vulkan"), (ti.cpu, "cpu")):
+        for name, candidate in _AUTO_ORDER:
             try:
                 ti.init(arch=candidate, log_level=ti.WARN)
                 arch = candidate
@@ -213,24 +247,9 @@ def init_taichi(backend: str | None = None) -> PlatformProfile:
         if arch is None:
             ti.init(arch=ti.cpu, log_level=ti.WARN)
             backend_used = "cpu"
-        _taichi_initialized = True
-        tier = resolve_preset().name if os.environ.get("WAAM_PRESET") else _auto_tier_from_vram()
-        _profile = PlatformProfile(
-            backend=backend_used,
-            device_name=backend_used,
-            vram_mb=_detect_vram_mb(),
-            ram_mb=_detect_ram_mb(),
-            tier=tier,
-        )
-        print(
-            f"[waam_twin] Backend={_profile.backend}  tier={_profile.tier}  "
-            f"vram={_profile.vram_mb}MB  ram={_profile.ram_mb}MB"
-        )
-        return _profile
 
-    ti.init(arch=arch, log_level=ti.WARN)
     _taichi_initialized = True
-    tier = _auto_tier_from_vram()
+    tier = resolve_preset().name if os.environ.get("WAAM_PRESET") else _auto_tier_from_vram()
     _profile = PlatformProfile(
         backend=backend_used,
         device_name=backend_used,
@@ -238,9 +257,10 @@ def init_taichi(backend: str | None = None) -> PlatformProfile:
         ram_mb=_detect_ram_mb(),
         tier=tier,
     )
-    print(
-        f"[waam_twin] Backend={_profile.backend}  tier={_profile.tier}  "
-        f"vram={_profile.vram_mb}MB  ram={_profile.ram_mb}MB"
+    from . import logging_util as log
+    log.info(
+        f"[waam_twin] Backend={_profile.backend}  compiler=quadrants  "
+        f"tier={_profile.tier}  vram={_profile.vram_mb}MB  ram={_profile.ram_mb}MB"
     )
     return _profile
 
@@ -252,7 +272,7 @@ def ensure_taichi() -> PlatformProfile:
 
 
 def reset_taichi() -> None:
-    """Reset Taichi and clear the cached backend/profile state."""
+    """Reset the Quadrants runtime and clear the cached backend/profile state."""
     global _taichi_initialized, _profile
     try:
         ti.reset()
@@ -271,11 +291,36 @@ def auto_tracer_count(vram_mb: int | None, preset: PresetConfig) -> int:
     return preset.max_tracers
 
 
-def estimate_grid_vram_mb(nx: int, ny: int, nz: int, max_tracers: int) -> float:
-    n = nx * ny * nz
-    grid_bytes = n * _BYTES_PER_CELL
-    tracer_bytes = max_tracers * (3 * 4 + 4)
-    return (grid_bytes + tracer_bytes) / (1024 ** 2)
+def vram_flags_from_job(job: dict | None) -> tuple[bool, bool, bool]:
+    """Lorentz / VOF / export flags for auto_grid.
+
+    Size against the **full optional set** when ``physics_tier`` is ``full``
+    or Lorentz/VOF will be allocated (flags applied after grid construction).
+    """
+    sim = (job or {}).get("simulation") or {}
+    tier = str(sim.get("physics_tier") or "flow").strip().lower()
+    lorentz = bool(sim["enable_lorentz"]) if "enable_lorentz" in sim else tier == "full"
+    vof = bool(sim["enable_vof"]) if "enable_vof" in sim else tier != "thermal"
+    if tier == "full" or lorentz or vof:
+        return True, True, True
+    return bool(lorentz), bool(vof), True
+
+
+def estimate_grid_vram_mb(
+    nx: int,
+    ny: int,
+    nz: int,
+    max_tracers: int,
+    *,
+    lorentz: bool = True,
+    vof: bool = True,
+    export: bool = True,
+) -> float:
+    """VRAM estimate matching WAAMGrid (defaults to full optional field set)."""
+    return estimate_fields_vram_mb(
+        nx, ny, nz, max_tracers,
+        lorentz=lorentz, vof=vof, export=export,
+    )
 
 
 def auto_grid(
@@ -286,6 +331,9 @@ def auto_grid(
     max_cells: int | None = None,
     *,
     log_coarsen: bool = True,
+    lorentz: bool = True,
+    vof: bool = True,
+    export: bool = True,
 ) -> tuple[int, int, int, float]:
     """
     Pick (nx, ny, nz, dx) for a fixed physical domain.
@@ -308,7 +356,9 @@ def auto_grid(
     cell_cap = int(max_cells) if max_cells is not None else None
 
     def _over_budget() -> bool:
-        if estimate_grid_vram_mb(nx, ny, nz, max_tracers) > budget:
+        if estimate_grid_vram_mb(
+            nx, ny, nz, max_tracers, lorentz=lorentz, vof=vof, export=export,
+        ) > budget:
             return True
         if cell_cap is not None and nx * ny * nz > cell_cap:
             return True
@@ -320,7 +370,9 @@ def auto_grid(
         ny = max(8, int(ly / dx_m))
         nz = max(8, int(lz / dx_m))
 
-    est = estimate_grid_vram_mb(nx, ny, nz, max_tracers)
+    est = estimate_grid_vram_mb(
+        nx, ny, nz, max_tracers, lorentz=lorentz, vof=vof, export=export,
+    )
     n_cells = nx * ny * nz
     if est > budget or (cell_cap is not None and n_cells > cell_cap):
         raise MemoryError(
@@ -346,8 +398,20 @@ def auto_grid(
     return nx, ny, nz, dx_m
 
 
-def check_vram_budget(nx: int, ny: int, nz: int, max_tracers: int, budget_mb: int) -> None:
-    est = estimate_grid_vram_mb(nx, ny, nz, max_tracers)
+def check_vram_budget(
+    nx: int,
+    ny: int,
+    nz: int,
+    max_tracers: int,
+    budget_mb: int,
+    *,
+    lorentz: bool = True,
+    vof: bool = True,
+    export: bool = True,
+) -> None:
+    est = estimate_grid_vram_mb(
+        nx, ny, nz, max_tracers, lorentz=lorentz, vof=vof, export=export,
+    )
     if est > budget_mb:
         raise MemoryError(
             f"Estimated VRAM {est:.1f} MB exceeds budget {budget_mb} MB. "

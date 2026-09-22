@@ -32,7 +32,9 @@
     "variable_tau": { "type": "boolean" },
     "porosity_pct": { "type": "number", "minimum": 0, "maximum": 100 },
     "n_trapped_tracers": { "type": "integer", "minimum": 0 },
-    "window_offset_x_mm": { "type": "number", "minimum": 0 },
+    "window_offset_x_mm": { "type": "number" },
+    "window_offset_y_mm": { "type": "number" },
+    "window_offset_z_mm": { "type": "number" },
     "physics_tier": { "type": "string" },
     "strict_mode": { "type": "boolean" },
     "force_diagnostics": {

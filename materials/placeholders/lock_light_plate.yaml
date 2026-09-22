@@ -1,0 +1,18 @@
+# Lock M6: plate density half of ER70S-6 wire so |F|_lu scales as ρ_wire/ρ_plate = 2.
+name: lock-light-plate
+status: placeholder
+source: "Audit lock — synthetic low density for dual-alloy force scaling"
+
+constants:
+  k: 30.0
+  rho: 3500.0
+  cp: 680.0
+  alpha: 6.3e-6
+  T_solidus: 1748.0
+  T_liquidus: 1793.0
+  L_fusion: 272000.0
+  gamma_0: 1.8
+  dgamma_dT: -4.3e-4
+  T_ref_gamma: 1793.0
+  mu: 0.0065
+  beta_T: 1.2e-4

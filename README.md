@@ -1,7 +1,9 @@
 # waam_twin v2
 
-GPU-accelerated WAAM melt-pool digital twin: **Taichi LBM** + **enthalpy–porosity** solidification + **VOF** free surface.  
+GPU-accelerated WAAM melt-pool digital twin: **Quadrants LBM** + **enthalpy–porosity** solidification + **VOF** free surface.  
 Version **2.0.0** — portable presets, YAML materials, validated regression suite.
+
+The compiler is [Quadrants](https://github.com/Genesis-Embodied-AI/quadrants) (independent Taichi fork). Kernel source still uses the `ti` spelling via `waam_twin.compiler`.
 
 ---
 
@@ -20,22 +22,23 @@ waam_twin/                    ← git repository root (this folder)
 ├── README.md
 ├── requirements.txt
 ├── paths.py                  # PROJECT_ROOT = repo root
-├── runtime.py                # Taichi init, presets, auto_grid
+├── runtime.py                # Quadrants init, presets, auto_grid
 ├── twin.py                   # WAAMTwin orchestrator
-├── grid.py                   # SoA Taichi fields
-├── kernels.py                # Taichi kernels (migrating → physics/)
+├── grid.py                   # SoA Quadrants fields
+├── compiler.py               # Quadrants import; kernels keep `ti` spelling
+├── kernels/                  # GPU kernels (@ti.kernel on Quadrants)
 ├── materials.py              # YAML alloy loader
 ├── calibration.py            # Process overlay scalars
 ├── job.py                    # Job YAML loader
 ├── torch_path.py             # CSV / waypoint torch paths
 ├── kuka_adapter.py           # KUKA TCP mm → sim metres (thin bridge)
 ├── benchmark.py              # Pool W/D measurement helpers
-├── viewer/                   # Interactive Taichi GGUI viewer
+├── viewer/                   # Interactive PyVista melt-pool viewer
 ├── verify.py                 # → validation.run_all
 ├── config/
 │   └── presets.yaml          # minimal | standard | high | ultra
 ├── jobs/
-│   ├── examples/             # bead_calibrate, bead_on_plate, example.yaml, …
+│   ├── examples/             # bead_calibrate, locks/, example.yaml, …
 │   └── paths/                # CSV torch paths (bead_calibrate.csv, …)
 ├── materials/
 │   ├── schema.json
@@ -48,7 +51,7 @@ waam_twin/                    ← git repository root (this folder)
 ├── scripts/hpc/              # SLURM templates + headless run_batch.py
 ├── runs/                     # Batch outputs (gitignored contents)
 ├── logs/                     # SLURM / local logs (gitignored contents)
-├── physics/                  # Modular operators (re-export kernels)
+├── physics/                  # Host-side orchestration (kernels/ is the GPU home)
 │   ├── thermal.py
 │   ├── phase_change.py
 │   ├── forces.py
@@ -151,10 +154,11 @@ See [docs/weld_pool_physics.md](docs/weld_pool_physics.md), [`solvers/coupled_st
 
 | Module | Role |
 |--------|------|
-| `runtime.py` | CUDA → Vulkan → CPU fallback; VRAM-aware grid sizing |
+| `runtime.py` | CUDA → ROCm/HIP → Vulkan → CPU; VRAM-aware grid sizing |
 | `grid.py` | Ping-pong LBM distributions, T, H, φ, flags, tracers |
-| `physics/*` | Thin API over `kernels.py` (ongoing migration) |
-| `kernels.py` | Taichi `@ti.kernel` implementations |
+| `physics/*` | Orchestration / host-side force and material helpers |
+| `kernels/` | GPU home: all Quadrants `@ti.kernel` implementations |
+| `compiler.py` | Quadrants import; `ti` alias for kernel source |
 | `twin.py` | Public API: `from_preset`, `from_job`, `run_path`, exports |
 | `validation/` | Kernel-only and process benchmarks |
 
@@ -162,7 +166,7 @@ See [docs/weld_pool_physics.md](docs/weld_pool_physics.md), [`solvers/coupled_st
 
 ## Installation
 
-**Requirements:** Python **3.10+** (3.11 recommended), Linux preferred (Taichi CPU/Vulkan/CUDA).
+**Requirements:** Python **3.10+** (3.11 recommended), Linux preferred (Quadrants CPU/CUDA/ROCm/Vulkan).
 
 ```bash
 git clone https://github.com/THEDARKDEACON/waam_solver.git waam_twin
@@ -170,6 +174,8 @@ cd waam_twin
 python3 -m venv .venv && source .venv/bin/activate
 pip install -U pip
 pip install -e .
+# VTK export (optional): pip install -e ".[export]"
+# Offline collision derivation (optional): pip install -e ".[derive]"
 ```
 
 Editable install is the preferred path. It avoids the old "clone folder must be
@@ -180,7 +186,7 @@ After install, verify the GPU backend before any long job:
 
 ```bash
 nvidia-smi
-python -c "import taichi as ti; ti.init(arch=ti.cuda); print(ti.cfg.arch)"
+python -c "from waam_twin.compiler import ti; ti.init(arch=ti.cuda); print(ti.cfg.arch)"
 ```
 
 > Backend / preset helpers: `from waam_twin.runtime import init_taichi`
@@ -188,20 +194,21 @@ python -c "import taichi as ti; ti.init(arch=ti.cuda); print(ti.cfg.arch)"
 
 ### CUDA / GPU backends
 
-Taichi's CUDA wheels are tied to a CUDA toolkit series. Mismatches fall back to
-CPU **silently** unless you check the init banner.
+Quadrants CUDA/ROCm wheels are tied to a driver + toolkit series. Check the
+init banner rather than assuming the first GPU arch worked.
 
 | Check | Command |
 |-------|---------|
-| GPU driver | `nvidia-smi` |
-| Taichi CUDA usable | `python -c "import taichi as ti; ti.init(arch=ti.cuda); print(ti.cfg.arch)"` |
-| Preferred backend | `export WAAM_BACKEND=cuda` (or `vulkan` / `cpu`) |
+| NVIDIA driver | `nvidia-smi` |
+| AMD driver | `rocm-smi` |
+| CUDA usable | `python -c "from waam_twin.compiler import ti; ti.init(arch=ti.cuda); print(ti.cfg.arch)"` |
+| ROCm usable | `python -c "from waam_twin.compiler import ti; ti.init(arch=ti.amdgpu); print(ti.cfg.arch)"` |
+| Preferred backend | `export WAAM_BACKEND=cuda` (or `amdgpu` / `vulkan` / `cpu`) |
 | Sticky override | `export WAAM_FORCE_BACKEND=cuda` (wins over tests that reset `WAAM_BACKEND`) |
 
-If `ti.init(arch=ti.cuda)` raises or prints a CPU fallback, install a Taichi
-build matching your driver (`pip install taichi` from PyPI, or a nightly that
-lists your CUDA version). Vulkan is a useful middle ground on AMD/Intel and as
-a CUDA fallback.
+If `ti.init(arch=ti.cuda)` raises, install Quadrants matching your driver
+(`pip install 'quadrants>=1.3.0,<1.4'`). Native ROCm is `WAAM_BACKEND=amdgpu`;
+Vulkan remains a cross-vendor fallback.
 
 ### PYTHONPATH (important)
 
@@ -264,7 +271,7 @@ twin.step(0.015, 0.010, is_welding=True)
 
 | Environment | Best for | Entry point |
 |-------------|----------|-------------|
-| **Local desktop** | Interactive debugging, GGUI viewer | `python -m waam_twin.viewer …` |
+| **Local desktop** | Interactive debugging, PyVista viewer | `python -m waam_twin.viewer …` |
 | **Colab / Jupyter** | Editable jobs, Drive sync | `notebooks/cloud_production_workflow.ipynb` |
 | **HPC + Docker** | Higher-resolution beads (this site) | `Dockerfile` + copy-paste below |
 | **HPC venv** | Fallback if Docker unavailable | modules + `.venv` below |
@@ -318,7 +325,7 @@ pip install -U pip
 pip install -e .
 
 nvidia-smi
-python -c "import taichi as ti; ti.init(arch=ti.cuda); print(ti.cfg.arch)"
+python -c "from waam_twin.compiler import ti; ti.init(arch=ti.cuda); print(ti.cfg.arch)"
 
 export WAAM_BACKEND=cuda
 mkdir -p runs
@@ -465,7 +472,7 @@ Main notebook run controls:
 | `EXPORT_BUNDLE` | write a final research bundle |
 | `EXPORT_SEQUENCE` | export time-series VTK frames during the main run |
 | `SEQUENCE_EVERY` | export every N steps when sequence export is enabled |
-| `RESET_TAICHI_EACH_RUN` | reinitialize Taichi before each run |
+| `RESET_TAICHI_EACH_RUN` | reinitialize Quadrants before each run |
 | `FREE_VRAM_AFTER_RUN` | release memory after the run completes |
 | `KEEP_TWIN_IN_MEMORY` | keep the last twin alive for inspection/debugging |
 | `SYNC_TO_DRIVE` | copy outputs to mounted Google Drive |
@@ -484,13 +491,14 @@ Path behavior is intentionally consistent:
 
 ### Interactive viewer
 
-Real-time **Taichi GGUI** particle view of the melt pool (voxel-based, not ParaView quality).
+Real-time **PyVista** particle view of the melt pool (voxel-based, not ParaView quality).
+Needs `pip install -e ".[export]"`. Quadrants has no GGUI.
 
 ```bash
 # From FYP22-01 parent (PYTHONPATH=.) or any parent of waam_twin/
 # Prefer: pip install -e . inside waam_twin/ (then PYTHONPATH is optional)
 export PYTHONPATH=.
-export WAAM_BACKEND=cuda   # or cpu / vulkan
+export WAAM_BACKEND=cuda   # or cpu / vulkan / amdgpu
 
 # Nested under FYP22-01:
 python3 -m waam_twin.viewer --job waam_twin/jobs/examples/bead_calibrate.yaml
@@ -599,7 +607,7 @@ Each frame folder contains:
 - Open **`sequence.pvd`**, not a lone `volume_step_*.vti`.
 - Turn **Z clip off** in the viewer (`Z`) before exporting if you need the full crown in screenshots.
 - Threshold `Cell_Flags` (0 = fluid, 1 = solid) and clip Z above substrate to isolate deposited bead.
-- Legacy `.vts` paths are rewritten to `.vti`. Set `WAAM_HEADLESS=1` to skip VTK in batch runs.
+- Legacy `.vts` paths are rewritten to `.vti`. Missing PyVista raises unless you pass `allow_skip=True` (or `run_batch.py --no-vtk`).
 
 Full field inventory (names, units, computation): [docs/VTK_EXPORT.md](docs/VTK_EXPORT.md).
 
@@ -613,7 +621,9 @@ predicted closures (Lin–Eagar \(p_0\), CC \(P_\mathrm{sat}\), Marangoni \(d\ga
 are listed in the job YAML header. Held-out process variants
 (`bead_calibrate_heldout_fast.yaml`, `bead_calibrate_heldout_hot.yaml`) must not
 retune those knobs — report with `python -m waam_twin.tools.prediction_report`.
-Recoil evidence: `python -m waam_twin.tools.recoil_accommodation_sweep`.
+Recoil evidence: `python -m waam_twin.tools.recoil_accommodation_sweep`.  
+Toggle sensitivity (non-locked YAML knobs vs W/D): `python -m waam_twin.tools.sensitivity_sweep`.  
+Ansys 2024 R2 bead-on-plate compare (Tier A Goldak + metrics): `docs/validation/ansys_2024r2/`.
 Reference write-up: [docs/validation/reference_case_ER70S6.md](docs/validation/reference_case_ER70S6.md).
 Plain-language guide (macrograph vs multipass, calibration vs held-out):
 [docs/validation/UNDERSTANDING_CALIBRATION_AND_DATA.md](docs/validation/UNDERSTANDING_CALIBRATION_AND_DATA.md).
@@ -678,7 +688,7 @@ deposition:
 | `layer_height_mm` | nominal CTWD / layer rise hint (does **not** auto-offset path Z) |
 | `interpass` | cooling/travel settings between passes |
 | `reference` | experimental comparison targets (documentation/reporting) |
-| `model_reference` | expected simulator envelope used by CI/regression checks |
+| `model_reference` | expected simulator envelope used by local regression checks |
 | `probes` | named sample points recorded during the run |
 
 ### `plate:`
@@ -710,7 +720,8 @@ deposition:
 | `enable_enthalpy_cap` | clamp extreme enthalpy / vaporization spikes |
 | `arc_surface_weighting` | bias arc heating toward the top free surface |
 | `enable_substrate_growth` | allow hot solid/substrate remelt and growth studies |
-| `enable_moving_window` | enable moving-domain/window logic |
+| `enable_moving_window` | slide the local mesh with the torch (+X, ±Y; ±Z if `use_torch_z`) |
+| `enable_alloy_mixing` | lerp wire/plate `alloy_frac` in liquid neighbours (default off; birth tags stay) |
 | `enable_ctwd` | enable wire stick-out / CTWD preheat model |
 | `use_torch_z` | use path/frame Z to update torch standoff |
 
@@ -830,7 +841,7 @@ Geometry is **not** auto-scaled with power: larger \(Q_{\mathrm{net}}\) raises p
 | `frame` | frame transform YAML for robot/workcell coordinates |
 | `probes` | list of named `{name, x_mm, y_mm, z_mm}` sample points |
 | `reference` | experimental targets for comparison/reporting |
-| `model_reference` | expected simulator envelope for sanity/CI checks |
+| `model_reference` | expected simulator envelope for sanity checks |
 | `interpass.cooling_steps` | idle cooling steps between passes |
 | `interpass.travel_speed_mm_s` | non-welding travel speed during interpass motion |
 | `layer_height_mm` | nominal layer rise for multi-layer jobs |
@@ -877,7 +888,7 @@ See [docs/MATERIALS.md](docs/MATERIALS.md) and [docs/HARDWARE.md](docs/HARDWARE.
 
 ## Validation
 
-Core CI gates (current defaults; tightening progression):
+Core validation gates (current defaults; tightening progression):
 
 | Gate | Previous | Current | Target (next) |
 |------|----------|---------|---------------|
@@ -890,12 +901,21 @@ Core CI gates (current defaults; tightening progression):
 
 \*Job-parity briefly loosened during a method change; smoke remains structural.
 `WAAM_FULL_VALIDATION=1` tightens geometric pool parity to **15%**. These are
-interim CI gates, not claims of absolute accuracy. Telemetry reports pool W/D
-to 0.001 mm for debugging — do not confuse display precision with tolerance.
+interim local tripwires, not claims of absolute accuracy. They were **not**
+tightened in this pass: retuning Goldak / η / `evap_cooling_scale` / `C_acc`
+would break the held-out physics lock (`assert_physics_lock`). To try a
+stricter pool gate without touching those knobs, set `WAAM_POOL_GATE_PCT`
+(default 25 for `test_calibrated_pool`). Telemetry reports pool W/D to 0.001 mm
+for debugging — do not confuse display precision with tolerance.
+
+There is no GitHub Actions workflow. Run the suite locally (or on HPC):
 
 ```bash
-# Core CI (~2 min on CPU; use cuda on HPC for speed)
+# Core suite (~2 min on CPU; use cuda on HPC for speed)
 WAAM_BACKEND=cpu WAAM_PRESET=minimal python3 -m waam_twin.validation.run_all
+
+# Optional pytest entry (same core list; still sequential unless you parallelize)
+# pytest waam_twin/validation/test_pytest_bridge.py
 
 # Full suite (process + soak + held-out sims + recoil smoke + intensive)
 WAAM_FULL_VALIDATION=1 WAAM_BACKEND=cuda WAAM_PRESET=minimal \
@@ -933,6 +953,7 @@ python3 -m waam_twin.tools.validation_gate_status     # closed vs open experimen
 python3 -m waam_twin.tools.seed_goldak_from_pool --width 7 --depth 3
 python3 -m waam_twin.tools.multipass_report            # twolayer remelt / HAZ extents
 python3 -m waam_twin.tools.recoil_accommodation_sweep # C_acc evidence
+python3 -m waam_twin.tools.sensitivity_sweep         # job toggle W/D ranking
 python3 -m waam_twin.tools.fit_calibration --write
 python3 -m waam_twin.tools.run_validation_matrix --quick
 python3 -m waam_twin.tools.benchmark_performance
@@ -954,7 +975,7 @@ Legacy entry: `python3 -m waam_twin.verify` (delegates to `run_all`).
 | `WAAM_JOB` | path to job YAML | `jobs/examples/bead_on_plate.yaml` |
 | `WAAM_BEAD_STEPS` | int — force bead validation step count | unset |
 | `WAAM_MAX_BEAD_STEPS` | int — cap long path-derived runs | unset |
-| `WAAM_FULL_VALIDATION` | `1` = process + soak + held-out sims + recoil smoke + intensive | off |
+| `WAAM_FULL_VALIDATION` | `1` = process + soak + recoil smoke (not intensive / held-out) | off |
 | `WAAM_BEAD_VALIDATION` | `1` = bead aspect / wetting toe / macrograph gates | off |
 | `WAAM_HELDOUT_VALIDATION` | `1` = held-out prediction sims (process-only variants) | off |
 | `WAAM_INTENSIVE_PHYSICS` | `1` = coupled-force / vapor / Lorentz stress tests | off |
@@ -975,8 +996,6 @@ Legacy entry: `python3 -m waam_twin.verify` (delegates to `run_all`).
 export PYTHONPATH=.
 python3 -m waam_twin.tools.gcode_to_torch_csv part.gcode -o waam_twin/jobs/paths/part.csv
 ```
-
-Flask upload (`POST /api/gcode`) also writes `waam_twin/jobs/paths/<PROGRAM>.csv` automatically.
 
 **Job wiring:**
 

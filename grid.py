@@ -8,30 +8,19 @@ SoA rule: all fields are ti.field(shape=(nx, ny, nz)) or (Q, nx, ny, nz).
 Never use ti.Struct / ti.StructField (AoS breaks GPU coalescing).
 """
 
-import taichi as ti
+from waam_twin.compiler import ti
 from .materials import MaterialProps
-
-
-# D3Q19 velocity set — 19 discrete velocity directions
-Q = 19
-
-# D3Q19 discrete velocities (ex, ey, ez) — used in kernels
-_EX = ( 0, 1,-1, 0, 0, 0, 0, 1,-1, 1,-1, 1,-1, 1,-1, 0, 0, 0, 0)
-_EY = ( 0, 0, 0, 1,-1, 0, 0, 1,-1,-1, 1, 0, 0, 0, 0, 1,-1, 1,-1)
-_EZ = ( 0, 0, 0, 0, 0, 1,-1, 0, 0, 0, 0, 1,-1,-1, 1, 1,-1,-1, 1)
-
-# D3Q19 equilibrium weights
-_W = (
-    1.0/3.0,                                        # q=0  (rest)
-    1.0/18.0, 1.0/18.0, 1.0/18.0,                  # q=1..3
-    1.0/18.0, 1.0/18.0, 1.0/18.0,                  # q=4..6
-    1.0/36.0, 1.0/36.0, 1.0/36.0, 1.0/36.0,        # q=7..10
-    1.0/36.0, 1.0/36.0, 1.0/36.0, 1.0/36.0,        # q=11..14
-    1.0/36.0, 1.0/36.0, 1.0/36.0, 1.0/36.0,        # q=15..18
+from .lattice import (
+    Q,
+    EX as _EX,
+    EY as _EY,
+    EZ as _EZ,
+    W as _W,
+    OPP as _OPP,
+    N_CORE_VOLUME,
+    N_ELEC_BINS,
+    estimate_fields_vram_mb,
 )
-
-# Opposite direction lookup (for bounce-back boundaries)
-_OPP = (0, 2,1, 4,3, 6,5, 8,7, 10,9, 12,11, 14,13, 16,15, 18,17)
 
 
 class WAAMGrid:
@@ -49,6 +38,8 @@ class WAAMGrid:
         ux,uy,uz : Macroscopic velocity components       [lu/ts]
         Fx,Fy,Fz : Total body force (Marangoni+buoyancy) [lu/ts²]
         flags    : Cell type bitmask (see FLAG_* constants)
+        alloy_id   : Birth alloy tag (0=wire/deposit, 1=plate substrate)
+        alloy_frac : Composition in [0, 1] for property lerp (0=wire, 1=plate)
         
         porosity_pos    : Position of tracer particles [m]
         porosity_active : Whether the tracer is active (1) or inactive (0)
@@ -76,6 +67,7 @@ class WAAMGrid:
         allocate_lorentz: bool = False,
         allocate_vof: bool = False,
         allocate_export: bool = False,
+        dt_scale: float = 1.0,
     ):
         self.nx, self.ny, self.nz = nx, ny, nz
         self.dx = dx
@@ -85,6 +77,10 @@ class WAAMGrid:
         self._has_vof_buf = False
         self._has_export = False
         self._n_optional_volume = 0
+        scale = float(dt_scale)
+        if scale <= 0.0:
+            raise ValueError(f"dt_scale must be > 0, got {dt_scale}")
+        self.dt_scale = scale
 
         # ── LBM non-dimensionalisation ────────────────────────────────────
         # We target Ma ≈ 0.05 for stability with molten steel velocities.
@@ -92,7 +88,7 @@ class WAAMGrid:
         # Ma = u_max_lu / c_s = 0.05  →  u_max_lu = 0.05 / sqrt(3) ≈ 0.029 lu/ts
         self.u_ref_phys = 0.5          # m/s  (physical reference velocity)
         self.u_ref_lu   = 0.05         # lu/ts (lattice reference velocity)
-        self.dt         = dx * self.u_ref_lu / self.u_ref_phys   # [s]
+        self.dt         = dx * self.u_ref_lu / self.u_ref_phys * scale   # [s]
 
         # Kinematic viscosity in lattice units
         nu_phys = mat.mu / mat.rho     # m²/s
@@ -104,8 +100,11 @@ class WAAMGrid:
         self.alpha_lu = alpha_lu
         self.tau_T = 3.0 * alpha_lu + 0.5  # Thermal relaxation time
 
-        print(f"[WAAMGrid] Domain: {nx}×{ny}×{nz}  |  dx={dx*1000:.3f}mm  "
-              f"dt={self.dt*1e6:.3f}µs  τ={self.tau:.4f}  τ_T={self.tau_T:.4f}")
+        from . import logging_util as log
+        log.info(
+            f"[WAAMGrid] Domain: {nx}×{ny}×{nz}  |  dx={dx*1000:.3f}mm  "
+            f"dt={self.dt*1e6:.3f}µs  τ={self.tau:.4f}  τ_T={self.tau_T:.4f}"
+        )
 
         # ── Stability checks (previously printed but never enforced) ─────
         if self.tau <= 0.5:
@@ -114,7 +113,7 @@ class WAAMGrid:
                 f"(ν_lu={nu_lu:.3e}). Reduce dx or increase viscosity."
             )
         if self.tau < 0.505:
-            print(f"[WAAMGrid] WARNING: τ={self.tau:.4f} is marginally stable (< 0.505)")
+            log.warning(f"[WAAMGrid] WARNING: τ={self.tau:.4f} is marginally stable (< 0.505)")
         # Explicit FTCS diffusion limit for the finite-difference thermal step:
         # alpha_lu ≤ 1/6 in 3D.
         if alpha_lu > 1.0 / 6.0:
@@ -123,7 +122,7 @@ class WAAMGrid:
                 f"(explicit 3D diffusion limit). Reduce dx or dt ratio."
             )
         if alpha_lu > 0.15:
-            print(f"[WAAMGrid] WARNING: α_lu={alpha_lu:.4f} close to the 1/6 stability limit")
+            log.warning(f"[WAAMGrid] WARNING: α_lu={alpha_lu:.4f} close to the 1/6 stability limit")
 
         # ── GPU field allocation (strict SoA) ────────────────────────────
         # Core fields always; Lorentz / VOF scratch / export are optional and
@@ -147,6 +146,9 @@ class WAAMGrid:
         self.alpha_lu_field = ti.field(dtype=ti.f32, shape=shape3) # α_lu per cell
         self.dgamma_lu_field = ti.field(dtype=ti.f32, shape=shape3)  # dγ/dT in LBM units
         self.tau_field = ti.field(dtype=ti.f32, shape=shape3)        # per-cell SRT τ
+        self.alloy_id = ti.field(dtype=ti.i32, shape=shape3)         # 0=wire, 1=plate (birth)
+        self.alloy_frac = ti.field(dtype=ti.f32, shape=shape3)       # 0=wire … 1=plate
+        self.alloy_frac_buf = ti.field(dtype=ti.f32, shape=shape3)   # Jacobi scratch for mixing
         self.dT_dt = ti.field(dtype=ti.f32, shape=shape3)   # Cooling rate [K/s]
         self.T_prev = ti.field(dtype=ti.f32, shape=shape3)  # Previous-step T
         # Time-at-temperature integrals [s] (HAZ research)
@@ -209,9 +211,8 @@ class WAAMGrid:
         self.w.from_numpy(np.array(_W,   dtype=np.float32))
         self.opp.from_numpy(np.array(_OPP, dtype=np.int32))
 
-        # Core volume count: 24 f32 3D + flags (count flags as 1 volume slot)
-        # rho T T_max H f_l phi cp alpha dgamma tau dTdt Tprev ×3 HAZ Fxsnap×3 ux uy uz Fx Fy Fz = 24
-        self._n_core_volume = 24
+        # Core volume count: see lattice.N_CORE_VOLUME
+        self._n_core_volume = N_CORE_VOLUME
 
         if allocate_vof:
             self.ensure_vof_buffers()
@@ -250,7 +251,7 @@ class WAAMGrid:
         self.Bx = ti.field(dtype=ti.f32, shape=shape3)
         self.By = ti.field(dtype=ti.f32, shape=shape3)
         self.Bz = ti.field(dtype=ti.f32, shape=shape3)
-        self.n_elec_bins = 64
+        self.n_elec_bins = N_ELEC_BINS
         self.elec_rad_bins = ti.field(dtype=ti.f32, shape=(self.nz, self.n_elec_bins))
         self.elec_res_buf = ti.field(dtype=ti.f32, shape=())
         self.elec_norm_buf = ti.field(dtype=ti.f32, shape=())
@@ -283,11 +284,9 @@ class WAAMGrid:
 
     def estimated_vram_mb(self) -> float:
         """VRAM estimate counting every currently allocated full-volume field."""
-        n = self.nx * self.ny * self.nz
-        dist = 2 * Q * n * 4
-        n_vol = self._n_core_volume + self._n_optional_volume + 1  # +flags
-        volume = n_vol * n * 4
-        bins = self.nz * getattr(self, "n_elec_bins", 0) * 4 if self._has_lorentz else 0
-        slice_buf = self.ny * self.nz * 4
-        tracers = self.max_tracers * (3 * 4 + 4)
-        return (dist + volume + bins + slice_buf + tracers) / (1024 ** 2)
+        return estimate_fields_vram_mb(
+            self.nx, self.ny, self.nz, self.max_tracers,
+            lorentz=self._has_lorentz,
+            vof=self._has_vof_buf,
+            export=self._has_export,
+        )

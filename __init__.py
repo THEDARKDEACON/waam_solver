@@ -1,5 +1,5 @@
 """
-WAAM Digital Twin v2 — Taichi GPU multiphysics engine for WAAM melt pools.
+WAAM Digital Twin v2 — Quadrants GPU multiphysics engine for WAAM melt pools.
 """
 from .twin import WAAMTwin
 from . import runtime

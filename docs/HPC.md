@@ -8,7 +8,7 @@ paths:
 | **Docker** (below) | Preferred if your HPC allows Docker + NVIDIA Container Toolkit |
 | **venv + modules** | Fallback when Docker is unavailable |
 
-For local GGUI use the viewer; for Colab use `notebooks/cloud_production_workflow.ipynb`.
+For local PyVista use the viewer; for Colab use `notebooks/cloud_production_workflow.ipynb`.
 
 ## Copy-paste: Docker (preferred when available)
 
@@ -61,9 +61,10 @@ docker run --rm --gpus all -e WAAM_BACKEND=cuda -v "$PWD/runs:/app/runs" waam-tw
   --n-steps auto --sequence-every 0 --out runs/bead_on_plate_hires
 ```
 
-If Taichi initializes on **CPU** inside the container, the image CUDA tag likely
+If Quadrants initializes on **CPU** inside the container, the image CUDA tag likely
 mismatches the host driver — rebuild from a different `nvidia/cuda:…` base or
-ask the site which CUDA container tags they support.
+ask the site which CUDA container tags they support. On AMD nodes use a ROCm
+base image and `WAAM_BACKEND=amdgpu`.
 
 ## Copy-paste: venv (no Docker)
 
@@ -75,9 +76,9 @@ module load python/3.11         # site-specific — try: module avail
 module load cuda/12.2
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -U pip && pip install -e .
+pip install -U pip && pip install -e ".[export]"
 nvidia-smi
-python -c "import taichi as ti; ti.init(arch=ti.cuda); print(ti.cfg.arch)"
+python -c "from waam_twin.compiler import ti; ti.init(arch=ti.cuda); print(ti.cfg.arch)"
 
 # --- every run ---
 source .venv/bin/activate
@@ -190,7 +191,7 @@ See [HARDWARE.md](HARDWARE.md).
 ## What `module load` does
 
 It selects the centre’s preinstalled Python/CUDA for **this shell** (`PATH`,
-library paths). It does not install `waam_twin`. The venv + `pip install -e .`
+library paths). It does not install `waam_twin`. The venv + `pip install -e ".[export]"`
 does. On a laptop you usually skip `module load`.
 
 ## Why not the viewer command?
@@ -215,7 +216,7 @@ srun --gres=gpu:1 --mem=32G --time=04:00:00 --pty bash
 
 | Symptom | Fix |
 |---------|-----|
-| Taichi prints CPU / CUDA init fails | Fix `module load cuda/…`; re-create venv after loading modules |
+| Quadrants prints CPU / CUDA init fails | Fix `module load cuda/…`; re-create venv after loading modules |
 | CUDA OOM | See **Curbing OOM** above (preset → `dx` → `max_cells`) |
 | `[auto_grid] coarsened dx` | Expected under VRAM pressure; check printed grid size |
 | Job path not found | `cd` to repo root; use `jobs/examples/...` not `waam_twin/jobs/...` |

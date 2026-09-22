@@ -30,8 +30,8 @@ class ProbeSpec:
     def resolve(self, twin: "WAAMTwin") -> tuple[int, int, int] | None:
         g = twin.grid
         i = int((self.x_m - twin._window_offset_x_m) / g.dx)
-        j = int(self.y_m / g.dx)
-        k = int(self.z_m / g.dx)
+        j = int((self.y_m - twin._window_offset_y_m) / g.dx)
+        k = int((self.z_m - twin._window_offset_z_m) / g.dx)
         if not (0 <= i < g.nx and 0 <= j < g.ny and 0 <= k < g.nz):
             return None  # probe left the simulation window
         return i, j, k
@@ -53,8 +53,8 @@ class ProbeRecorder:
         self.probes.append(ProbeSpec(
             name=label,
             x_m=(i + 0.5) * g.dx + twin._window_offset_x_m,
-            y_m=(j + 0.5) * g.dx,
-            z_m=(k + 0.5) * g.dx,
+            y_m=(j + 0.5) * g.dx + twin._window_offset_y_m,
+            z_m=(k + 0.5) * g.dx + twin._window_offset_z_m,
         ))
 
     def add_world_mm(

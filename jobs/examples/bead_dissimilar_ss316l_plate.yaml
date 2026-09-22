@@ -1,0 +1,50 @@
+# =============================================================================
+# Dissimilar coupon — ER70S-6 wire on an SS316L plate
+# =============================================================================
+# Top-level material: is the wire / deposit. plate.material: is the substrate.
+# Fusion-zone cells keep their birth alloy (no mixing rule).
+# This does NOT replace bead_calibrate.yaml (same-alloy ER70S-6 lock).
+# =============================================================================
+
+simulation:
+  preset: standard
+  backend: auto
+  physics_tier: flow
+  domain_mm: [50, 40, 20]
+  dx_mm: 0.8
+  enable_vof: true
+  enable_csf_tension: true
+  enable_wetting: true
+  enable_bead_freeze: true
+
+plate:
+  thickness_mm: 8.0
+  size_mm: [40, 30]
+  material: materials/validated/SS316L.v1.yaml
+
+material: materials/placeholders/ER70S-6.yaml
+calibration: null
+torch_path_csv: jobs/paths/bead_line.csv
+
+heat_source: goldak
+goldak:
+  ff: 0.6
+  fr: 1.4
+  a_front_mm: 2.2
+  a_rear_mm: 4.2
+  b_mm: 3.0
+  c_mm: 1.5
+
+process:
+  current_A: 130
+  voltage_V: 20
+  arc_efficiency: 0.72
+  travel_speed_mm_s: 8
+  wire_feed_m_min: 4.0
+  wire_diameter_mm: 1.2
+  T_ambient_K: 293
+
+heat_loss:
+  convection: true
+  radiation: true
+  h_conv: 35.0

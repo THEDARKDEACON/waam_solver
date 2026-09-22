@@ -14,8 +14,8 @@
 #       --n-steps auto \
 #       --out runs/bead_on_plate_hires
 #
-# Match CUDA major version to the host driver (nvidia-smi). If Taichi falls
-# back to CPU, try a newer/older nvidia/cuda tag or rebuild on the target node.
+# Match CUDA major version to the host driver (nvidia-smi). If Quadrants
+# cannot init CUDA, try a newer/older nvidia/cuda tag or rebuild on the target node.
 
 FROM nvidia/cuda:12.2.0-runtime-ubuntu22.04
 
@@ -44,8 +44,11 @@ WORKDIR /app
 COPY . .
 
 RUN pip3 install -U pip setuptools wheel \
-    && pip3 install -r requirements.txt \
-    && pip3 install -e .
+    && pip3 install -e ".[export]" \
+    && useradd --create-home --uid 1000 waam \
+    && chown -R waam:waam /app
+
+USER waam
 
 # Default: higher-resolution bead. Override the command for other jobs.
 CMD ["python", "scripts/hpc/run_batch.py", \

@@ -8,7 +8,7 @@ import os
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        description="WAAM Twin v2 — interactive melt-pool viewer (Taichi GGUI)",
+        description="WAAM Twin v2 — interactive melt-pool viewer (PyVista)",
     )
     p.add_argument(
         "--job",

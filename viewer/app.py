@@ -1,4 +1,4 @@
-"""Taichi GGUI main loop for the WAAM melt-pool viewer."""
+"""Interactive melt-pool viewer (PyVista; Quadrants has no GGUI)."""
 
 from __future__ import annotations
 
@@ -6,8 +6,10 @@ import pathlib
 from collections import deque
 
 import numpy as np
-import taichi as ti
 
+from waam_twin.compiler import ti
+
+from . import pv_ui as ui
 from .cli import build_parser
 from .pick import lookat_to_grid, sample_cell
 from .session import create_session
@@ -29,45 +31,45 @@ PROBE_HISTORY_LEN = 48
 
 
 def _track_camera_zup(
-    camera: ti.ui.Camera,
-    window: ti.ui.Window,
+    camera: ui.Camera,
+    window: ui.Window,
     *,
     movement_speed: float = 2.0,
     yaw_speed: float = 2.0,
     pitch_speed: float = 2.0,
-    hold_key=ti.ui.LMB,
+    hold_key=ui.LMB,
 ) -> None:
     """WASD/QE + LMB look for Z-up scenes.
 
-    Taichi's ``Camera.track_user_inputs`` uses Y-up euler angles
-    (``utils.euler_to_vec``). This viewer sets ``camera.up(0,0,1)``, so the
-    stock helper maps drag-up→left and drag-left→up. Reimplement with Z-up
-    yaw (about Z) / pitch (elevation), but keep Taichi's FPS semantics:
-    translate along the view direction and always ``lookat = position + front``.
+    Quadrants dropped GGUI; this is the same FPS contract as the old Taichi
+    helper (lookat = position + front, yaw about Z, pitch elevation).
     """
     import time
     from math import asin, atan2, cos, pi, sin
-
-    from taichi.lang.matrix import Vector
 
     if not hasattr(camera, "_waam_last_time"):
         camera._waam_last_time = None
         camera._waam_last_mouse = (None, None)
 
-    front = (camera.curr_lookat - camera.curr_position).normalized()
-    up = camera.curr_up
-    left = up.cross(front)
+    pos = np.asarray(camera.curr_position, dtype=np.float64)
+    look = np.asarray(camera.curr_lookat, dtype=np.float64)
+    front = look - pos
+    fn = float(np.linalg.norm(front))
+    front = front / fn if fn > 1e-12 else np.array([0.0, 1.0, 0.0])
+    up = np.asarray(camera.curr_up, dtype=np.float64)
+    un = float(np.linalg.norm(up))
+    up = up / un if un > 1e-12 else np.array([0.0, 0.0, 1.0])
+    left = np.cross(up, front)
 
     now = time.perf_counter_ns()
     if camera._waam_last_time is None:
         camera._waam_last_time = now
     dt = (now - camera._waam_last_time) * 1e-9
     camera._waam_last_time = now
-    # Guard against a huge first-frame jump after pause / focus change.
     dt = min(max(dt, 0.0), 0.05)
     speed = movement_speed * dt * 60.0
 
-    delta = Vector([0.0, 0.0, 0.0])
+    delta = np.zeros(3, dtype=np.float64)
     if window.is_pressed("w"):
         delta += front * speed
     if window.is_pressed("s"):
@@ -76,19 +78,20 @@ def _track_camera_zup(
         delta += left * speed
     if window.is_pressed("d"):
         delta -= left * speed
-    if window.is_pressed("e"):
+    if window.is_pressed("e") or window.is_pressed("up"):
         delta += up * speed
-    if window.is_pressed("q"):
+    if window.is_pressed("q") or window.is_pressed("down"):
         delta -= up * speed
-    if delta.norm() > 0.0:
-        camera.position(*(camera.curr_position + delta))
+    if float(np.linalg.norm(delta)) > 0.0:
+        camera.position(*(pos + delta))
+        pos = np.asarray(camera.curr_position, dtype=np.float64)
 
     mx, my = window.get_cursor_pos()
     lx, ly = camera._waam_last_mouse
     holding = hold_key is None or window.is_pressed(hold_key)
     if holding:
         if lx is None or ly is None:
-            pass  # arm on next frame to avoid a jump
+            pass
         else:
             dx = mx - lx
             dy = my - ly
@@ -98,13 +101,12 @@ def _track_camera_zup(
             yaw += dx * yaw_speed * dt * 60.0
             pitch += dy * pitch_speed * dt * 60.0
             pitch = float(np.clip(pitch, -pi / 2 * 0.99, pi / 2 * 0.99))
-            front = Vector([
+            front = np.array([
                 sin(yaw) * cos(pitch),
                 cos(yaw) * cos(pitch),
                 sin(pitch),
-            ])
-    # Always keep lookat = position + front (FPS), even when only WASD moves.
-    camera.lookat(*(camera.curr_position + front))
+            ], dtype=np.float64)
+    camera.lookat(*(pos + front))
     camera._waam_last_mouse = (mx, my) if holding else (None, None)
 
 
@@ -215,8 +217,8 @@ def run(argv: list[str] | None = None) -> None:
     sl_vert = ti.Vector.field(3, dtype=ti.f32, shape=32768)
     sl_col = ti.Vector.field(3, dtype=ti.f32, shape=32768)
 
-    window = ti.ui.Window("WAAM Digital Twin", (1280, 720), vsync=True)
-    camera = ti.ui.Camera()
+    window = ui.Window("WAAM Digital Twin", (1280, 720), vsync=True)
+    camera = ui.Camera()
 
     cx = g.nx * dx_mm / 2.0 + session.offset_x_mm()
     cy = g.ny * dx_mm / 2.0
@@ -276,8 +278,8 @@ def run(argv: list[str] | None = None) -> None:
     print(f"  Output  : {out_dir.resolve()}\n")
 
     while window.running:
-        for e in window.get_events(ti.ui.PRESS):
-            if e.key == ti.ui.SPACE:
+        for e in window.get_events(ui.PRESS):
+            if e.key == ui.SPACE:
                 paused = not paused
             elif e.key in ("m", "M"):
                 render_mode = (render_mode + 1) % len(MODE_NAMES)
@@ -321,10 +323,8 @@ def run(argv: list[str] | None = None) -> None:
             elif e.key == "-" or e.key == "_":
                 steps_per_frame = max(1, steps_per_frame - 5)
             elif e.key in ("p", "P"):
-                # Defer to end-of-frame: Taichi requires save_image after the
-                # scene is drawn but before window.show(). Calling it from the
-                # event loop (pre-draw) captures a cleared buffer and can leave
-                # subsequent frames black.
+                # Defer to end-of-frame: save_image after the scene is drawn
+                # but before window.show().
                 pending_screenshot = True
             elif e.key in ("g", "G"):
                 try:
@@ -357,7 +357,7 @@ def run(argv: list[str] | None = None) -> None:
                     f"[viewer] Pick ({pi},{pj},{pk})  T={vals['T_C']:.0f}°C  "
                     f"T_max={vals['T_max_K']:.0f}K  f_l={vals['f_l']:.3f}"
                 )
-            elif e.key == ti.ui.ESCAPE:
+            elif e.key == ui.ESCAPE:
                 window.running = False
 
         if not paused:
@@ -373,12 +373,12 @@ def run(argv: list[str] | None = None) -> None:
 
         canvas = window.get_canvas()
         scene = window.get_scene()
-        # Z-up orbit (Taichi stock track_user_inputs is Y-up and swaps axes here).
+        # Z-up orbit (stock trackball is Y-up and swaps axes here).
         _track_camera_zup(
             camera,
             window,
             movement_speed=2.0,
-            hold_key=ti.ui.LMB,
+            hold_key=ui.LMB,
             yaw_speed=2.0,
             pitch_speed=2.0,
         )
@@ -584,7 +584,7 @@ def run(argv: list[str] | None = None) -> None:
             )
 
         if flow_mode == FLOW_STREAMLINES and streamline_cache:
-            # GGUI scene.lines reads GPU buffers — host index writes to
+            # scene.lines reads GPU buffers — host index writes to
             # ti.Vector.field often do not upload. Build numpy then from_numpy.
             max_verts = sl_vert.shape[0]
             vert_np = np.zeros((max_verts, 3), dtype=np.float32)
@@ -722,7 +722,8 @@ def run(argv: list[str] | None = None) -> None:
         window.GUI.text(f"Sim t  : {telem['sim_time_ms']:.2f} ms  step {telem['step']}")
         window.GUI.text(
             f"Pool   : W {telem['pool_width_mm']:.2f} mm  "
-            f"D {telem['pool_depth_mm']:.2f} mm"
+            f"D {telem['pool_depth_mm']:.2f} mm  "
+            f"L {telem.get('pool_length_mm', 0):.1f} mm"
         )
         window.GUI.text(
             f"T_peak : {telem['peak_temp_C']:.0f} °C  "
@@ -763,8 +764,8 @@ def run(argv: list[str] | None = None) -> None:
         exp = telem.get("expected_wire_mass_g", 0.0)
         mbal = telem.get("mass_balance_ratio", 0.0)
         window.GUI.text(
-            f"Bead   : h {bh:.2f} mm  toe {telem.get('toe_angle_deg', 0):.0f}°  "
-            f"L {telem.get('pool_length_mm', 0):.1f} mm"
+            f"Bead   : h {bh:.2f} mm  w {telem.get('bead_width_mm', 0):.2f} mm  "
+            f"toe {telem.get('toe_angle_deg', 0):.0f}°"
         )
         window.GUI.text(
             f"Mass   : dep {dep:.3f} g / wire {exp:.3f} g  "
@@ -774,6 +775,12 @@ def run(argv: list[str] | None = None) -> None:
             f"Phys   : {telem.get('physics_tier', '?')}  "
             f"p_arc {telem.get('arc_pressure_peak_pa', 0):.0f} Pa  "
             f"recoil {'ON' if twin.enable_recoil else 'off'}"
+        )
+        window.GUI.text(
+            f"Clamp  : F {telem.get('force_clamp_hits_step', 0)}  "
+            f"Ma {telem.get('mach_clamp_hits_step', 0)}  "
+            f"(cum F {telem.get('force_clamp_hits_cum', 0)}  "
+            f"Ma {telem.get('mach_clamp_hits_cum', 0)})"
         )
         if telem.get("lorentz_unconverged_streak", 0) > 0:
             window.GUI.text(
@@ -812,7 +819,7 @@ def run(argv: list[str] | None = None) -> None:
         if pending_screenshot:
             path = out_dir / f"frame_{dump_idx:05d}.png"
             try:
-                # Must run after canvas.scene / GUI, before show (Taichi GGUI).
+                # Must run after canvas.scene / GUI, before show.
                 window.save_image(str(path))
                 print(f"[viewer] Screenshot → {path}")
                 dump_idx += 1
@@ -839,7 +846,8 @@ def _print_controls() -> None:
     print("  R         Reset simulation")
     print("  + / -     More / fewer steps per frame")
     print("  P         Screenshot → viewer_output/")
-    print("  LMB drag  Orbit camera (Z-up)   ESC  Exit\n")
+    print("  WASD      Move  Q/E or arrows  Down / up")
+    print("  LMB drag  Look (Z-up)   ESC  Exit\n")
 
 
 def main() -> None:

@@ -16,7 +16,7 @@ simulation:
   enable_csf_tension: true
   enable_wetting: true
   enable_hydrostatic_gravity: true
-  enable_bead_freeze: true
+  enable_bead_freeze: false
   enable_droplet_impact_pressure: true
   enable_recoil: true
   use_recoil_clausius_clapeyron: true
@@ -29,6 +29,7 @@ simulation:
 plate:
   thickness_mm: 10.0
   size_mm: [60, 60]   # coupon L×W (mm) — this is the square you should see from +Z
+  # material: materials/validated/SS316L.v1.yaml  # optional; omit → same as wire
 
 material: materials/placeholders/ER70S-6.yaml
 calibration: null
@@ -49,7 +50,7 @@ arc_physics:
   T_vapor_cap_K: 3200.0
   surface_weighting: true
   pressure_model: lin_eagar
-  pressure_pa: 150.0
+  #pressure_pa: 150.0
 
 advanced_physics:
   evap_cooling_scale: 25.0
@@ -65,8 +66,8 @@ advanced_physics:
   gas_shear_coeff: 1.0
 
 process:
-  current_A: 131
-  voltage_V: 13.4
+  current_A: 200
+  voltage_V: 23
   arc_efficiency: 0.72
   travel_speed_mm_s: 10 
   wire_feed_m_min: 4.0
@@ -82,8 +83,8 @@ process:
 deposition:
   superheat_K: 400.0
   footprint_sigma_scale: 1.0
-  trailing_solidify_lookback_mm: 6.0
-  trailing_solidify_temp_margin_K: 10.0
+  #trailing_solidify_lookback_mm: 6.0
+  #trailing_solidify_temp_margin_K: 10.0
 
 surface_wetting:
   contact_angle_deg: 80.0

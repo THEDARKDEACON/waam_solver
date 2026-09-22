@@ -101,7 +101,6 @@ heat_loss:
 interpass:
   # Proxy for dwell=30 s (dataset). Scale steps with dt on the target mesh.
   cooling_steps: 2000
-  dwell_s: 30
 
 # Path in absolute DOMAIN mm. Plate 50×20 centered in 80×40 →
 # plate spans x∈[15,65], y∈[10,30].

@@ -1,6 +1,6 @@
-"""Taichi kernels: simulation fields → GGUI particle buffers."""
+"""Kernels: simulation fields → viewer particle buffers."""
 
-import taichi as ti
+from waam_twin.compiler import ti
 
 # Cell filter for extract kernels
 FILTER_ALL = 0

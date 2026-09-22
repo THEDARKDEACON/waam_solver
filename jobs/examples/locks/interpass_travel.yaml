@@ -1,0 +1,29 @@
+# Lock M5: interpass.travel_speed_mm_s interpolates idle motion before cooling dwell.
+name: lock_interpass_travel
+simulation:
+  preset: minimal
+  backend: cpu
+  physics_tier: thermal
+  domain_mm: [24, 16, 12]
+  dx_mm: 1.0
+plate:
+  thickness_mm: 4.0
+  size_mm: [20, 12]
+material: materials/placeholders/ER70S-6.yaml
+process:
+  current_A: 80
+  voltage_V: 15
+  travel_speed_mm_s: 8
+  T_ambient_K: 300
+interpass:
+  cooling_steps: 4
+  travel_speed_mm_s: 200
+torch_path:
+  - {x_mm: 4, y_mm: 8, z_mm: 0}
+  - {x_mm: 12, y_mm: 8, z_mm: 0}
+  - {x_mm: 4, y_mm: 10, z_mm: 0}
+  - {x_mm: 12, y_mm: 10, z_mm: 0}
+model_reference:
+  cooling_steps: 4
+  travel_speed_mm_s: 200
+  gap_mm: 2

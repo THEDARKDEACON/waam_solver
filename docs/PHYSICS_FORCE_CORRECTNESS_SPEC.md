@@ -137,9 +137,9 @@ simulation:
 
 | Tier | Enables |
 |------|---------|
-| `thermal` | heat + phase change only (validation) |
-| `flow` | + VOF + CSF + Marangoni + buoyancy + gravity + Darcy |
-| `full` | + Lorentz + arc pressure (Lin–Eagar) + gas shear + droplet impact + wetting + bead freeze; recoil optional via `enable_recoil` |
+| `thermal` | heat + phase change only (no VOF / CSF / Marangoni / buoyancy / arc pressure / MHD / recoil) |
+| `flow` | + VOF + CSF + Marangoni + buoyancy + gravity + Darcy + droplet impact |
+| `full` | + Lorentz + arc pressure (Lin–Eagar) + gas shear + wetting + bead freeze; recoil optional via `enable_recoil` |
 
 `jobs/examples/bead_on_plate.yaml` must migrate to `physics_tier: full` (recoil default **false** for conduction-mode WAAM).
 
@@ -397,9 +397,9 @@ physics_tier
 
 `strict_mode: true` (job or env `WAAM_STRICT=1`):
 
-- Abort if `mass_balance_ratio ∉ [0.95, 1.05]` after N droplets.
-- Abort if Lorentz unconverged streak > K.
-- Abort if any force diagnostic is NaN.
+- Abort if `mass_balance_ratio` (deposited / \(\dot m\cdot t_\mathrm{weld}\)) \(\notin [0.95, 1.05]\) after N droplets.
+- Abort if Lorentz unconverged streak > K. Unconverged steps skip \(J\times B\) (do not apply a bad potential).
+- Abort if any force diagnostic is NaN, or if force diagnostics raise.
 
 ---
 

@@ -1,11 +1,12 @@
-"""Upload material property tables to Taichi fields for GPU lookup."""
+"""Upload material property tables to Quadrants fields for GPU lookup."""
 
 from __future__ import annotations
 
 import numpy as np
-import taichi as ti
+from waam_twin.compiler import ti
 
 from .materials import MaterialProps
+from . import logging_util as log
 
 MAX_KNOTS = 8
 
@@ -32,6 +33,7 @@ class MaterialGPUTables:
         self.k_fallback = float(mat.k)
         self.mu_fallback = float(mat.mu)
         self.dgamma_fallback = float(mat.dgamma_dT)
+        self.truncated = False
         self._upload(mat)
 
     def _upload_knots(
@@ -42,7 +44,14 @@ class MaterialGPUTables:
         n_field: ti.Field,
         fallback: float,
     ) -> None:
-        n = min(len(knots), MAX_KNOTS)
+        n_src = len(knots)
+        if n_src > MAX_KNOTS:
+            self.truncated = True
+            log.warning(
+                f"[gpu_tables] truncating {n_src} knots to MAX_KNOTS={MAX_KNOTS} "
+                f"(high-T tail will not reach the GPU)"
+            )
+        n = min(n_src, MAX_KNOTS)
         t_arr = np.zeros(MAX_KNOTS, dtype=np.float32)
         v_arr = np.zeros(MAX_KNOTS, dtype=np.float32)
         if n == 0:

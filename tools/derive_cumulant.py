@@ -3,7 +3,7 @@ derive_cumulant.py — Offline Cumulant LBM Operator Derivation
 ===============================================================
 Uses SymPy to symbolically derive the D3Q19 Cumulant LBM collision
 operator in algebraically minimized form, targeting zero register spilling
-when compiled to CUDA PTX by Taichi.
+when compiled to CUDA/HIP/Vulkan by Quadrants.
 
 The approach follows Geier et al. (2015):
 "The cumulant lattice Boltzmann equation in three dimensions:
@@ -18,7 +18,7 @@ Run once offline:
     python -m waam_twin.tools.derive_cumulant
 
 Outputs:
-    waam_twin/cumulant_kernel.py   — Ready-to-use Taichi kernel
+    waam_twin/cumulant_kernel.py   — Ready-to-use Quadrants kernel
 """
 
 import sympy as sp
@@ -173,7 +173,7 @@ def generate_taichi_mrt_kernel(exprs: dict, output_path: pathlib.Path):
         'control GPU register pressure.',
         '"""',
         '',
-        'import taichi as ti',
+        'from waam_twin.compiler import ti',
         'from .grid import Q',
         '',
         '',

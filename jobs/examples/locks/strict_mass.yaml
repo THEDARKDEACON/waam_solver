@@ -1,0 +1,38 @@
+# Lock H3: mass_balance_ratio is deposited / (ṁ · t_weld). Skip if overflow.
+name: lock_strict_mass
+simulation:
+  preset: minimal
+  backend: cpu
+  physics_tier: flow
+  strict_mode: true
+  domain_mm: [20, 16, 14]
+  dx_mm: 0.8
+  enable_vof: true
+  enable_lorentz: false
+  enable_recoil: false
+  enable_enthalpy_cap: true
+  enable_evaporative_cooling: false
+plate:
+  thickness_mm: 4.0
+  size_mm: [14, 10]
+material: materials/placeholders/ER70S-6.yaml
+process:
+  current_A: 200
+  voltage_V: 20
+  travel_speed_mm_s: 8
+  wire_feed_m_min: 10.0
+  wire_diameter_mm: 1.2
+  droplet_freq_hz: 80
+  droplet_length_mm: 1.5
+  transfer_mode: uniform
+  droplet_size_jitter: 0.0
+  T_ambient_K: 300
+deposition:
+  superheat_K: 200.0
+  footprint_sigma_scale: 1.0
+model_reference:
+  n_steps: 2500
+  n_drops_min: 20
+  # Tiny CPU grid overfills vs production [0.95, 1.05]; ledger is still ṁ·t_weld.
+  mass_ratio_min: 0.80
+  mass_ratio_max: 1.25

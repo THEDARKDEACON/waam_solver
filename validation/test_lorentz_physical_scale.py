@@ -18,9 +18,12 @@ def run() -> None:
         nx=32, ny=20, nz=22, dx=3e-4,
         enable_vof=True, enable_lorentz=True,
         welding_current_A=180.0,
-        lorentz_jacobi_iters=60,
+        lorentz_jacobi_iters=400,
         max_tracers=10,
     )
+    twin.lorentz_jacobi_tol = 1e-3
+    # Cold start needs more than the warm-start budget (override the 8·n_max cap).
+    twin.lorentz_jacobi_cold_iters = 2500
     twin.wire_feed_m_s = 8.0 / 60.0
     twin.reset()
     g = twin.grid
