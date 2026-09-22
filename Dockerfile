@@ -1,18 +1,23 @@
-# waam_twin — GPU headless batch image (Docker-capable HPC / workstations)
+# waam_twin — GPU environment image (Docker-capable HPC / workstations)
+#
+# The image installs Python, Quadrants, and this package. It does not start
+# a job. You get a shell and run the same commands you would on the host.
 #
 # Build (from this directory — the repo root with pyproject.toml):
 #   docker build -t waam-twin:latest .
 #
-# Run (mount outputs so they survive the container):
-#   mkdir -p runs
-#   docker run --rm --gpus all \
+# Open a shell on your working tree. -u keeps files you write owned by you.
+#   docker run -it --rm --gpus all \
+#     -u "$(id -u):$(id -g)" \
 #     -e WAAM_BACKEND=cuda \
-#     -v "$PWD/runs:/app/runs" \
-#     waam-twin:latest \
-#     python scripts/hpc/run_batch.py \
-#       --job jobs/examples/bead_on_plate_hires.yaml \
-#       --n-steps auto \
-#       --out runs/bead_on_plate_hires
+#     -v "$PWD:/app" \
+#     waam-twin:latest
+#
+# Inside that shell, for example:
+#   python scripts/hpc/run_batch.py \
+#     --job jobs/examples/bead_on_plate.yaml \
+#     --n-steps auto \
+#     --out runs/bead_on_plate
 #
 # Match CUDA major version to the host driver (nvidia-smi). If Quadrants
 # cannot init CUDA, try a newer/older nvidia/cuda tag or rebuild on the target node.
@@ -50,8 +55,6 @@ RUN pip3 install -U pip setuptools wheel \
 
 USER waam
 
-# Default: higher-resolution bead. Override the command for other jobs.
-CMD ["python", "scripts/hpc/run_batch.py", \
-     "--job", "jobs/examples/bead_on_plate_hires.yaml", \
-     "--n-steps", "auto", \
-     "--out", "runs/bead_on_plate_hires"]
+# Shell, same as a login on this machine. Pass a command after the image
+# name only when you want a one-off run instead of an interactive session.
+CMD ["bash"]
