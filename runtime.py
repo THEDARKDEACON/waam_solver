@@ -323,6 +323,67 @@ def estimate_grid_vram_mb(
     )
 
 
+def grid_at_dx(
+    domain_mm: tuple[float, float, float],
+    dx_mm: float,
+) -> tuple[int, int, int, float]:
+    """``(nx, ny, nz, dx_m)`` for a fixed domain and cell size. No coarsening."""
+    if dx_mm <= 0.0:
+        raise ValueError(f"dx_mm must be > 0, got {dx_mm}")
+    dx_m = float(dx_mm) / 1000.0
+    lx, ly, lz = (float(d) / 1000.0 for d in domain_mm)
+    nx = max(8, int(lx / dx_m))
+    ny = max(8, int(ly / dx_m))
+    nz = max(8, int(lz / dx_m))
+    return nx, ny, nz, dx_m
+
+
+def resolve_grid(
+    domain_mm: tuple[float, float, float],
+    dx_mm: float,
+    vram_budget_mb: int,
+    max_tracers: int = 20000,
+    max_cells: int | None = None,
+    *,
+    auto_grid_enabled: bool = True,
+    lorentz: bool = True,
+    vof: bool = True,
+    export: bool = True,
+) -> tuple[int, int, int, float]:
+    """Fit ``dx`` to the preset budget, or keep the requested ``dx`` when off.
+
+    Preset collision model and tracer count are chosen by the caller either way.
+    This only controls whether ``dx`` may be coarsened to ``max_cells`` / VRAM.
+    """
+    if auto_grid_enabled:
+        return auto_grid(
+            domain_mm, dx_mm, vram_budget_mb, max_tracers, max_cells=max_cells,
+            lorentz=lorentz, vof=vof, export=export,
+        )
+
+    from . import logging_util as log
+
+    nx, ny, nz, dx_m = grid_at_dx(domain_mm, dx_mm)
+    est = estimate_grid_vram_mb(
+        nx, ny, nz, max_tracers, lorentz=lorentz, vof=vof, export=export,
+    )
+    n_cells = nx * ny * nz
+    budget = float(vram_budget_mb) * 0.85
+    over = est > budget or (max_cells is not None and n_cells > max_cells)
+    msg = (
+        f"[auto_grid] off — requested dx={float(dx_mm):.3f} mm kept "
+        f"(grid {nx}×{ny}×{nz}, ~{est:.0f} MB, {n_cells} cells). "
+        "Preset VRAM/max_cells cap is not applied."
+    )
+    if over:
+        log.warning(
+            msg + " This grid is over the preset budget and may run out of memory."
+        )
+    else:
+        log.info(msg)
+    return nx, ny, nz, dx_m
+
+
 def auto_grid(
     domain_mm: tuple[float, float, float],
     target_dx_mm: float,

@@ -195,6 +195,7 @@ def run(argv: list[str] | None = None) -> None:
         job=args.job,
         preset=args.preset,
         material=args.material,
+        auto_grid=args.auto_grid,
     )
     twin = session.twin
     g = twin.grid

@@ -707,6 +707,7 @@ deposition:
 | `backend` | preferred backend hint; runtime still follows `init_taichi` / `WAAM_*` env |
 | `physics_tier` | `flow` / `full` — default force set before `enable_*` overrides (`base`, `default`, `standard_physics` are accepted aliases to `flow`; unknown values now raise `ValueError`) |
 | `domain_mm` / `dx_mm` | optional domain and cell size (override preset sizing) |
+| `auto_grid` | `true` (default) coarsens `dx` to the preset VRAM/`max_cells` budget. `false` keeps `dx_mm`. Preset still selects collision model and tracer count. CLI: `--auto-grid` / `--no-auto-grid` |
 | `enable_vof` | enable free-surface VOF advection |
 | `enable_csf_tension` | enable capillary surface-tension force |
 | `enable_wetting` | apply the contact-angle wetting boundary condition |

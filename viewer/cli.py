@@ -25,6 +25,16 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     p.add_argument(
+        "--auto-grid",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Fit dx to the preset VRAM/max_cells budget (default: "
+            "simulation.auto_grid in the job, otherwise on). "
+            "--no-auto-grid keeps simulation.dx_mm."
+        ),
+    )
+    p.add_argument(
         "--material",
         default=None,
         help="Override material path when using --preset without --job",

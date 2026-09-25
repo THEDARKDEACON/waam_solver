@@ -37,6 +37,7 @@
     "window_offset_z_mm": { "type": "number" },
     "physics_tier": { "type": "string" },
     "strict_mode": { "type": "boolean" },
+    "auto_grid": { "type": "boolean" },
     "force_diagnostics": {
       "type": "object",
       "additionalProperties": { "type": "number" }

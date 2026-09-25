@@ -359,7 +359,7 @@ def clone_job_with_process(
 
 
 _KNOWN_SIM_KEYS = frozenset({
-    "preset", "backend", "physics_tier", "domain_mm", "dx_mm", "strict_mode",
+    "preset", "backend", "physics_tier", "domain_mm", "dx_mm", "auto_grid", "strict_mode",
     "enable_vof", "enable_csf_tension", "enable_wetting", "enable_hydrostatic_gravity",
     "enable_bead_freeze", "enable_droplet_impact_pressure", "enable_recoil",
     "use_recoil_clausius_clapeyron", "enable_lorentz", "enable_gas_shear",

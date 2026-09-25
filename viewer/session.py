@@ -214,6 +214,7 @@ def create_session(
     job: str | None = None,
     preset: str | None = None,
     material: str | None = None,
+    auto_grid: bool | None = None,
 ) -> ViewerSession:
     """
     Load twin from job YAML (default) or preset-only demo.
@@ -232,7 +233,7 @@ def create_session(
             job_path = str(default_job)
 
     if job_path:
-        twin = WAAMTwin.from_job(job_path, preset_override=preset)
+        twin = WAAMTwin.from_job(job_path, preset_override=preset, auto_grid=auto_grid)
         job_cfg = load_job_config(job_path)
         label = os.path.basename(job_path)
         if preset:
@@ -246,6 +247,7 @@ def create_session(
             enable_vof=True,
             enable_heat_loss=True,
             enable_csf_tension=True,
+            auto_grid=True if auto_grid is None else auto_grid,
         )
         job_cfg = {}
         label = f"preset:{preset_name}"

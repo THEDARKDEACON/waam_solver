@@ -469,14 +469,15 @@ class WAAMTwin:
         domain_mm: tuple[float, float, float] | list[float] | None = None,
         dx_mm: float | None = None,
         plate_thickness_mm: float | None = None,
+        auto_grid: bool = True,
         **kwargs: Any,
     ) -> "WAAMTwin":
         from .runtime import (
             DEMO_DEFAULT_DOMAIN_MM,
-            auto_grid,
             auto_tracer_count,
             check_vram_budget,
             ensure_taichi,
+            resolve_grid,
             resolve_grid_budget_mb,
             resolve_preset,
         )
@@ -493,14 +494,17 @@ class WAAMTwin:
         vram_vof = bool(kwargs.pop("vram_vof", True))
         vram_export = bool(kwargs.pop("vram_export", True))
         kwargs.setdefault("dt_scale", 1.0)
-        nx, ny, nz, dx = auto_grid(
+        use_auto_grid = bool(auto_grid)
+        nx, ny, nz, dx = resolve_grid(
             dom, dx_target, vram, tracers, max_cells=cfg.max_cells,
+            auto_grid_enabled=use_auto_grid,
             lorentz=vram_lorentz, vof=vram_vof, export=vram_export,
         )
-        check_vram_budget(
-            nx, ny, nz, tracers, vram,
-            lorentz=vram_lorentz, vof=vram_vof, export=vram_export,
-        )
+        if use_auto_grid:
+            check_vram_budget(
+                nx, ny, nz, tracers, vram,
+                lorentz=vram_lorentz, vof=vram_vof, export=vram_export,
+            )
 
         twin = cls(
             material=material,
@@ -514,12 +518,14 @@ class WAAMTwin:
             **kwargs,
         )
         twin.preset_name = cfg.name
+        twin.auto_grid = use_auto_grid
         if plate_thickness_mm is not None:
             twin.plate_thickness_mm = float(plate_thickness_mm)
             twin.nz_solid = twin.resolve_nz_solid()
         i0, i1, j0, j1 = twin.resolve_plate_ij()
         log.info(
-            f"[WAAMTwin] hardware={cfg.name}  grid={nx}×{ny}×{nz}  dx={dx*1e3:.3f}mm"
+            f"[WAAMTwin] hardware={cfg.name}  auto_grid={'on' if use_auto_grid else 'off'}"
+            f"  grid={nx}×{ny}×{nz}  dx={dx*1e3:.3f}mm"
             f"  domain={dom[0]:.0f}×{dom[1]:.0f}×{dom[2]:.0f}mm"
             f"  budget≈{vram} MB"
             + (f"  max_cells={cfg.max_cells}" if cfg.max_cells else "")
@@ -533,6 +539,7 @@ class WAAMTwin:
         cls,
         job_path: str | pathlib.Path,
         preset_override: str | None = None,
+        auto_grid: bool | None = None,
         **kwargs: Any,
     ) -> "WAAMTwin":
         from .job import load_job_config, resolve_plate_and_domain, JobConfig
@@ -543,7 +550,7 @@ class WAAMTwin:
         job_cfg = JobConfig.from_dict(job)
         if preset_override:
             # Switch hardware profile only. Job domain_mm / plate / dx request
-            # stay intact; auto_grid may coarsen dx to fit the profile budget.
+            # stay intact; auto_grid (default on) may coarsen dx to fit the budget.
             sim = job.setdefault("simulation", {})
             sim["preset"] = preset_override
             log.info(
@@ -588,6 +595,8 @@ class WAAMTwin:
         v_lorentz, v_vof, v_export = vram_flags_from_job(job)
         sim_job = job.get("simulation") or {}
         dt_scale = float(kwargs.pop("dt_scale", sim_job.get("dt_scale", 1.0)))
+        if auto_grid is None:
+            auto_grid = bool(sim_job.get("auto_grid", True))
         twin = cls.from_preset(
             preset=preset,
             material=material,
@@ -603,6 +612,7 @@ class WAAMTwin:
             vram_vof=v_vof,
             vram_export=v_export,
             dt_scale=dt_scale,
+            auto_grid=bool(auto_grid),
             **heat_kwargs,
             **kwargs,
         )
@@ -1145,6 +1155,7 @@ class WAAMTwin:
             "deposition_overflow_count": self._deposition_overflow,
             "physics_tier": getattr(self, "physics_tier", "flow"),
             "strict_mode": bool(getattr(self, "strict_mode", False)),
+            "auto_grid": bool(getattr(self, "auto_grid", True)),
             "arc_pressure_model": getattr(self, "arc_pressure_model", "constant"),
             "arc_pressure_peak_pa": round(arc_pressure_peak_pa(self), 1),
             "enable_marangoni": bool(getattr(self, "enable_marangoni", True)),

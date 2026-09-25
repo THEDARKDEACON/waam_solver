@@ -8,7 +8,12 @@ import sys
 
 from waam_twin.grid import WAAMGrid
 from waam_twin.materials import load_material
-from waam_twin.runtime import estimate_grid_vram_mb, init_taichi, vram_flags_from_job
+from waam_twin.runtime import (
+    estimate_grid_vram_mb,
+    init_taichi,
+    resolve_grid,
+    vram_flags_from_job,
+)
 
 
 def _rel_err(a: float, b: float) -> float:
@@ -48,6 +53,29 @@ def run() -> None:
     if thermal[0] or thermal[1]:
         raise AssertionError(f"thermal tier should not assume Lorentz/VOF, got {thermal}")
     print("[vram_estimate] job flag peek OK")
+
+    nx, ny, nz, dx = resolve_grid(
+        (40.0, 40.0, 10.0), 0.25, 100_000,
+        max_tracers=100, max_cells=200_000,
+        auto_grid_enabled=False, lorentz=False, vof=False, export=False,
+    )
+    if abs(dx - 2.5e-4) > 1e-9 or (nx, ny, nz) != (160, 160, 40):
+        raise AssertionError(
+            f"auto_grid off must keep dx=0.25 mm, got {nx}×{ny}×{nz} dx={dx}"
+        )
+    nx2, ny2, nz2, dx2 = resolve_grid(
+        (40.0, 40.0, 10.0), 0.25, 100_000,
+        max_tracers=100, max_cells=200_000,
+        auto_grid_enabled=True, lorentz=False, vof=False, export=False,
+    )
+    if not (dx2 > dx and nx2 * ny2 * nz2 <= 200_000):
+        raise AssertionError(
+            f"auto_grid on should coarsen under max_cells, got {nx2}×{ny2}×{nz2} dx={dx2}"
+        )
+    print(
+        f"[vram_estimate] auto_grid off dx={dx*1e3:.3f} mm  "
+        f"on dx={dx2*1e3:.3f} mm"
+    )
 
 
 if __name__ == "__main__":

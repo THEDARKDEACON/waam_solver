@@ -16,6 +16,13 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="WAAM research VTK sequence export")
     p.add_argument("--job", default="jobs/examples/bead_on_plate.yaml")
     p.add_argument("--preset", default=None)
+    p.add_argument(
+        "--auto-grid",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Fit dx to the preset budget (default: simulation.auto_grid, else on). "
+        "--no-auto-grid keeps simulation.dx_mm.",
+    )
     p.add_argument("--steps", type=int, default=500)
     p.add_argument("--every", type=int, default=50, help="Export every N steps")
     p.add_argument("--max-frames", type=int, default=50)
@@ -25,7 +32,9 @@ def main(argv: list[str] | None = None) -> int:
 
     init_taichi()
     job_path = resolve_project_path(args.job)
-    twin = WAAMTwin.from_job(job_path, preset_override=args.preset)
+    twin = WAAMTwin.from_job(
+        job_path, preset_override=args.preset, auto_grid=args.auto_grid,
+    )
     twin.reset()
 
     job = getattr(twin, "_job_config", {})

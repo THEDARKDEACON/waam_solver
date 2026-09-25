@@ -165,6 +165,13 @@ def main(argv: list[str] | None = None) -> int:
         "Default: use simulation.preset from the job.",
     )
     p.add_argument(
+        "--auto-grid",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Fit dx to the preset budget (default: simulation.auto_grid, else on). "
+        "--no-auto-grid keeps simulation.dx_mm.",
+    )
+    p.add_argument(
         "--n-steps",
         default="auto",
         help="'auto' = cover full torch path. Integer = fixed step count.",
@@ -248,7 +255,11 @@ def main(argv: list[str] | None = None) -> int:
 
     t0 = time.perf_counter()
     init_taichi()
-    twin = WAAMTwin.from_job(str(job_path), preset_override=args.preset)
+    twin = WAAMTwin.from_job(
+        str(job_path),
+        preset_override=args.preset,
+        auto_grid=args.auto_grid,
+    )
     twin.reset()
 
     job_cfg = getattr(twin, "_job_config", None) or {}

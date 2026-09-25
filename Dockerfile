@@ -9,9 +9,15 @@
 # RHEL 9 ships Podman, not Docker. From this directory (pyproject.toml):
 #   podman build -t waam-twin:latest .
 #   podman run -it --rm --device nvidia.com/gpu=all \
+#     --userns=keep-id \
+#     --group-add keep-groups \
+#     --security-opt label=disable \
 #     -u "$(id -u):$(id -g)" \
+#     -e NVIDIA_VISIBLE_DEVICES=all \
+#     -e NVIDIA_DRIVER_CAPABILITIES=compute,utility \
 #     -e WAAM_BACKEND=cuda \
 #     -v "$PWD:/app:Z" \
+#     -w /app \
 #     waam-twin:latest \
 #     bash
 #

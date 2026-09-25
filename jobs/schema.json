@@ -22,6 +22,10 @@
           "maxItems": 3
         },
         "dx_mm": { "type": "number", "exclusiveMinimum": 0 },
+        "auto_grid": {
+          "type": "boolean",
+          "description": "When true (default), coarsen dx to the preset VRAM and max_cells budget. When false, keep simulation.dx_mm. Preset still selects collision model and tracer count."
+        },
         "strict_mode": { "type": "boolean" },
         "enable_vof": { "type": "boolean" },
         "enable_csf_tension": { "type": "boolean" },
