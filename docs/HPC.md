@@ -170,9 +170,9 @@ high:
   use_srt: false
 ```
 
-`auto_grid` keeps the job **domain** fixed and **coarsens `dx`** until both
-`vram_budget_mb × 0.85` and `max_cells` are satisfied. Watch for
-`[auto_grid] … coarsened dx …` in the log.
+The job `dx` is allocated as written. Cell count scales as `1/dx³`, so halving
+`dx` needs about eight times the memory. The preset does not coarsen `dx` or
+refuse the grid.
 
 ### Extra levers
 
@@ -217,8 +217,7 @@ srun --gres=gpu:1 --mem=32G --time=04:00:00 --pty bash
 | Symptom | Fix |
 |---------|-----|
 | Quadrants prints CPU / CUDA init fails | Fix `module load cuda/…`; re-create venv after loading modules |
-| CUDA OOM | See **Curbing OOM** above (preset → `dx` → `max_cells`) |
-| `[auto_grid] coarsened dx` | Expected under VRAM pressure; check printed grid size |
+| CUDA OOM | Mesh is larger than the device. Halving `dx` multiplies cells by 8. Coarsen `dx` or shrink `domain_mm` |
 | Job path not found | `cd` to repo root; use `jobs/examples/...` not `waam_twin/jobs/...` |
 
 VRAM / timestep background: [HARDWARE.md](HARDWARE.md).

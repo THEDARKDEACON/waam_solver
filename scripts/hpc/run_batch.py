@@ -168,8 +168,7 @@ def main(argv: list[str] | None = None) -> int:
         "--auto-grid",
         action=argparse.BooleanOptionalAction,
         default=None,
-        help="Fit dx to the preset budget (default: simulation.auto_grid, else on). "
-        "--no-auto-grid keeps simulation.dx_mm.",
+        help="Accepted for compatibility. dx_mm is always allocated as requested.",
     )
     p.add_argument(
         "--n-steps",

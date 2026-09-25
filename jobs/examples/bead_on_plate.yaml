@@ -1,8 +1,8 @@
 # =============================================================================
 # Bead-on-plate — interactive (mirrors bead_calibrate; prefer calibrate for gates)
 # =============================================================================
-# Geometry lives here (not in config/presets.yaml). Hardware --preset only
-# coarsens dx to fit max_cells / VRAM — it does not change plate size.
+# Geometry lives here (not in config/presets.yaml). Hardware --preset selects
+# collision model and tracer count. It does not change plate size or dx.
 # =============================================================================
 
 simulation:
@@ -109,3 +109,7 @@ probes:
     x_mm: 20.0
     y_mm: 10.0
     z_mm: 2.0
+  # Rides the torch. bead_line.csv travels +Y, so this sits at y_torch − 10 mm.
+  # - name: trail_10mm
+  #   behind_mm: 10.0
+  #   z_mm: 2.0

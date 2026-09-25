@@ -264,7 +264,7 @@ def run(argv: list[str] | None = None) -> None:
 
     print(f"\n  Job     : {session.job_label}")
     print(f"  Hardware: {getattr(twin, 'preset_name', '?')}  "
-          f"(coarsens dx for max_cells/VRAM — not FPS; keeps plate size)")
+          f"(dx is the job request; device OOMs if the mesh does not fit)")
     print(f"  Domain  : {g.nx * dx_mm:.1f}×{g.ny * dx_mm:.1f}×{g.nz * dx_mm:.1f} mm  "
           f"grid {g.nx}×{g.ny}×{g.nz}  dx={dx_mm:.3f} mm")
     ps = getattr(twin, "plate_size_mm", None)

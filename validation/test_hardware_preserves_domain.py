@@ -1,8 +1,8 @@
 """
 test_hardware_preserves_domain.py — --preset / preset_override keeps job geometry.
 
-Hardware profiles may coarsen dx to fit vram_budget / max_cells, but must not
-rewrite domain_mm or plate.size_mm. Presets.yaml no longer carries domain_mm.
+Hardware profiles must not rewrite domain_mm or plate.size_mm, and must not
+coarsen a requested dx. Presets.yaml no longer carries domain_mm.
 """
 
 from __future__ import annotations

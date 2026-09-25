@@ -4,8 +4,8 @@
 # Same process / physics as bead_on_plate.yaml, finer mesh for GPU workstations
 # and HPC interactive shells. Path is short (jobs/paths/bead_line.csv ≈ 20 mm).
 #
-# Requested dx = 0.01 mm. auto_grid (default on) coarsens dx to the preset
-# budget. Set simulation.auto_grid: false or pass --no-auto-grid to keep dx_mm.
+# Requested dx is allocated as written. Halving dx multiplies the cell count
+# by 8. There is no preset VRAM cap; the device OOMs if the mesh does not fit.
 # On OOM: use --preset high (default below) or shrink domain_mm — do not jump
 # to ultra until high succeeds.
 # =============================================================================
@@ -16,7 +16,6 @@ simulation:
   physics_tier: full
   domain_mm: [100, 100, 25]
   dx_mm: 0.01
-  # auto_grid: false   # keep dx_mm; preset VRAM/max_cells cap is not applied
   enable_vof: true
   enable_csf_tension: true
   enable_wetting: true

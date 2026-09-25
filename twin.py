@@ -475,7 +475,6 @@ class WAAMTwin:
         from .runtime import (
             DEMO_DEFAULT_DOMAIN_MM,
             auto_tracer_count,
-            check_vram_budget,
             ensure_taichi,
             resolve_grid,
             resolve_grid_budget_mb,
@@ -500,11 +499,6 @@ class WAAMTwin:
             auto_grid_enabled=use_auto_grid,
             lorentz=vram_lorentz, vof=vram_vof, export=vram_export,
         )
-        if use_auto_grid:
-            check_vram_budget(
-                nx, ny, nz, tracers, vram,
-                lorentz=vram_lorentz, vof=vram_vof, export=vram_export,
-            )
 
         twin = cls(
             material=material,
@@ -549,13 +543,12 @@ class WAAMTwin:
         job = load_job_config(job_path)
         job_cfg = JobConfig.from_dict(job)
         if preset_override:
-            # Switch hardware profile only. Job domain_mm / plate / dx request
-            # stay intact; auto_grid (default on) may coarsen dx to fit the budget.
+            # Switch hardware profile only. Job domain_mm / plate / dx stay intact.
             sim = job.setdefault("simulation", {})
             sim["preset"] = preset_override
             log.info(
                 f"[WAAMTwin] hardware override → {preset_override} "
-                f"(job domain/plate kept; dx may coarsen to fit budget)"
+                f"(job domain/plate/dx kept)"
             )
         preset = job.get("simulation", {}).get("preset", "standard")
         material = job.get("material", "ER70S-6")

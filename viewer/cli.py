@@ -20,8 +20,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Hardware profile override (minimal|standard|high|ultra). "
-            "Changes VRAM/cell budget and may coarsen dx; does NOT rewrite "
-            "job domain_mm or plate.size_mm."
+            "Selects collision model and tracer count. Does not rewrite "
+            "job domain_mm, plate.size_mm, or dx_mm."
         ),
     )
     p.add_argument(
@@ -29,9 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
         default=None,
         help=(
-            "Fit dx to the preset VRAM/max_cells budget (default: "
-            "simulation.auto_grid in the job, otherwise on). "
-            "--no-auto-grid keeps simulation.dx_mm."
+            "Accepted for compatibility. dx_mm is always allocated as requested."
         ),
     )
     p.add_argument(

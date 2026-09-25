@@ -390,9 +390,11 @@ probes:
     x_mm: 8.0
     y_mm: 20.0
     z_mm: 1.5
-  # - name: pool_center
-  #   x_mm: 15.0
-  #   y_mm: 10.0
+  # Torch-relative: 10 mm behind travel, height fixed in the domain.
+  # x_mm / y_mm are ignored when behind_mm is set.
+  # - name: trail_10mm
+  #   behind_mm: 10.0
+  #   lateral_mm: 0.0
   #   z_mm: 2.0
 
 

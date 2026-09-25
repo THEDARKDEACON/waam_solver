@@ -1,8 +1,8 @@
 # Hardware profiles — compute / memory only. NO geometry.
 #
 # Owns:
-#   vram_budget_mb  — memory cap for auto_grid
-#   max_cells       — explicit cell-count cap (compute intensity)
+#   vram_budget_mb  — recorded profile size; not an allocation cap
+#   max_cells       — recorded profile size; not an allocation cap
 #   target_dx_mm    — preferred dx when the job omits dx_mm
 #   max_tracers, use_srt
 #
@@ -10,10 +10,8 @@
 #   plate.size_mm / thickness_mm
 #   simulation.domain_mm  (optional — if omitted, derived from plate + margin)
 #
-# CLI `--preset X` switches this profile and may coarsen dx to fit the
-# budget. It never rewrites plate or domain size.
-#
-# dx coarsening target = max_cells + vram_budget (NOT viewer FPS).
+# CLI `--preset X` switches this profile. It never rewrites plate, domain, or dx.
+# A requested dx is allocated directly. Cell count scales as 1/dx^3.
 
 minimal:
   vram_budget_mb: 1024

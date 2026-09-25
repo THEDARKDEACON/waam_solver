@@ -9,27 +9,28 @@ For cluster / SLURM workflows see **[HPC.md](HPC.md)**.
 | Layer | Owns | Examples |
 |-------|------|----------|
 | **Job YAML** | Experiment geometry & process | `plate.size_mm`, `domain_mm`, path, I/V, `physics_tier` |
-| **Hardware profile** (`preset`) | Cost / cell-count cap | `vram_budget_mb`, `max_cells`, `target_dx_mm`, SRT |
+| **Hardware profile** (`preset`) | Collision, tracers, default dx | `target_dx_mm`, `max_tracers`, SRT |
 
 `config/presets.yaml` has **no** `domain_mm`. CLI `--preset minimal` only switches the
-hardware profile and may **coarsen `dx`** until the grid fits. Plate size is
-unchanged.
+hardware profile (collision model, tracer count, default `dx` when the job
+omits `dx_mm`). It does not rewrite plate size or coarsen a requested `dx`.
 
 If the job omits `simulation.domain_mm` but sets `plate.size_mm`, the domain is
 **derived**: `plate + 2×domain_margin_mm` in XY and `thickness + air_gap_mm` in Z.
 
-## What targets dx coarsening? (not FPS)
+## Cell size
 
 ```text
 cost ≈ N_cells × physics_tier × steps
+N_cells ∝ 1/dx³
 ```
 
-`auto_grid` coarsens `dx` until **both** fit:
+The requested `dx` is allocated directly. There is no pre-allocation VRAM or
+`max_cells` refusal; the device OOMs if the mesh does not fit. Preset
+`vram_budget_mb` / `max_cells` are not a memory gate.
 
-1. `vram_budget_mb` × 0.85 (field-accurate estimate matching `WAAMGrid.estimated_vram_mb`, including Lorentz/VOF/export when the job will allocate them)
-2. `max_cells` (explicit compute throttle)
-
-The planner sizes against the **full optional field set** when `physics_tier` is `full` or Lorentz/VOF flags are on (those fields are often allocated after the grid exists). Prefer trimming `domain_mm`, enabling `enable_moving_window` (+X / ±Y / ±Z), or using `high` with a realistic `dx` before filling the card.
+Prefer trimming `domain_mm`, enabling `enable_moving_window` (+X / ±Y / ±Z),
+or choosing a coarser `dx` before filling the card.
 
 Viewer **FPS is not a control target**. FPS is a side effect of cell count,
 physics tier, and steps-per-frame. Empty GPU VRAM with `minimal` is expected.

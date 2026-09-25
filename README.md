@@ -413,8 +413,9 @@ high:
   use_srt: false
 ```
 
-`auto_grid` will **coarsen `dx`** until both the VRAM estimate and `max_cells`
-fit. Domain size is never shrunk by the preset — only by editing the job.
+The requested `dx` is allocated as written. Halving `dx` multiplies the cell
+count by 8. The preset does not coarsen `dx` or refuse the grid; the device
+OOMs if the mesh does not fit. Domain size changes only by editing the job.
 
 Also helps: `--sequence-every 0` (less peak memory from export buffers), fewer
 `max_tracers`, or a smaller `domain_mm` in the job.
@@ -427,7 +428,7 @@ Also helps: `--sequence-every 0` (less peak memory from export buffers), fewer
 
 - Stay in the **`waam_twin` repo root** (the folder with `pyproject.toml`).
 - Job path is `jobs/examples/...`, **not** `waam_twin/jobs/...` (that form is only when your cwd is the parent `FYP22-01` folder on a laptop).
-- Watch the log for `[auto_grid]` — it prints when dx was coarsened to fit budget.
+- The log line `[grid]` prints the cell count and the field-size estimate before allocation.
 - Leave the terminal open until the process exits; outputs are under `runs/`.
 
 More detail: [docs/HPC.md](docs/HPC.md), [docs/HARDWARE.md](docs/HARDWARE.md).
@@ -541,7 +542,7 @@ Two separate knobs: **simulation grid** (physics) vs **particle size** (display 
 | What | Where | Effect |
 |------|--------|--------|
 | **Job domain / plate** | Job YAML `simulation.domain_mm`, `plate.size_mm` | Physical experiment size (sacred). Presets have **no** domain. |
-| **Hardware profile** | Job `simulation.preset` or viewer `--preset` | Caps cell count / VRAM; **coarsens dx** if needed — does **not** rewrite plate |
+| **Hardware profile** | Job `simulation.preset` or viewer `--preset` | Collision model and tracer count — does **not** rewrite plate or `dx` |
 | **Profile definitions** | [`config/presets.yaml`](config/presets.yaml) | `vram_budget_mb`, `max_cells`, `target_dx_mm` only |
 | **Particle “ball” size** | CLI | `--particle-scale 0.25` (fraction of cell width; default `0.35`) |
 
@@ -689,7 +690,7 @@ deposition:
 | `interpass` | cooling/travel settings between passes |
 | `reference` | experimental comparison targets (documentation/reporting) |
 | `model_reference` | expected simulator envelope used by local regression checks |
-| `probes` | named sample points recorded during the run |
+| `probes` | named sample points. Fixed: `x_mm`, `y_mm`, `z_mm`. Torch-relative: `behind_mm` (opposite travel), optional `lateral_mm` (left of travel), and `z_mm` as a fixed height |
 
 ### `plate:`
 
@@ -707,7 +708,7 @@ deposition:
 | `backend` | preferred backend hint; runtime still follows `init_taichi` / `WAAM_*` env |
 | `physics_tier` | `flow` / `full` — default force set before `enable_*` overrides (`base`, `default`, `standard_physics` are accepted aliases to `flow`; unknown values now raise `ValueError`) |
 | `domain_mm` / `dx_mm` | optional domain and cell size (override preset sizing) |
-| `auto_grid` | `true` (default) coarsens `dx` to the preset VRAM/`max_cells` budget. `false` keeps `dx_mm`. Preset still selects collision model and tracer count. CLI: `--auto-grid` / `--no-auto-grid` |
+| `auto_grid` | Kept for compatibility. `dx_mm` is always allocated as requested; there is no preset VRAM/`max_cells` refusal. The device OOMs if the mesh does not fit. Cell count scales as `1/dx³`. |
 | `enable_vof` | enable free-surface VOF advection |
 | `enable_csf_tension` | enable capillary surface-tension force |
 | `enable_wetting` | apply the contact-angle wetting boundary condition |
@@ -1030,10 +1031,9 @@ Values match [`config/presets.yaml`](config/presets.yaml):
 | `high` | 0.2 mm | 1.2e8 / 8192 | MRT (two-rate) |
 | `ultra` | 0.15 mm | 4e8 / 16384 | MRT (two-rate) |
 
-`auto_grid()` keeps job `domain_mm` and coarsens `dx` to fit the profile. The
-VRAM estimator is optimistic — full physics + viewer can OOM under `ultra` on a
-true 16 GB card. See [docs/HARDWARE.md](docs/HARDWARE.md) and
-[docs/HPC.md](docs/HPC.md).
+`dx` is allocated as written. Cell count scales as `1/dx³`. The preset does not
+coarsen `dx`. A mesh that does not fit fails at device allocation. See
+[docs/HARDWARE.md](docs/HARDWARE.md) and [docs/HPC.md](docs/HPC.md).
 
 **Timestep:** `dt = 0.1 · dx` (seconds). Not exposed as a job knob; change
 accuracy via domain / `dx` / `physics_tier`, and duration via step count.
