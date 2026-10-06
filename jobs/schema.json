@@ -73,11 +73,25 @@
         },
         "use_variable_tau": {
           "type": "boolean",
-          "description": "Per-cell τ from μ(T) tables (SRT path). When true, the two-rate MRT kernel is not used even if use_srt is false."
+          "description": "Per-cell τ from μ(T) tables. With use_srt false → two-rate MRT variable-τ; with use_srt true → SRT variable-τ."
         },
         "use_srt": {
           "type": "boolean",
-          "description": "Override preset collision. false → two-rate central-moment MRT when use_variable_tau is also false."
+          "description": "Override preset collision. false → two-rate central-moment MRT (constant or variable τ)."
+        },
+        "auto_dt_ma": {
+          "type": "boolean",
+          "description": "Shrink dt so u_design_m_s*dt/dx ≤ u_mach_limit_lu and τ≥0.505."
+        },
+        "u_design_m_s": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Design peak physical velocity [m/s] for auto_dt_ma (default 0.5)."
+        },
+        "pool_metric": {
+          "type": "string",
+          "enum": ["fusion_zone", "fl_bbox"],
+          "description": "Primary pool W/D metric (prefer claim.pool_metric)."
         },
         "u_mach_limit_lu": {
           "type": "number",
@@ -304,6 +318,24 @@
       }
     },
     "layer_height_mm": { "type": "number" },
+    "claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mesh_tier": { "type": "string", "enum": ["shop", "hpc"] },
+        "absolute_wd": { "type": "boolean" },
+        "trend_only": { "type": "boolean" },
+        "tier_label": { "type": "string" },
+        "pool_metric": { "type": "string", "enum": ["fusion_zone", "fl_bbox"] },
+        "characterisation": { "type": "string" },
+        "accuracy": { "type": "object", "additionalProperties": { "type": "string" } },
+        "knobs_fitted": { "type": "array", "items": { "type": "string" } },
+        "knobs_predicted": { "type": "array", "items": { "type": "string" } },
+        "limitations": { "type": "array", "items": { "type": "string" } },
+        "out_of_scope": { "type": "array", "items": { "type": "string" } },
+        "notes": { "type": "string" }
+      }
+    },
     "reference": { "type": "object", "additionalProperties": true },
     "model_reference": { "type": "object", "additionalProperties": true },
     "probes": { "type": "array", "items": { "type": "object" } }

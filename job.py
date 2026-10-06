@@ -373,6 +373,7 @@ _KNOWN_SIM_KEYS = frozenset({
     "domain_margin_mm", "air_gap_mm",
     "dt_scale", "warn_on_force_clamp", "alloy_mix_rate",
     "use_variable_tau", "use_srt", "u_mach_limit_lu", "force_limit_lu", "C_darcy",
+    "auto_dt_ma", "u_design_m_s", "pool_metric",
 })
 
 _KNOWN_PROCESS_KEYS = frozenset({
@@ -465,6 +466,13 @@ def _warn_unknown_section(log, section: str, data: dict, known: frozenset) -> No
         log.warning(f"[job] unknown {section} keys (ignored): {unknown}")
 
 
+_KNOWN_CLAIM_KEYS = frozenset({
+    "mesh_tier", "absolute_wd", "trend_only", "tier_label", "pool_metric",
+    "characterisation", "accuracy", "knobs_fitted", "knobs_predicted",
+    "limitations", "out_of_scope", "notes",
+})
+
+
 def _warn_unknown_job_keys(job: dict[str, Any]) -> None:
     """Belt-and-braces: schema should already reject these on YAML load."""
     from . import logging_util as log
@@ -482,6 +490,8 @@ def _warn_unknown_job_keys(job: dict[str, Any]) -> None:
     )
     _warn_unknown_section(log, "heat_loss", job.get("heat_loss") or {}, _KNOWN_HEAT_LOSS_KEYS)
     _warn_unknown_section(log, "electrical", job.get("electrical") or {}, _KNOWN_ELECTRICAL_KEYS)
+    if job.get("claim") is not None:
+        _warn_unknown_section(log, "claim", job.get("claim") or {}, _KNOWN_CLAIM_KEYS)
 
 
 def apply_job_to_twin(twin, job: dict[str, Any] | JobConfig) -> None:
@@ -589,6 +599,20 @@ def apply_job_to_twin(twin, job: dict[str, Any] | JobConfig) -> None:
     v = _sim_or_adv("C_darcy")
     if v is not None:
         twin.C_darcy = float(v)
+    v = _sim_or_adv("auto_dt_ma")
+    if v is not None:
+        twin.auto_dt_ma = bool(v)
+    v = _sim_or_adv("u_design_m_s")
+    if v is not None:
+        twin.u_design_m_s = float(v)
+    v = _sim_or_adv("pool_metric")
+    if v is not None:
+        twin.pool_metric = str(v)
+    claim = job.get("claim") or {}
+    if claim:
+        twin._job_claim = dict(claim)
+        if "pool_metric" in claim:
+            twin.pool_metric = str(claim["pool_metric"])
     import os
     if os.environ.get("WAAM_STRICT", "").strip() in ("1", "true", "True", "yes"):
         twin.strict_mode = True

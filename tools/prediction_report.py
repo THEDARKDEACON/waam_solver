@@ -1,12 +1,13 @@
 """
 prediction_report.py — Fitted vs predicted credibility report.
 
-Runs the locked ``bead_calibrate`` baseline and held-out process variants
-with Goldak/η/recoil frozen. Prints W/D, crown, T, trend gates, and
+Runs the locked calibrate baseline and held-out process variants with
+Goldak/η/recoil frozen. Prints W/D, crown, T, trend gates, and
 macrograph absolute error when ``reference`` is filled.
 
 Usage:
   PYTHONPATH=. WAAM_BACKEND=cuda python3 -m waam_twin.tools.prediction_report
+  PYTHONPATH=. WAAM_BACKEND=cuda python3 -m waam_twin.tools.prediction_report --tier hpc
   PYTHONPATH=. WAAM_BEAD_STEPS=3000 python3 -m waam_twin.tools.prediction_report --quick
 """
 
@@ -20,10 +21,14 @@ import time
 
 from waam_twin.job import load_job_config
 from waam_twin.validation.prediction import (
+    CALIBRATE_HPC_JOB,
     CALIBRATE_JOB,
     HELDOUT_BRUNO_JOB,
     HELDOUT_FAST_JOB,
     HELDOUT_HOT_JOB,
+    HELDOUT_HPC_FAST_JOB,
+    HELDOUT_HPC_HOT_JOB,
+    HELDOUT_HPC_MACRO2_JOB,
     HELDOUT_MACRO2_JOB,
     assert_macrograph_prediction,
     assert_physics_lock,
@@ -40,19 +45,50 @@ def _fmt(m: dict) -> str:
         err_s = "  (awaiting macrograph measurement)"
     else:
         err_s = "  (prediction-only)"
+    metric = m.get("pool_metric", "fusion_zone")
     return (
         f"I={m['current_A']:.0f}A  V={m['voltage_V']:.0f}V  v={m['travel_mm_s']:.1f}mm/s  "
         f"Q={m['Q_w_W']:.0f}W  η={m['eta']:.2f}  C_acc={m['recoil_accommodation']:.2f}  "
         f"evap_scale={m.get('evap_cooling_scale', 25):.1f}\n"
         f"  W={m['pool_width_mm']:.2f}  D={m['pool_depth_mm']:.2f} mm  "
+        f"(metric={metric}; bbox={m.get('pool_width_bbox_mm', float('nan')):.2f}×"
+        f"{m.get('pool_depth_bbox_mm', float('nan')):.2f})  "
         f"h={m['bead_height_mm']:.2f}  T={m['peak_temp_C']:.0f}C  "
         f"n_cap={m['n_cap']}  f_recoil={m['f_recoil_max']:.2e}"
         f"{err_s}"
     )
 
 
+def _tier_cases(tier: str, *, with_bruno: bool):
+    if tier == "hpc":
+        cases = [
+            ("calibrate (fitted)", CALIBRATE_HPC_JOB, None, "wall"),
+            ("heldout_fast", HELDOUT_HPC_FAST_JOB, "smaller_pool", "distance"),
+            ("heldout_hot", HELDOUT_HPC_HOT_JOB, "larger_pool", "wall"),
+            ("heldout_macro2", HELDOUT_HPC_MACRO2_JOB, "larger_pool", "distance"),
+        ]
+        baseline = CALIBRATE_HPC_JOB
+    else:
+        cases = [
+            ("calibrate (fitted)", CALIBRATE_JOB, None, "wall"),
+            ("heldout_fast", HELDOUT_FAST_JOB, "smaller_pool", "distance"),
+            ("heldout_hot", HELDOUT_HOT_JOB, "larger_pool", "wall"),
+            ("heldout_macro2", HELDOUT_MACRO2_JOB, "larger_pool", "distance"),
+        ]
+        baseline = CALIBRATE_JOB
+        if with_bruno:
+            cases.append(("heldout_bruno", HELDOUT_BRUNO_JOB, None, "distance"))
+    return baseline, cases
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument(
+        "--tier",
+        choices=("shop", "hpc"),
+        default="shop",
+        help="Mesh-locked job family: shop (dx=0.4 SRT) or hpc (dx=0.2 MRT+auto_dt_ma)",
+    )
     ap.add_argument(
         "--quick",
         action="store_true",
@@ -63,7 +99,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--with-bruno",
         action="store_true",
-        help="Also run Bruno GMAW surface-bead held-out (PIONEER Bruno_Dataset)",
+        help="Also run Bruno GMAW surface-bead held-out (shop tier only)",
     )
     args = ap.parse_args(argv)
 
@@ -72,25 +108,19 @@ def main(argv: list[str] | None = None) -> int:
         args.skip_trends = True
         print("NOTE: --quick skips trend gates; use full n_steps for credibility.")
 
-    baseline_job = load_job_config(CALIBRATE_JOB)
-    cases = [
-        ("calibrate (fitted)", CALIBRATE_JOB, None, "wall"),
-        ("heldout_fast", HELDOUT_FAST_JOB, "smaller_pool", "distance"),
-        ("heldout_hot", HELDOUT_HOT_JOB, "larger_pool", "wall"),
-        ("heldout_macro2", HELDOUT_MACRO2_JOB, "larger_pool", "distance"),
-    ]
-    if args.with_bruno:
-        cases.append(("heldout_bruno", HELDOUT_BRUNO_JOB, None, "distance"))
+    baseline_path, cases = _tier_cases(args.tier, with_bruno=args.with_bruno)
+    baseline_job = load_job_config(baseline_path)
+    print(f"tier={args.tier}  baseline={baseline_path}")
 
     results: dict[str, dict] = {}
     t0 = time.perf_counter()
     base_m = None
     for name, path, trend, mode in cases:
         job = load_job_config(path)
-        if path != CALIBRATE_JOB:
+        if path != baseline_path:
             assert_physics_lock(baseline_job, job, label=name)
         print(f"\n=== {name} ===\n  job={path}")
-        if path == CALIBRATE_JOB:
+        if path == baseline_path:
             m = run_job_metrics(path)
             base_m = m
         elif mode == "distance" and base_m is not None:
@@ -103,7 +133,7 @@ def main(argv: list[str] | None = None) -> int:
             f"  material={m['material_name']} status={m['material_status']}  "
             f"steps={m['n_steps']}  dist={m.get('travel_distance_mm', 0):.2f}mm"
         )
-        if path in (HELDOUT_MACRO2_JOB, HELDOUT_BRUNO_JOB):
+        if path in (HELDOUT_MACRO2_JOB, HELDOUT_HPC_MACRO2_JOB, HELDOUT_BRUNO_JOB):
             assert_macrograph_prediction(m, job, label=name)
 
     base = results["calibrate (fitted)"]
@@ -122,8 +152,10 @@ def main(argv: list[str] | None = None) -> int:
     elapsed = time.perf_counter() - t0
     print(f"\n--- summary ({elapsed:.0f}s) ---")
     print(
-        f"Fitted lock: η={base['eta']:.2f}  C_acc={base['recoil_accommodation']:.2f}  "
-        f"calibrate W/D={base['pool_width_mm']:.2f}×{base['pool_depth_mm']:.2f} mm"
+        f"Fitted lock ({args.tier}): η={base['eta']:.2f}  "
+        f"C_acc={base['recoil_accommodation']:.2f}  "
+        f"calibrate W/D={base['pool_width_mm']:.2f}×{base['pool_depth_mm']:.2f} mm "
+        f"(metric={base.get('pool_metric')})"
     )
     if base.get("macro_err_pct") is not None:
         print(f"Macrograph error (fitted case only): {base['macro_err_pct']:.1f}%")
@@ -131,7 +163,7 @@ def main(argv: list[str] | None = None) -> int:
     if m2:
         print(
             f"Macro2 slot predicted W/D={m2['pool_width_mm']:.2f}×{m2['pool_depth_mm']:.2f} mm "
-            f"— paste measured values into {HELDOUT_MACRO2_JOB} reference when ready."
+            f"— paste measured values into held-out reference when ready."
         )
     br = results.get("heldout_bruno")
     if br:
@@ -140,6 +172,7 @@ def main(argv: list[str] | None = None) -> int:
             f"err={br.get('macro_err_pct', float('nan'))} — see docs/validation/PIONEER_BRUNO_DATASET.md"
         )
     print("Held-outs are predictions — do not retune Goldak/η/recoil to match them.")
+    print("Do not copy fitted knobs across mesh tiers (shop ↔ hpc).")
 
     if args.json:
         with open(args.json, "w", encoding="utf-8") as f:

@@ -1,0 +1,49 @@
+# Shared claim fragment for ER70S-6 mesh-locked calibrate / held-outs.
+# Copied into jobs (YAML has no include) — keep in sync when editing policy.
+mesh_tier: shop
+absolute_wd: true
+trend_only: false
+tier_label: engineering_trend_predictor
+pool_metric: fusion_zone
+characterisation: >
+  Qualitatively predictive; quantitatively usable to roughly ±20–25% pool W/D
+  at the training process point on the declared mesh tier, degrading
+  off-calibration; primary W/D is liquidus T_max fusion envelope (f_l bbox
+  secondary); thermal advection is minmod-limited (not 1st-order); shop path
+  is SRT+variable-τ, HPC path is two-rate MRT+variable-τ; CSF toe uses
+  solid-aware stencils; fitted knobs are mesh-tier locked — do not reuse
+  across shop/hpc; suitable as an engineering-grade process trend predictor.
+accuracy:
+  T_peak: "moderate when calibrated; Goldak/η absorb arc plasma uncertainty"
+  pool_width: "moderate at lock mesh with fusion metric; ±15–25% typical"
+  pool_depth: "similar to width; sulphur/Sahoo sensitive"
+  bead_height: "low absolute, moderate trends with WFS"
+  marangoni_velocity: "order-of-magnitude / sign; better with variable-τ"
+  HAZ: "moderate; slightly conservative spread"
+  porosity: "qualitative tracers only"
+knobs_fitted:
+  - eta
+  - goldak_axes
+  - evap_cooling_scale
+  - recoil_accommodation
+knobs_predicted:
+  - lin_eagar_p0
+  - cc_Psat_shape
+  - sahoo_dgamma
+  - carman_kozeny_form
+  - lorentz_JxB
+limitations:
+  - fl_bbox_overestimate_secondary
+  - mesh_dependent_fitted_knobs
+  - operator_splitting_lag
+  - lorentz_per_step_skip_possible
+  - force_ablation_sensitivity_uncertain
+  - residual_phi_fl_one_way_sync
+  - not_full_multirate_MRT
+out_of_scope:
+  - mushy_turbulence
+  - pinch_droplet_detachment
+  - arc_plasma_shielding
+  - oxide_film
+  - keyhole_cavity_collapse
+  - residual_stress_FEA

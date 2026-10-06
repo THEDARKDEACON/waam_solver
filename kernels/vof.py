@@ -98,6 +98,31 @@ def _correct_normal_contact_angle(
 
 
 @ti.func
+def _phi_sample_mirror_solid(
+    phi: ti.template(),
+    flags: ti.template(),
+    i: ti.i32,
+    j: ti.i32,
+    k: ti.i32,
+    i0: ti.i32,
+    j0: ti.i32,
+    k0: ti.i32,
+    FLAG_SOLID: ti.i32,
+    nx: ti.i32,
+    ny: ti.i32,
+    nz: ti.i32,
+):
+    """φ at (i,j,k); if that cell is SOLID, mirror from fluid cell (i0,j0,k0)."""
+    ii = ti.min(ti.max(i, 0), nx - 1)
+    jj = ti.min(ti.max(j, 0), ny - 1)
+    kk = ti.min(ti.max(k, 0), nz - 1)
+    val = phi[ii, jj, kk]
+    if flags[ii, jj, kk] == FLAG_SOLID:
+        val = phi[i0, j0, k0]
+    return val
+
+
+@ti.func
 def _phi_unit_normal_at(
     phi: ti.template(),
     i: ti.i32,
@@ -128,11 +153,62 @@ def _phi_unit_normal_at(
 
 
 @ti.func
-def _brackbill_curvature_at(
+def _phi_unit_normal_wall_aware(
     phi: ti.template(),
+    flags: ti.template(),
     i: ti.i32,
     j: ti.i32,
     k: ti.i32,
+    FLAG_SOLID: ti.i32,
+    nx: ti.i32,
+    ny: ti.i32,
+    nz: ti.i32,
+    eps: ti.f32,
+):
+    """Unit normal with solid-neighbour φ mirrored (substrate triple line)."""
+    phi_c = phi[i, j, k]
+    phi_ip = _phi_sample_mirror_solid(
+        phi, flags, i + 1, j, k, i, j, k, FLAG_SOLID, nx, ny, nz,
+    )
+    phi_im = _phi_sample_mirror_solid(
+        phi, flags, i - 1, j, k, i, j, k, FLAG_SOLID, nx, ny, nz,
+    )
+    phi_jp = _phi_sample_mirror_solid(
+        phi, flags, i, j + 1, k, i, j, k, FLAG_SOLID, nx, ny, nz,
+    )
+    phi_jm = _phi_sample_mirror_solid(
+        phi, flags, i, j - 1, k, i, j, k, FLAG_SOLID, nx, ny, nz,
+    )
+    phi_kp = _phi_sample_mirror_solid(
+        phi, flags, i, j, k + 1, i, j, k, FLAG_SOLID, nx, ny, nz,
+    )
+    phi_km = _phi_sample_mirror_solid(
+        phi, flags, i, j, k - 1, i, j, k, FLAG_SOLID, nx, ny, nz,
+    )
+    # If centre itself is solid (should not be called), avoid NaNs.
+    _ = phi_c
+    dpx = 0.5 * (phi_ip - phi_im)
+    dpy = 0.5 * (phi_jp - phi_jm)
+    dpz = 0.5 * (phi_kp - phi_km)
+    gmag = ti.sqrt(dpx * dpx + dpy * dpy + dpz * dpz)
+    nx_n = 0.0
+    ny_n = 0.0
+    nz_n = 0.0
+    if gmag >= eps:
+        nx_n = dpx / gmag
+        ny_n = dpy / gmag
+        nz_n = dpz / gmag
+    return nx_n, ny_n, nz_n, gmag
+
+
+@ti.func
+def _brackbill_curvature_at(
+    phi: ti.template(),
+    flags: ti.template(),
+    i: ti.i32,
+    j: ti.i32,
+    k: ti.i32,
+    FLAG_SOLID: ti.i32,
     nx: ti.i32,
     ny: ti.i32,
     nz: ti.i32,
@@ -142,29 +218,32 @@ def _brackbill_curvature_at(
     Brackbill CSF curvature κ = -∇·n̂ in lattice units (per cell).
 
     n̂ is evaluated at neighbour cells so the divergence is of the unit normal,
-    not a second difference of φ.
+    not a second difference of φ. Solid neighbours use mirrored φ so the
+    substrate triple line is not a bare one-sided stencil into solid.
     """
-    nx0, ny0, nz0, g0 = _phi_unit_normal_at(phi, i, j, k, nx, ny, nz, eps)
+    nx0, ny0, nz0, g0 = _phi_unit_normal_wall_aware(
+        phi, flags, i, j, k, FLAG_SOLID, nx, ny, nz, eps,
+    )
     kappa = 0.0
     # Taichi: no early return inside dynamic if — compute only when |∇φ| is usable.
     if g0 >= eps:
-        nxp, _, _, gp = _phi_unit_normal_at(
-            phi, ti.min(i + 1, nx - 1), j, k, nx, ny, nz, eps,
+        nxp, _, _, gp = _phi_unit_normal_wall_aware(
+            phi, flags, ti.min(i + 1, nx - 1), j, k, FLAG_SOLID, nx, ny, nz, eps,
         )
-        nxm, _, _, gm = _phi_unit_normal_at(
-            phi, ti.max(i - 1, 0), j, k, nx, ny, nz, eps,
+        nxm, _, _, gm = _phi_unit_normal_wall_aware(
+            phi, flags, ti.max(i - 1, 0), j, k, FLAG_SOLID, nx, ny, nz, eps,
         )
-        _, nyp, _, gp2 = _phi_unit_normal_at(
-            phi, i, ti.min(j + 1, ny - 1), k, nx, ny, nz, eps,
+        _, nyp, _, gp2 = _phi_unit_normal_wall_aware(
+            phi, flags, i, ti.min(j + 1, ny - 1), k, FLAG_SOLID, nx, ny, nz, eps,
         )
-        _, nym, _, gm2 = _phi_unit_normal_at(
-            phi, i, ti.max(j - 1, 0), k, nx, ny, nz, eps,
+        _, nym, _, gm2 = _phi_unit_normal_wall_aware(
+            phi, flags, i, ti.max(j - 1, 0), k, FLAG_SOLID, nx, ny, nz, eps,
         )
-        _, _, nzp, gp3 = _phi_unit_normal_at(
-            phi, i, j, ti.min(k + 1, nz - 1), nx, ny, nz, eps,
+        _, _, nzp, gp3 = _phi_unit_normal_wall_aware(
+            phi, flags, i, j, ti.min(k + 1, nz - 1), FLAG_SOLID, nx, ny, nz, eps,
         )
-        _, _, nzm, gm3 = _phi_unit_normal_at(
-            phi, i, j, ti.max(k - 1, 0), nx, ny, nz, eps,
+        _, _, nzm, gm3 = _phi_unit_normal_wall_aware(
+            phi, flags, i, j, ti.max(k - 1, 0), FLAG_SOLID, nx, ny, nz, eps,
         )
 
         # Fall back to centre normal where the neighbour has no interface gradient.
@@ -217,40 +296,69 @@ def compute_csf_tension(
         if flags[i, j, k] == FLAG_SOLID or flags[i, j, k] == FLAG_GAS:
             continue
 
-        # Full ±1 stencil for neighbour normals; skip domain rim.
-        if (
+        wx, wy, wz, has_wall = _solid_wall_normal(
+            flags, i, j, k, FLAG_SOLID, nx, ny, nz,
+        )
+
+        # Skip domain exterior rim only when there is no solid neighbour.
+        # Substrate triple-line cells (solid-adjacent) must keep CSF/wetting.
+        on_rim = (
             i < 1 or j < 1 or k < 1
             or i > nx - 2 or j > ny - 2 or k > nz - 2
-        ):
+        )
+        if on_rim and has_wall == 0:
             continue
 
-        kappa, gmag = _brackbill_curvature_at(phi, i, j, k, nx, ny, nz, eps)
+        kappa, gmag = _brackbill_curvature_at(
+            phi, flags, i, j, k, FLAG_SOLID, nx, ny, nz, eps,
+        )
         if gmag < eps:
             continue
 
-        dpx = 0.5 * (phi[ti.min(i + 1, nx - 1), j, k] - phi[ti.max(i - 1, 0), j, k])
-        dpy = 0.5 * (phi[i, ti.min(j + 1, ny - 1), k] - phi[i, ti.max(j - 1, 0), k])
-        dpz = 0.5 * (phi[i, j, ti.min(k + 1, nz - 1)] - phi[i, j, ti.max(k - 1, 0)])
+        # Gradients: mirror across solid faces so the stencil does not read
+        # interior solid φ as a free-surface neighbour.
+        phi_ip = phi[ti.min(i + 1, nx - 1), j, k]
+        phi_im = phi[ti.max(i - 1, 0), j, k]
+        phi_jp = phi[i, ti.min(j + 1, ny - 1), k]
+        phi_jm = phi[i, ti.max(j - 1, 0), k]
+        phi_kp = phi[i, j, ti.min(k + 1, nz - 1)]
+        phi_km = phi[i, j, ti.max(k - 1, 0)]
+        phi_c = phi[i, j, k]
+        if i + 1 < nx and flags[i + 1, j, k] == FLAG_SOLID:
+            phi_ip = phi_c
+        if i - 1 >= 0 and flags[i - 1, j, k] == FLAG_SOLID:
+            phi_im = phi_c
+        if j + 1 < ny and flags[i, j + 1, k] == FLAG_SOLID:
+            phi_jp = phi_c
+        if j - 1 >= 0 and flags[i, j - 1, k] == FLAG_SOLID:
+            phi_jm = phi_c
+        if k + 1 < nz and flags[i, j, k + 1] == FLAG_SOLID:
+            phi_kp = phi_c
+        if k - 1 >= 0 and flags[i, j, k - 1] == FLAG_SOLID:
+            phi_km = phi_c
+
+        dpx = 0.5 * (phi_ip - phi_im)
+        dpy = 0.5 * (phi_jp - phi_jm)
+        dpz = 0.5 * (phi_kp - phi_km)
+        gmag_s = ti.sqrt(dpx * dpx + dpy * dpy + dpz * dpz)
+        if gmag_s >= eps:
+            gmag = gmag_s
 
         fx = gamma_lu * kappa * dpx
         fy = gamma_lu * kappa * dpy
         fz = gamma_lu * kappa * dpz
 
-        if enable_wetting != 0:
-            wx, wy, wz, has_wall = _solid_wall_normal(
-                flags, i, j, k, FLAG_SOLID, nx, ny, nz,
+        if enable_wetting != 0 and has_wall != 0:
+            nx_n = dpx / gmag
+            ny_n = dpy / gmag
+            nz_n = dpz / gmag
+            nx_c, ny_c, nz_c = _correct_normal_contact_angle(
+                nx_n, ny_n, nz_n, wx, wy, wz, theta_rad,
             )
-            if has_wall != 0:
-                nx_n = dpx / gmag
-                ny_n = dpy / gmag
-                nz_n = dpz / gmag
-                nx_c, ny_c, nz_c = _correct_normal_contact_angle(
-                    nx_n, ny_n, nz_n, wx, wy, wz, theta_rad,
-                )
-                # F = γ κ n̂_corr |∇φ|  (same magnitude, Young-consistent direction)
-                fx = gamma_lu * kappa * nx_c * gmag
-                fy = gamma_lu * kappa * ny_c * gmag
-                fz = gamma_lu * kappa * nz_c * gmag
+            # F = γ κ n̂_corr |∇φ|  (same magnitude, Young-consistent direction)
+            fx = gamma_lu * kappa * nx_c * gmag
+            fy = gamma_lu * kappa * ny_c * gmag
+            fz = gamma_lu * kappa * nz_c * gmag
 
         Fx[i, j, k] += fx
         Fy[i, j, k] += fy

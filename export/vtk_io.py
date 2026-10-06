@@ -79,7 +79,7 @@ def _prepare_derived(twin: "WAAMTwin", tiers: Sequence[int]) -> None:
     g.ensure_export_buffers()
     kernels.compute_curvature_field(
         g.phi, g.flags, g.kappa_field,
-        g.FLAG_GAS, g.nx, g.ny, g.nz,
+        g.FLAG_SOLID, g.FLAG_GAS, g.nx, g.ny, g.nz,
     )
     kernels.compute_vorticity_magnitude(
         g.ux, g.uy, g.uz, g.flags, g.vorticity_mag,
@@ -212,7 +212,7 @@ def export_surface(
         g.ensure_export_buffers()
         kernels.compute_curvature_field(
             g.phi, g.flags, g.kappa_field,
-            g.FLAG_GAS, g.nx, g.ny, g.nz,
+            g.FLAG_SOLID, g.FLAG_GAS, g.nx, g.ny, g.nz,
         )
 
     _, grid_pv = _image_grid(twin)

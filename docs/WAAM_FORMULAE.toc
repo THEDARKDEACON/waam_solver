@@ -1,59 +1,53 @@
-\contentsline {section}{\numberline {1}Process inputs and energy balance}{3}{}%
-\contentsline {subsection}{\numberline {1.1}Electrical arc power}{3}{}%
-\contentsline {subsection}{\numberline {1.2}Wire mass feed}{3}{}%
-\contentsline {subsection}{\numberline {1.3}Droplet mass and volume}{3}{}%
-\contentsline {subsection}{\numberline {1.4}Travel speed and heat input per unit length}{3}{}%
-\contentsline {section}{\numberline {2}Governing conservation equations}{3}{}%
-\contentsline {subsection}{\numberline {2.1}Continuity}{3}{}%
-\contentsline {subsection}{\numberline {2.2}Momentum (Navier--Stokes)}{4}{}%
-\contentsline {subsection}{\numberline {2.3}Energy / enthalpy}{4}{}%
-\contentsline {section}{\numberline {3}Heat sources}{4}{}%
-\contentsline {subsection}{\numberline {3.1}Gaussian surface flux}{4}{}%
-\contentsline {subsection}{\numberline {3.2}Goldak double-ellipsoid source}{4}{}%
-\contentsline {subsection}{\numberline {3.3}Arc penetration attenuation}{5}{}%
-\contentsline {subsection}{\numberline {3.4}Rosenthal validation (2D trailing edge)}{5}{}%
-\contentsline {section}{\numberline {4}Thermal transport and phase change}{5}{}%
-\contentsline {subsection}{\numberline {4.1}Fourier conduction}{5}{}%
-\contentsline {subsection}{\numberline {4.2}Enthalpy--porosity method}{5}{}%
-\contentsline {subsection}{\numberline {4.3}Lattice thermal update}{6}{}%
-\contentsline {subsection}{\numberline {4.4}Enthalpy ceiling (vaporization cap)}{6}{}%
-\contentsline {subsection}{\numberline {4.5}Stefan solidification benchmark}{6}{}%
-\contentsline {subsection}{\numberline {4.6}Boundary heat losses}{6}{}%
-\contentsline {section}{\numberline {5}Lattice Boltzmann numerics}{6}{}%
-\contentsline {subsection}{\numberline {5.1}Lattice units}{6}{}%
-\contentsline {subsection}{\numberline {5.2}D3Q19 equilibrium (SRT)}{6}{}%
-\contentsline {subsection}{\numberline {5.3}Guo forcing scheme (2002)}{7}{}%
-\contentsline {subsection}{\numberline {5.4}Carman--Kozeny mushy-zone drag}{7}{}%
-\contentsline {section}{\numberline {6}Free surface (VOF) and surface tension}{7}{}%
-\contentsline {subsection}{\numberline {6.1}VOF phase field}{7}{}%
-\contentsline {subsection}{\numberline {6.2}Continuum Surface Force (CSF)}{7}{}%
-\contentsline {subsection}{\numberline {6.3}Marangoni force}{7}{}%
-\contentsline {subsection}{\numberline {6.4}Wetting and contact angle}{8}{}%
-\contentsline {subsection}{\numberline {6.5}Bond number}{8}{}%
-\contentsline {section}{\numberline {7}Weld-pool body forces}{8}{}%
-\contentsline {subsection}{\numberline {7.1}Lorentz (electromagnetic) force}{8}{}%
-\contentsline {subsection}{\numberline {7.2}Boussinesq thermal buoyancy}{9}{}%
-\contentsline {subsection}{\numberline {7.3}Hydrostatic gravity on liquid}{9}{}%
-\contentsline {subsection}{\numberline {7.4}Vapor recoil pressure}{9}{}%
-\contentsline {subsection}{\numberline {7.5}Gas-jet shear stress}{9}{}%
-\contentsline {subsection}{\numberline {7.6}Arc pressure}{9}{}%
-\contentsline {section}{\numberline {8}Droplet deposition and impact}{9}{}%
-\contentsline {subsection}{\numberline {8.1}Wire mass balance}{9}{}%
-\contentsline {subsection}{\numberline {8.2}Droplet impact velocity}{10}{}%
-\contentsline {subsection}{\numberline {8.3}Droplet impact pressure (kinetic)}{10}{}%
-\contentsline {subsection}{\numberline {8.4}Deposition footprint}{10}{}%
-\contentsline {subsection}{\numberline {8.5}Droplet entry enthalpy}{10}{}%
-\contentsline {section}{\numberline {9}Electrical stick-out and CTWD}{10}{}%
-\contentsline {subsection}{\numberline {9.1}Stick-out resistance}{10}{}%
-\contentsline {subsection}{\numberline {9.2}CTWD update (layer drift)}{11}{}%
-\contentsline {section}{\numberline {10}Material properties and constitutive relations}{11}{}%
-\contentsline {section}{\numberline {11}Bead geometry metrics}{11}{}%
-\contentsline {section}{\numberline {12}Coordinate frames (robot integration)}{11}{}%
-\contentsline {section}{\numberline {13}Digital twin platform (architecture signals)}{11}{}%
-\contentsline {subsection}{\numberline {13.1}Twin input snapshot}{11}{}%
-\contentsline {subsection}{\numberline {13.2}Twin step}{12}{}%
-\contentsline {subsection}{\numberline {13.3}Supervisory closed-loop deviation}{12}{}%
-\contentsline {subsection}{\numberline {13.4}Synchronization}{12}{}%
-\contentsline {section}{\numberline {14}Dimensionless groups (reference)}{12}{}%
-\contentsline {section}{\numberline {15}Coupled timestep order (reference)}{12}{}%
-\contentsline {section}{\numberline {16}Bibliography}{13}{}%
+\contentsline {section}{\numberline {1}How to read this document}{3}{section.1}%
+\contentsline {section}{\numberline {2}Process inputs and energy balance}{3}{section.2}%
+\contentsline {subsection}{\numberline {2.1}Electrical arc power and effective heat}{3}{subsection.2.1}%
+\contentsline {subsection}{\numberline {2.2}How $Q_{\mathrm {eff}}$ relates to $\dot {q}_{\mathrm {arc}}$}{3}{subsection.2.2}%
+\contentsline {subsection}{\numberline {2.3}Wire mass feed}{4}{subsection.2.3}%
+\contentsline {subsection}{\numberline {2.4}Droplet mass and volume}{4}{subsection.2.4}%
+\contentsline {subsection}{\numberline {2.5}Travel speed and line energy}{5}{subsection.2.5}%
+\contentsline {section}{\numberline {3}Governing conservation equations}{5}{section.3}%
+\contentsline {subsection}{\numberline {3.1}Continuity}{5}{subsection.3.1}%
+\contentsline {subsection}{\numberline {3.2}Momentum (Navier--Stokes)}{5}{subsection.3.2}%
+\contentsline {subsection}{\numberline {3.3}Energy / enthalpy}{5}{subsection.3.3}%
+\contentsline {section}{\numberline {4}Heat sources}{5}{section.4}%
+\contentsline {subsection}{\numberline {4.1}Gaussian surface / near-surface source}{6}{subsection.4.1}%
+\contentsline {subsection}{\numberline {4.2}Goldak double-ellipsoid source}{6}{subsection.4.2}%
+\contentsline {subsection}{\numberline {4.3}Arc deposition / penetration weight}{7}{subsection.4.3}%
+\contentsline {subsection}{\numberline {4.4}Rosenthal far-field check (validation only)}{7}{subsection.4.4}%
+\contentsline {section}{\numberline {5}Thermal transport and phase change}{7}{section.5}%
+\contentsline {subsection}{\numberline {5.1}Fourier conduction}{7}{subsection.5.1}%
+\contentsline {subsection}{\numberline {5.2}Enthalpy--porosity method}{8}{subsection.5.2}%
+\contentsline {subsection}{\numberline {5.3}Lattice thermal update}{8}{subsection.5.3}%
+\contentsline {subsection}{\numberline {5.4}Enthalpy ceiling (vaporization cap)}{8}{subsection.5.4}%
+\contentsline {subsection}{\numberline {5.5}Evaporative cooling (surface sink)}{9}{subsection.5.5}%
+\contentsline {subsection}{\numberline {5.6}Stefan solidification benchmark}{9}{subsection.5.6}%
+\contentsline {subsection}{\numberline {5.7}Boundary heat losses}{9}{subsection.5.7}%
+\contentsline {section}{\numberline {6}Lattice Boltzmann numerics}{9}{section.6}%
+\contentsline {subsection}{\numberline {6.1}Lattice units}{9}{subsection.6.1}%
+\contentsline {subsection}{\numberline {6.2}D3Q19 equilibrium (SRT)}{10}{subsection.6.2}%
+\contentsline {subsection}{\numberline {6.3}Guo forcing scheme (2002)}{10}{subsection.6.3}%
+\contentsline {subsection}{\numberline {6.4}Carman--Kozeny mushy-zone drag}{10}{subsection.6.4}%
+\contentsline {section}{\numberline {7}Free surface (VOF) and surface tension}{10}{section.7}%
+\contentsline {subsection}{\numberline {7.1}VOF phase field}{10}{subsection.7.1}%
+\contentsline {subsection}{\numberline {7.2}Continuum Surface Force (CSF)}{10}{subsection.7.2}%
+\contentsline {subsection}{\numberline {7.3}Marangoni force}{11}{subsection.7.3}%
+\contentsline {subsection}{\numberline {7.4}Wetting and contact angle}{11}{subsection.7.4}%
+\contentsline {section}{\numberline {8}Weld-pool body and surface forces}{11}{section.8}%
+\contentsline {subsection}{\numberline {8.1}Lorentz (electromagnetic) force}{11}{subsection.8.1}%
+\contentsline {subsection}{\numberline {8.2}Boussinesq buoyancy and hydrostatic gravity}{11}{subsection.8.2}%
+\contentsline {subsection}{\numberline {8.3}Arc pressure (Lin--Eagar)}{12}{subsection.8.3}%
+\contentsline {subsection}{\numberline {8.4}Vapor recoil}{12}{subsection.8.4}%
+\contentsline {subsection}{\numberline {8.5}Gas-jet shear}{12}{subsection.8.5}%
+\contentsline {section}{\numberline {9}Droplet deposition and impact}{12}{section.9}%
+\contentsline {subsection}{\numberline {9.1}Mass balance}{12}{subsection.9.1}%
+\contentsline {subsection}{\numberline {9.2}Impact velocity and pressure}{12}{subsection.9.2}%
+\contentsline {section}{\numberline {10}Electrical stick-out and CTWD}{13}{section.10}%
+\contentsline {section}{\numberline {11}Material properties}{13}{section.11}%
+\contentsline {section}{\numberline {12}Bead geometry metrics}{13}{section.12}%
+\contentsline {section}{\numberline {13}Coordinate frames (robot integration)}{13}{section.13}%
+\contentsline {section}{\numberline {14}Digital twin platform signals}{14}{section.14}%
+\contentsline {section}{\numberline {15}Physics tiers (current project)}{14}{section.15}%
+\contentsline {section}{\numberline {16}Dimensionless groups}{14}{section.16}%
+\contentsline {section}{\numberline {17}Coupled timestep order (current code)}{14}{section.17}%
+\contentsline {section}{\numberline {18}Quick symbol sheet}{15}{section.18}%
+\contentsline {section}{\numberline {19}Bibliography}{15}{section.19}%

@@ -1,38 +1,14 @@
-# =============================================================================
-# Bead calibration job — fixed domain for deposition + pool W/D tuning
-# =============================================================================
-# Macrograph target: W≈7 mm, D≈3 mm (cool_shallow model_reference ≈6.8×3.2).
-# Power: Q_w = I·V (electrical); kernels apply η separately.
-#
-# Fitted vs predicted (physics upgrade — keep when retuning):
-#   FITTED: η=0.72, Goldak a_f/a_r/b/c, σ=2.0, penetration=2.1, travel 6.5 mm/s,
-#           I×V=100×15, evap_cooling_scale=25, C_acc=0.25 (soft-onset recoil),
-#           T_boil=3000 under T_cap=3200.
-#   PREDICTED / model: Lin–Eagar p0(I,σ), CC P_sat(T), Lorentz J×B, gas shear
-#           τ~ρv², CSF/wetting from contact_angle, Marangoni from material dγ/dT.
-#   physics_tier: full → lin_eagar + Lorentz/gas-shear defaults; enable_recoil
-#           stays explicit (conduction-mode WAAM often keeps recoil off).
-#
-# Held-out predictions (do not retune fitted knobs):
-#   jobs/examples/bead_calibrate_heldout_fast.yaml  — travel 11 mm/s
-#   jobs/examples/bead_calibrate_heldout_hot.yaml   — 120 A
-#   jobs/examples/bead_calibrate_heldout_macro2.yaml — 5 mm/s (paste 2nd macrograph)
-#   jobs/examples/bead_bruno_gmaw.yaml — Bruno/PIONEER laser bead W/H (surface gate)
-#   jobs/examples/wall_pioneer_m1.yaml — PIONEER M1 wall process (2-layer proxy)
-#   docs/validation/heldout_macrograph_slot.md
-#   docs/validation/PIONEER_BRUNO_DATASET.md
-#   python3 -m waam_twin.tools.prediction_report --with-bruno
-#   python3 -m waam_twin.tools.multipass_report --job jobs/examples/wall_pioneer_m1.yaml
-#   python3 -m waam_twin.tools.recoil_accommodation_sweep
-#
-#   python3 -m waam_twin.viewer --job jobs/examples/bead_calibrate.yaml
-# =============================================================================
+# Auto-updated mesh-lock shop job — see docs/validation/UNDERSTANDING_CALIBRATION_AND_DATA.md
+# Source role: calibrate
 
 simulation:
   preset: standard
   backend: cuda
   physics_tier: full
-  domain_mm: [80, 40, 25]
+  domain_mm:
+  - 80
+  - 40
+  - 25
   dx_mm: 0.4
   enable_vof: true
   enable_csf_tension: true
@@ -40,7 +16,6 @@ simulation:
   enable_hydrostatic_gravity: true
   enable_bead_freeze: true
   enable_droplet_impact_pressure: true
-  # Explicit: full tier leaves recoil off unless requested
   enable_recoil: true
   use_recoil_clausius_clapeyron: true
   enable_lorentz: true
@@ -49,15 +24,23 @@ simulation:
   enable_evaporative_cooling: true
   arc_surface_weighting: true
   strict_mode: true
-
+  dt_scale: 1.0
+  use_variable_tau: true
+  use_srt: true
+  auto_dt_ma: false
+  u_design_m_s: 0.5
+  u_mach_limit_lu: 0.08
+  force_limit_lu: 0.05
+  C_darcy: 160000.0
+  warn_on_force_clamp: true
 plate:
   thickness_mm: 8.0
-  size_mm: [50, 20]
-
+  size_mm:
+  - 50
+  - 20
 material: materials/validated/ER70S-6.v1.yaml
 calibration: null
 torch_path_csv: jobs/paths/bead_calibrate.csv
-
 heat_source: goldak
 goldak:
   ff: 0.6
@@ -66,33 +49,25 @@ goldak:
   a_rear_mm: 4.2
   b_mm: 3.0
   c_mm: 1.5
-
 arc_physics:
   sigma_mm: 2.0
   penetration_mm: 2.1
   T_vapor_cap_K: 3200.0
   surface_weighting: true
-  # lin_eagar: p0 = μ0 I²/(4π² σ²) ≈ 80 Pa @ 100 A / 2 mm (was constant 150 Pa)
   pressure_model: lin_eagar
-  pressure_pa: 150.0  # fallback only if pressure_model: constant
-
+  pressure_pa: 150.0
 advanced_physics:
-  # Hertz–Knudsen evaporative cooling (primary hotspot control)
   evap_cooling_scale: 25.0
-  # Soft-onset CC recoil: ramp from ~0.85·T_boil; C_acc half of Knight 0.54
-  # while waking the force under the vapor cap
   T_boiling_K: 3000.0
   recoil_accommodation: 0.25
   L_vapor_J_kg: 6.0e6
   R_spec_vapor_J_kgK: 450.0
   lorentz_jacobi_iters: 300
-  # Warm-start residual often lands ~4–8e-4; 1e-3 avoids full-iter burn each step
-  lorentz_jacobi_tol: 1.0e-3
+  lorentz_jacobi_tol: 0.001
   sigma_liquid_Sm: 1.0e6
   sigma_solid_Sm: 1.0e5
   gas_jet_velocity_m_s: 12.0
   gas_shear_coeff: 1.0
-
 process:
   current_A: 100
   voltage_V: 15
@@ -107,29 +82,73 @@ process:
   transfer_mode: auto
   droplet_size_jitter: 0.05
   impact_lead_angle_deg: 5.0
-
+  power_factor: 1.0
+  duty_cycle: 1.0
 deposition:
   superheat_K: 400.0
   footprint_sigma_scale: 1.0
   trailing_solidify_lookback_mm: 6.0
   trailing_solidify_temp_margin_K: 10.0
-
 surface_wetting:
   contact_angle_deg: 80.0
-
 heat_loss:
   convection: true
   radiation: true
   h_conv: 35.0
-
 reference:
   pool_width_mm: 7.0
   pool_depth_mm: 3.0
   source: macrograph_ER70S-6_bead_on_plate
-
 model_reference:
   pool_width_mm: 6.8
   pool_depth_mm: 3.2
   n_steps: 8000
   bead_height_mm_min: 1.5
   f_recoil_active: true
+claim:
+  mesh_tier: shop
+  absolute_wd: true
+  trend_only: false
+  tier_label: engineering_trend_predictor
+  pool_metric: fusion_zone
+  characterisation: "Qualitatively predictive; quantitatively usable to roughly \xB120\u201325% pool W/D\
+    \ at the training process point on the declared mesh tier, degrading off-calibration; primary W/D\
+    \ is liquidus T_max fusion envelope (f_l bbox secondary); thermal advection is minmod-limited (not\
+    \ 1st-order); shop path is SRT+variable-\u03C4, HPC path is two-rate MRT+variable-\u03C4; CSF toe\
+    \ uses solid-aware stencils; fitted knobs are mesh-tier locked; suitable as an engineering-grade process\
+    \ trend predictor."
+  accuracy:
+    T_peak: "moderate when calibrated; Goldak/\u03B7 absorb arc plasma uncertainty"
+    pool_width: "moderate at lock mesh with fusion metric; \xB115\u201325% typical"
+    pool_depth: similar to width; sulphur/Sahoo sensitive
+    bead_height: low absolute, moderate trends with WFS
+    marangoni_velocity: "order-of-magnitude / sign; better with variable-\u03C4"
+    HAZ: moderate; slightly conservative spread
+    porosity: qualitative tracers only
+  knobs_fitted:
+  - eta
+  - goldak_axes
+  - evap_cooling_scale
+  - recoil_accommodation
+  knobs_predicted:
+  - lin_eagar_p0
+  - cc_Psat_shape
+  - sahoo_dgamma
+  - carman_kozeny_form
+  - lorentz_JxB
+  limitations:
+  - fl_bbox_overestimate_secondary
+  - mesh_dependent_fitted_knobs
+  - operator_splitting_lag
+  - lorentz_per_step_skip_possible
+  - force_ablation_sensitivity_uncertain
+  - residual_phi_fl_one_way_sync
+  - not_full_multirate_MRT
+  out_of_scope:
+  - mushy_turbulence
+  - pinch_droplet_detachment
+  - arc_plasma_shielding
+  - oxide_film
+  - keyhole_cavity_collapse
+  - residual_stress_FEA
+  notes: "Shop tier dx=0.4 mm. Do not copy \u03B7/Goldak from HPC lock into this tier."

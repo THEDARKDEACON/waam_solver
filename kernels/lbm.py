@@ -397,6 +397,7 @@ def compute_curvature_field(
     phi: ti.template(),
     flags: ti.template(),
     kappa_out: ti.template(),
+    FLAG_SOLID: ti.i32,
     FLAG_GAS: ti.i32,
     nx: ti.i32,
     ny: ti.i32,
@@ -406,14 +407,16 @@ def compute_curvature_field(
     eps = 1e-6
     for i, j, k in kappa_out:
         kappa_out[i, j, k] = 0.0
-        if flags[i, j, k] == FLAG_GAS:
+        if flags[i, j, k] == FLAG_GAS or flags[i, j, k] == FLAG_SOLID:
             continue
         if (
             i < 1 or j < 1 or k < 1
             or i > nx - 2 or j > ny - 2 or k > nz - 2
         ):
             continue
-        kappa, gmag = _brackbill_curvature_at(phi, i, j, k, nx, ny, nz, eps)
+        kappa, gmag = _brackbill_curvature_at(
+            phi, flags, i, j, k, FLAG_SOLID, nx, ny, nz, eps,
+        )
         if gmag >= eps:
             kappa_out[i, j, k] = kappa
 

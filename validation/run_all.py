@@ -57,6 +57,7 @@ def core_tests() -> list[tuple[str, str]]:
         ("transfer_mode_detachment", "waam_twin.validation.test_transfer_mode_detachment"),
         ("wetting_droplet", "waam_twin.validation.test_wetting_droplet"),
         ("wetting_wall_csf", "waam_twin.validation.test_wetting_wall_csf"),
+        ("csf_toe_solid", "waam_twin.validation.test_csf_toe_solid"),
         ("wetting_static_settle", "waam_twin.validation.test_wetting_static_settle"),
         ("kuka_trajectory_bridge", "waam_twin.validation.test_kuka_trajectory_bridge"),
         ("deposition_no_column", "waam_twin.validation.test_deposition_no_column"),

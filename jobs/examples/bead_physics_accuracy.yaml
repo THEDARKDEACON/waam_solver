@@ -1,62 +1,15 @@
-# =============================================================================
-# Bead-on-plate — physics-accuracy profile
-# =============================================================================
-# Same ER70S-6 process lock as bead_calibrate.yaml, with numerics tightened for
-# the issues called out in the physics correctness review:
-#
-#   ADDRESSED BY THIS JOB
-#   ─────────────────────
-#   • Thermal / spatial error     → dx 0.2 mm (high), vs 0.4 mm calibrate
-#   • Operator-splitting lag      → dt_scale 0.5 (half Δt; 2× steps for same t)
-#   • Marangoni viscosity         → use_variable_tau (μ(T) tables → SRT path)
-#   • Mach / force runaway        → u_mach_limit_lu + force_limit_lu + warn + strict
-#   • Lorentz silent fail         → 400 Jacobi iters, tight tol, strict_mode
-#   • Pulsed power accounting     → duty_cycle / power_factor explicit (=1.0 DC)
-#   • Goldak hardcode             → axes from this YAML (not sigma_cells hack)
-#   • Lin–Eagar / CC recoil       → predicted closures + fitted C_acc / evap scale
-#   • Surfactant                  → material Sahoo Fe–S (ER70S-6.v1, S≈28 ppm)
-#   • Carman–Kozeny               → C_darcy explicit (steel-typical 1.6e5)
-#
-#   NOT FIXABLE BY A JOB (still true of the solver)
-#   ───────────────────────────────────────────────
-#   • Bounding-box W/D telemetry overestimate
-#   • CSF curvature at domain rim / toe resolution
-#   • Full multi-rate MRT + variable τ together (code path mutual exclusion)
-#   • Keyhole / plasma / oxide / residual stress
-#   • Force-ablation zero-sensitivity (needs a long production-mesh sweep)
-#
-# COLLISION TRADE-OFF (read before flipping flags)
-#   use_variable_tau: true  → SRT with μ(T)  [chosen here — Marangoni Re accuracy]
-#   use_variable_tau: false + use_srt: false → two-rate central-moment MRT,
-#     constant τ; set advanced_physics.bulk_tau > shear τ for bulk damping
-#
-# Run (needs ~high VRAM; OOM → raise dx_mm to 0.25 or shrink domain_mm):
-#   python3 -m waam_twin.viewer --job jobs/examples/bead_physics_accuracy.yaml
-#   WAAM_STRICT=1 python3 -m waam_twin.export --job jobs/examples/bead_physics_accuracy.yaml
-#
-# Physical time parity with bead_calibrate n_steps=8000 @ dt_scale=1:
-#   n_steps ≈ 16000 here (dt_scale 0.5).
-# =============================================================================
+# Alias of bead_calibrate_hpc.yaml (HPC mesh-locked accuracy / calibrate tier).
+# Prefer: jobs/examples/bead_calibrate_hpc.yaml
 
 simulation:
   preset: high
   backend: cuda
   physics_tier: full
-  domain_mm: [80, 40, 25]
+  domain_mm:
+  - 80
+  - 40
+  - 25
   dx_mm: 0.2
-  auto_grid: false
-  # Halve Δt → cut first-order thermal↔flow splitting error ~2×
-  dt_scale: 0.5
-  strict_mode: true
-  warn_on_force_clamp: true
-
-  # μ(T) via SRT (preferred for Marangoni jets). Set false + use_srt: false for MRT.
-  use_variable_tau: true
-  # use_srt: false
-  u_mach_limit_lu: 0.08
-  force_limit_lu: 0.05
-  C_darcy: 1.6e5
-
   enable_vof: true
   enable_csf_tension: true
   enable_wetting: true
@@ -67,22 +20,27 @@ simulation:
   use_recoil_clausius_clapeyron: true
   enable_lorentz: true
   enable_gas_shear: true
-  enable_marangoni: true
-  enable_buoyancy: true
-  enable_arc_pressure: true
   enable_enthalpy_cap: true
   enable_evaporative_cooling: true
   arc_surface_weighting: true
-
+  strict_mode: true
+  dt_scale: 0.5
+  use_variable_tau: true
+  use_srt: false
+  auto_dt_ma: true
+  u_design_m_s: 0.5
+  u_mach_limit_lu: 0.2
+  force_limit_lu: 0.05
+  C_darcy: 160000.0
+  warn_on_force_clamp: true
 plate:
   thickness_mm: 8.0
-  size_mm: [50, 20]
-
-# Sahoo surfactant + validated property tables (not placeholder)
+  size_mm:
+  - 50
+  - 20
 material: materials/validated/ER70S-6.v1.yaml
 calibration: null
 torch_path_csv: jobs/paths/bead_calibrate.csv
-
 heat_source: goldak
 goldak:
   ff: 0.6
@@ -91,40 +49,28 @@ goldak:
   a_rear_mm: 4.2
   b_mm: 3.0
   c_mm: 1.5
-
 arc_physics:
   sigma_mm: 2.0
   penetration_mm: 2.1
   T_vapor_cap_K: 3200.0
   surface_weighting: true
-  # Predicted closure: p0 ∝ μ0 I² / σ_p²
   pressure_model: lin_eagar
   pressure_pa: 150.0
-
 advanced_physics:
   evap_cooling_scale: 25.0
   T_boiling_K: 3000.0
   recoil_accommodation: 0.25
   L_vapor_J_kg: 6.0e6
   R_spec_vapor_J_kgK: 450.0
-  # Stricter than bead_calibrate (300 / 1e-3) — reduce unconverged J×B spikes
-  lorentz_jacobi_iters: 400
-  lorentz_jacobi_cold_iters: 800
-  lorentz_jacobi_tol: 5.0e-4
+  lorentz_jacobi_iters: 300
+  lorentz_jacobi_tol: 0.001
   sigma_liquid_Sm: 1.0e6
   sigma_solid_Sm: 1.0e5
   gas_jet_velocity_m_s: 12.0
   gas_shear_coeff: 1.0
-  # Only used when use_variable_tau: false and use_srt: false
-  # bulk_tau: 0.9
-  marangoni_scale: 1.0
-
 process:
   current_A: 100
   voltage_V: 15
-  # Q_w = V·I·power_factor·duty_cycle; η applied separately in kernels
-  power_factor: 1.0
-  duty_cycle: 1.0
   arc_efficiency: 0.72
   travel_speed_mm_s: 6.5
   wire_feed_m_min: 3.2
@@ -133,45 +79,78 @@ process:
   T_ambient_K: 293
   stickout_mm: 12.0
   ctwd_mm: 15.0
-  # For pulsed GMAW set transfer_mode: pulsed, duty_cycle < 1, pulse_frequency_hz
   transfer_mode: auto
-  # pulse_frequency_hz: 90.0
   droplet_size_jitter: 0.05
   impact_lead_angle_deg: 5.0
-
+  power_factor: 1.0
+  duty_cycle: 1.0
 deposition:
   superheat_K: 400.0
   footprint_sigma_scale: 1.0
   trailing_solidify_lookback_mm: 6.0
   trailing_solidify_temp_margin_K: 10.0
-
 surface_wetting:
   contact_angle_deg: 80.0
-
 heat_loss:
   convection: true
   radiation: true
   h_conv: 35.0
-
-probes:
-  - name: pool_centreline
-    x_mm: 35.0
-    y_mm: 20.0
-    z_mm: 6.0
-  - name: haz_beside
-    x_mm: 35.0
-    y_mm: 24.0
-    z_mm: 6.0
-
 reference:
   pool_width_mm: 7.0
   pool_depth_mm: 3.0
   source: macrograph_ER70S-6_bead_on_plate
-
 model_reference:
   pool_width_mm: 6.8
   pool_depth_mm: 3.2
-  # 2× calibrate steps because dt_scale=0.5
   n_steps: 16000
   bead_height_mm_min: 1.5
   f_recoil_active: true
+  mesh_tier: hpc
+claim:
+  mesh_tier: hpc
+  absolute_wd: false
+  trend_only: false
+  tier_label: engineering_trend_predictor
+  pool_metric: fusion_zone
+  characterisation: "Qualitatively predictive; quantitatively usable to roughly \xB120\u201325% pool W/D\
+    \ at the training process point on the declared mesh tier, degrading off-calibration; primary W/D\
+    \ is liquidus T_max fusion envelope (f_l bbox secondary); thermal advection is minmod-limited (not\
+    \ 1st-order); shop path is SRT+variable-\u03C4, HPC path is two-rate MRT+variable-\u03C4; CSF toe\
+    \ uses solid-aware stencils; fitted knobs are mesh-tier locked; suitable as an engineering-grade process\
+    \ trend predictor."
+  accuracy:
+    T_peak: "moderate when calibrated; Goldak/\u03B7 absorb arc plasma uncertainty"
+    pool_width: "moderate at lock mesh with fusion metric; \xB115\u201325% typical"
+    pool_depth: similar to width; sulphur/Sahoo sensitive
+    bead_height: low absolute, moderate trends with WFS
+    marangoni_velocity: "order-of-magnitude / sign; better with variable-\u03C4"
+    HAZ: moderate; slightly conservative spread
+    porosity: qualitative tracers only
+  knobs_fitted:
+  - eta
+  - goldak_axes
+  - evap_cooling_scale
+  - recoil_accommodation
+  knobs_predicted:
+  - lin_eagar_p0
+  - cc_Psat_shape
+  - sahoo_dgamma
+  - carman_kozeny_form
+  - lorentz_JxB
+  limitations:
+  - fl_bbox_overestimate_secondary
+  - mesh_dependent_fitted_knobs
+  - operator_splitting_lag
+  - lorentz_per_step_skip_possible
+  - force_ablation_sensitivity_uncertain
+  - residual_phi_fl_one_way_sync
+  - not_full_multirate_MRT
+  out_of_scope:
+  - mushy_turbulence
+  - pinch_droplet_detachment
+  - arc_plasma_shielding
+  - oxide_film
+  - keyhole_cavity_collapse
+  - residual_stress_FEA
+  notes: "HPC tier dx=0.2 mm, MRT+variable-\u03C4, auto_dt_ma. absolute_wd false until auto_calibrate\
+    \ re-fit on this mesh; do not copy knobs to shop."

@@ -222,6 +222,32 @@ srun --gres=gpu:1 --mem=32G --time=04:00:00 --pty bash
 
 VRAM / timestep background: [HARDWARE.md](HARDWARE.md).
 
+## Mesh-locked HPC calibrate family
+
+For **physics-accuracy / re-fit** on the fine mesh (not the shop `dx=0.4` lock), use:
+
+| Job | Role |
+|-----|------|
+| `jobs/examples/bead_calibrate_hpc.yaml` | HPC calibrate lock (`dx_mm: 0.2`, MRT+variable-τ, `auto_dt_ma: true`) |
+| `jobs/examples/bead_calibrate_hpc_heldout_*.yaml` | Held-outs (process only; mesh fingerprint locked) |
+| `jobs/examples/bead_physics_accuracy.yaml` | Alias of `bead_calibrate_hpc.yaml` |
+
+```bash
+export WAAM_BACKEND=cuda
+python -m waam_twin.tools.auto_calibrate \
+  --job jobs/examples/bead_calibrate_hpc.yaml \
+  --gate-pct 25 --max-trials 24 --write
+
+python -m waam_twin.tools.prediction_report --tier hpc
+```
+
+Do **not** copy η/Goldak/recoil from the shop lock into these jobs (or the reverse).
+Primary W/D gate uses `claim.pool_metric: fusion_zone` (liquidus `T_max` envelope).
+`auto_dt_ma` raises `dt` until τ≥0.505 while respecting `u_mach_limit_lu` (HPC lock uses
+`0.20` so fine `dx` can meet both; shop keeps `0.08` with `auto_dt_ma: false`).
+Shop report: `prediction_report --tier shop`. Details:
+[validation/UNDERSTANDING_CALIBRATION_AND_DATA.md](validation/UNDERSTANDING_CALIBRATION_AND_DATA.md) §4b.
+
 ## Optional later
 
 Validation suites and batch schedulers are documented for maintainers but are

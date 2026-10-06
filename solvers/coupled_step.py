@@ -482,7 +482,20 @@ def coupled_step(
                 f"(cap={F_cap:g} lu/ts²)"
             )
 
-    if twin.use_material_tables and twin.use_variable_tau:
+    if twin.use_material_tables and twin.use_variable_tau and (not twin.use_srt):
+        # Two-rate central-moment MRT with per-cell μ(T) → τ.
+        lbm.collide_mrt_variable_tau(
+            g.f_src, g.f_dst,
+            g.rho, g.ux, g.uy, g.uz,
+            g.Fx, g.Fy, g.Fz,
+            g.f_l, g.tau_field, g.flags,
+            g.ex, g.ey, g.ez, g.w, g.opp,
+            twin.omega_bulk,
+            twin.C_darcy,
+            g.FLAG_SOLID, g.FLAG_GAS,
+            g.nx, g.ny, g.nz,
+        )
+    elif twin.use_material_tables and twin.use_variable_tau:
         lbm.collide_srt_variable_tau(
             g.f_src, g.f_dst,
             g.rho, g.ux, g.uy, g.uz,

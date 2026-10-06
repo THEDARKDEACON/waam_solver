@@ -1,15 +1,14 @@
-# Auto-updated mesh-lock shop job — see docs/validation/UNDERSTANDING_CALIBRATION_AND_DATA.md
-# Source role: heldout
+# HPC mesh-locked calibrate — MRT+variable-τ, auto_dt_ma, fusion W/D metric
 
 simulation:
-  preset: standard
+  preset: high
   backend: cuda
   physics_tier: full
   domain_mm:
   - 80
   - 40
   - 25
-  dx_mm: 0.4
+  dx_mm: 0.2
   enable_vof: true
   enable_csf_tension: true
   enable_wetting: true
@@ -23,16 +22,16 @@ simulation:
   enable_enthalpy_cap: true
   enable_evaporative_cooling: true
   arc_surface_weighting: true
-  dt_scale: 1.0
+  strict_mode: true
+  dt_scale: 0.5
   use_variable_tau: true
-  use_srt: true
-  auto_dt_ma: false
+  use_srt: false
+  auto_dt_ma: true
   u_design_m_s: 0.5
-  u_mach_limit_lu: 0.08
+  u_mach_limit_lu: 0.2
   force_limit_lu: 0.05
   C_darcy: 160000.0
   warn_on_force_clamp: true
-  strict_mode: true
 plate:
   thickness_mm: 8.0
   size_mm:
@@ -72,7 +71,7 @@ process:
   current_A: 100
   voltage_V: 15
   arc_efficiency: 0.72
-  travel_speed_mm_s: 11.0
+  travel_speed_mm_s: 6.5
   wire_feed_m_min: 3.2
   wire_diameter_mm: 1.2
   droplet_length_mm: 3.0
@@ -95,20 +94,21 @@ heat_loss:
   convection: true
   radiation: true
   h_conv: 35.0
-prediction:
-  role: heldout
-  baseline_job: jobs/examples/bead_calibrate.yaml
-  expected_trend: smaller_pool
-  vary:
-  - travel_speed_mm_s
+reference:
+  pool_width_mm: 7.0
+  pool_depth_mm: 3.0
+  source: macrograph_ER70S-6_bead_on_plate
 model_reference:
-  n_steps: 8000
-  bead_height_mm_min: 0.5
+  pool_width_mm: 6.8
+  pool_depth_mm: 3.2
+  n_steps: 16000
+  bead_height_mm_min: 1.5
   f_recoil_active: true
+  mesh_tier: hpc
 claim:
-  mesh_tier: shop
+  mesh_tier: hpc
   absolute_wd: false
-  trend_only: true
+  trend_only: false
   tier_label: engineering_trend_predictor
   pool_metric: fusion_zone
   characterisation: "Qualitatively predictive; quantitatively usable to roughly \xB120\u201325% pool W/D\
@@ -151,4 +151,5 @@ claim:
   - oxide_film
   - keyhole_cavity_collapse
   - residual_stress_FEA
-  notes: 'Shop held-out: process varies only; mesh fingerprint + fitted knobs locked to bead_calibrate.'
+  notes: "HPC tier dx=0.2 mm, MRT+variable-\u03C4, auto_dt_ma. absolute_wd false until auto_calibrate\
+    \ re-fit on this mesh; do not copy knobs to shop."

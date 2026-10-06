@@ -32,12 +32,18 @@ from pathlib import Path
 from typing import Any
 
 from waam_twin import WAAMTwin
-from waam_twin.benchmark import measure_bead_metrics, pool_error_pct
+from waam_twin.benchmark import (
+    measure_bead_metrics,
+    measure_fusion_zone_mm,
+    measure_pool_mm,
+    pool_error_pct,
+)
 from waam_twin.job import load_job_config
 from waam_twin.physics.arc import goldak_from_job_mm
 from waam_twin.runtime import init_taichi, reset_taichi
 from waam_twin.validation.bead_helpers import plan_linear_bead_run, run_bead_travel
 from waam_twin.validation.gate_thresholds import process_gate_pct
+from waam_twin.validation.prediction import extract_locked_physics
 
 
 @dataclass
@@ -67,6 +73,11 @@ class TrialResult:
     n_steps: int
     wall_s: float
     passed: bool
+    pool_metric: str = "fusion_zone"
+    pool_width_bbox_mm: float = 0.0
+    pool_depth_bbox_mm: float = 0.0
+    pool_width_fusion_mm: float = 0.0
+    pool_depth_fusion_mm: float = 0.0
 
 
 @dataclass
@@ -77,10 +88,18 @@ class AutoCalibrateReport:
     D_ref_mm: float
     satisfied: bool
     trials_run: int
+    pool_metric: str = "fusion_zone"
+    mesh_fingerprint: dict[str, Any] = field(default_factory=dict)
     best: dict[str, Any] = field(default_factory=dict)
     history: list[dict[str, Any]] = field(default_factory=list)
     calibration_path: str | None = None
     notes: str = ""
+
+
+def _pool_metric_from_job(job: dict[str, Any]) -> str:
+    claim = job.get("claim") or {}
+    sim = job.get("simulation") or {}
+    return str(claim.get("pool_metric") or sim.get("pool_metric") or "fusion_zone")
 
 
 def _knobs_from_job(job: dict[str, Any]) -> KnobState:
@@ -166,10 +185,17 @@ def _run_trial(
     run_bead_travel(twin, steps, x_start_m=x0, y_m=y0, direction_x=dx_dir)
     wall = time.perf_counter() - t0
 
+    W_bbox, D_bbox, _n_liq = measure_pool_mm(twin)
+    fusion = measure_fusion_zone_mm(twin)
+    W_fus = float(fusion.get("fusion_width_mm", 0.0))
+    D_fus = float(fusion.get("fusion_depth_mm", 0.0))
+    pool_metric = _pool_metric_from_job(job)
+    if pool_metric == "fl_bbox":
+        W_mm, D_mm = float(W_bbox), float(D_bbox)
+    else:
+        W_mm, D_mm = W_fus, D_fus
     metrics = measure_bead_metrics(twin)
-    err = pool_error_pct(
-        metrics["pool_width_mm"], metrics["pool_depth_mm"], W_ref, D_ref,
-    )
+    err = pool_error_pct(W_mm, D_mm, W_ref, D_ref)
     return TrialResult(
         trial=trial,
         knobs={
@@ -183,13 +209,18 @@ def _run_trial(
             "marangoni_scale": knobs.marangoni_scale,
             "heat_loss_factor": knobs.heat_loss_factor,
         },
-        pool_width_mm=float(metrics["pool_width_mm"]),
-        pool_depth_mm=float(metrics["pool_depth_mm"]),
+        pool_width_mm=float(W_mm),
+        pool_depth_mm=float(D_mm),
         bead_height_mm=float(metrics["bead_height_mm"]),
         error_pct=float(err),
         n_steps=int(steps),
         wall_s=float(wall),
         passed=bool(err <= gate_pct),
+        pool_metric=pool_metric,
+        pool_width_bbox_mm=float(W_bbox),
+        pool_depth_bbox_mm=float(D_bbox),
+        pool_width_fusion_mm=W_fus,
+        pool_depth_fusion_mm=D_fus,
     )
 
 
@@ -197,6 +228,7 @@ def _write_calibration_yaml(
     best: TrialResult,
     *,
     job_path: str,
+    job: dict[str, Any],
     gate_pct: float,
     out_path: Path,
 ) -> Path:
@@ -204,6 +236,22 @@ def _write_calibration_yaml(
         import yaml
     except ImportError as exc:
         raise ImportError("PyYAML required to write calibration YAML") from exc
+
+    locked = extract_locked_physics(job)
+    m = locked.get("mesh") or {}
+    mesh = {
+        "mesh_tier": m.get("mesh_tier"),
+        "dx_mm": m.get("dx_mm"),
+        "dt_scale": m.get("dt_scale"),
+        "use_variable_tau": m.get("use_variable_tau"),
+        "use_srt": m.get("use_srt"),
+        "auto_dt_ma": m.get("auto_dt_ma"),
+        "C_darcy": m.get("C_darcy"),
+        "u_mach_limit_lu": m.get("u_mach_limit_lu"),
+        "force_limit_lu": m.get("force_limit_lu"),
+        "u_design_m_s": m.get("u_design_m_s"),
+        "pool_metric": m.get("pool_metric") or best.pool_metric,
+    }
 
     data = {
         "material": "materials/validated/ER70S-6.v1.yaml",
@@ -222,20 +270,27 @@ def _write_calibration_yaml(
             "evap_cooling_scale": round(best.knobs["evap_cooling_scale"], 3),
             "recoil_accommodation": round(best.knobs["recoil_accommodation"], 4),
         },
+        "mesh_fingerprint": mesh,
         "fit_metrics": {
             "job": job_path,
             "gate_pct": gate_pct,
             "n_steps": best.n_steps,
+            "pool_metric": best.pool_metric,
             "pool_width_mm": round(best.pool_width_mm, 3),
             "pool_depth_mm": round(best.pool_depth_mm, 3),
+            "pool_width_bbox_mm": round(best.pool_width_bbox_mm, 3),
+            "pool_depth_bbox_mm": round(best.pool_depth_bbox_mm, 3),
+            "pool_width_fusion_mm": round(best.pool_width_fusion_mm, 3),
+            "pool_depth_fusion_mm": round(best.pool_depth_fusion_mm, 3),
             "bead_height_mm": round(best.bead_height_mm, 3),
             "error_pct_macro": round(best.error_pct, 2),
             "passed": best.passed,
         },
         "notes": (
             "Auto-fitted by waam_twin.tools.auto_calibrate. "
-            "Copy goldak/advanced_physics/η into the calibrate job lock, "
-            "then run prediction_report on held-outs without retuning."
+            "Copy goldak/advanced_physics/η into the *same mesh tier* calibrate job lock, "
+            "then run prediction_report --tier shop|hpc on held-outs without retuning. "
+            "Do not reuse knobs across shop/hpc mesh fingerprints."
         ),
     }
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -341,6 +396,8 @@ def run_auto_calibrate(
     job = load_job_config(job_path)
     W_ref, D_ref = _macro_reference(job)
     base = _knobs_from_job(job)
+    pool_metric = _pool_metric_from_job(job)
+    mesh_fp = (extract_locked_physics(job).get("mesh") or {})
 
     if n_steps is None:
         model = job.get("model_reference") or {}
@@ -354,6 +411,16 @@ def run_auto_calibrate(
         D_ref_mm=D_ref,
         satisfied=False,
         trials_run=0,
+        pool_metric=pool_metric,
+        mesh_fingerprint={
+            "mesh_tier": mesh_fp.get("mesh_tier"),
+            "dx_mm": mesh_fp.get("dx_mm"),
+            "dt_scale": mesh_fp.get("dt_scale"),
+            "use_variable_tau": mesh_fp.get("use_variable_tau"),
+            "use_srt": mesh_fp.get("use_srt"),
+            "auto_dt_ma": mesh_fp.get("auto_dt_ma"),
+            "pool_metric": mesh_fp.get("pool_metric") or pool_metric,
+        },
     )
 
     schedule = _candidate_schedule(base, quick=quick)
@@ -374,6 +441,8 @@ def run_auto_calibrate(
     print(
         f"[auto_calibrate] job={job_path}\n"
         f"  gate≤{gate:.1f}%  W/D_ref={W_ref:.2f}×{D_ref:.2f} mm  "
+        f"pool_metric={pool_metric}  mesh_tier={mesh_fp.get('mesh_tier')}  "
+        f"dx_mm={mesh_fp.get('dx_mm')}  "
         f"max_trials={max_trials}  n_steps≈{n_steps}  backend={backend}",
         flush=True,
     )
@@ -397,6 +466,7 @@ def run_auto_calibrate(
 
         print(
             f"  → W={result.pool_width_mm:.2f} D={result.pool_depth_mm:.2f} mm  "
+            f"(bbox {result.pool_width_bbox_mm:.2f}×{result.pool_depth_bbox_mm:.2f})  "
             f"err={result.error_pct:.1f}%  "
             f"{'PASS' if result.passed else 'fail'}  "
             f"({result.wall_s:.0f}s, {result.n_steps} steps)",
@@ -509,9 +579,19 @@ def main(argv: list[str] | None = None) -> int:
             n_steps=int(report.best["n_steps"]),
             wall_s=float(report.best["wall_s"]),
             passed=bool(report.best["passed"]),
+            pool_metric=str(report.best.get("pool_metric", report.pool_metric)),
+            pool_width_bbox_mm=float(report.best.get("pool_width_bbox_mm", 0.0)),
+            pool_depth_bbox_mm=float(report.best.get("pool_depth_bbox_mm", 0.0)),
+            pool_width_fusion_mm=float(report.best.get("pool_width_fusion_mm", 0.0)),
+            pool_depth_fusion_mm=float(report.best.get("pool_depth_fusion_mm", 0.0)),
         )
+        job_cfg = load_job_config(args.job)
         path = _write_calibration_yaml(
-            best_tr, job_path=args.job, gate_pct=report.gate_pct, out_path=cal_path,
+            best_tr,
+            job_path=args.job,
+            job=job_cfg,
+            gate_pct=report.gate_pct,
+            out_path=cal_path,
         )
         report.calibration_path = str(path)
         print(f"[auto_calibrate] wrote {path}", flush=True)
@@ -536,9 +616,10 @@ def main(argv: list[str] | None = None) -> int:
             f"≤ {report.gate_pct:.1f}%  after {report.trials_run} trials",
             flush=True,
         )
+        tier = report.mesh_fingerprint.get("mesh_tier") or "shop"
         print(
-            "Next: freeze these knobs on held-outs, then:\n"
-            "  python -m waam_twin.tools.prediction_report",
+            "Next: freeze these knobs on held-outs of the *same* mesh tier, then:\n"
+            f"  python -m waam_twin.tools.prediction_report --tier {tier}",
             flush=True,
         )
         return 0

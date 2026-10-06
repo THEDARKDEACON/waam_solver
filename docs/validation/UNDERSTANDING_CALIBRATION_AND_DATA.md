@@ -127,6 +127,34 @@ Until macro2 (and similar) are filled with real cuts, absolute “we predict new
 
 ---
 
+## 4b. Mesh tiers (shop vs HPC) — do not mix locks
+
+Fitted knobs (η, Goldak, recoil, …) are **mesh-tier locked**. Coarse and fine calibrations are different locks; copying knobs across tiers invalidates held-out prediction.
+
+| Tier | Jobs | Mesh / collision | Claim notes |
+|------|------|------------------|-------------|
+| **shop** | `bead_calibrate.yaml` + `bead_calibrate_heldout_*.yaml` | `dx_mm: 0.4`, SRT + variable-τ, `auto_dt_ma: false` | Absolute W/D claimed only after fit on this mesh |
+| **hpc** | `bead_calibrate_hpc.yaml` + `bead_calibrate_hpc_heldout_*.yaml` (alias: `bead_physics_accuracy.yaml`) | `dx_mm: 0.2`, two-rate MRT + variable-τ, `auto_dt_ma: true`, `u_mach_limit_lu: 0.20` (needed so τ≥0.505 and Ma can both be met) | Re-fit before claiming absolute W/D; until then `absolute_wd: false` |
+
+Every calibrate / held-out job carries a top-level `claim:` block (`mesh_tier`, `pool_metric`, accuracy phrases, fitted vs predicted knobs, out-of-scope physics). `assert_physics_lock` also fingerprints `dx_mm`, `dt_scale`, collision path, Ma/force caps, and `pool_metric`.
+
+**Primary pool metric:** `claim.pool_metric: fusion_zone` — liquidus envelope from `T_max` (macrograph-like). `f_l` bounding-box W/D is still logged as secondary.
+
+**Characterisation (honest one-liner):** mesh-locked absolutes; thermal advection is minmod-limited (not 1st-order upwind); shop = SRT+variable-τ, HPC = MRT+variable-τ; CSF toe uses solid-aware stencils; suitable as an engineering-grade process trend predictor.
+
+```bash
+# Shop lock + held-outs
+python3 -m waam_twin.tools.prediction_report --tier shop
+
+# HPC lock + held-outs (after GPU re-fit)
+python3 -m waam_twin.tools.auto_calibrate --job jobs/examples/bead_calibrate_hpc.yaml --write
+python3 -m waam_twin.tools.prediction_report --tier hpc
+```
+
+New solver flags of interest: `simulation.auto_dt_ma` / `u_design_m_s` (Ma-aware dt with τ≥0.505), `use_srt: false` + `use_variable_tau: true` (variable-τ MRT on HPC), CSF solid-neighbour curvature in `kernels/vof.py`.
+
+---
+
 ## 5. Ambient temperature and conductivity (for the runs)
 
 These are **not** calibrated from the macrograph; they come from the job/material files:
@@ -165,9 +193,10 @@ The macrograph mainly constrains **pool shape** (energy coupling + heat-source s
 Commands after you have numbers:
 
 ```bash
-cd FYP22-01
+cd /path/to/repo   # folder with pyproject.toml / jobs/
 export PYTHONPATH=.
-python3 -m waam_twin.tools.prediction_report --with-bruno
+python3 -m waam_twin.tools.prediction_report --tier shop --with-bruno
+python3 -m waam_twin.tools.prediction_report --tier hpc
 python3 -m waam_twin.tools.multipass_report --job jobs/examples/wall_pioneer_m1.yaml
 ```
 
@@ -186,3 +215,6 @@ python3 -m waam_twin.tools.multipass_report --job jobs/examples/wall_pioneer_m1.
 | **Goldak** | Double-ellipsoid volumetric heat-source shape for the arc |
 | **`model_reference`** | What the **simulator** produced on a known mesh |
 | **`reference`** | What the **experiment** (or literature) measured |
+| **Mesh tier** | Shop (`dx≈0.4`) or HPC (`dx≈0.2`) lock; knobs not interchangeable |
+| **`claim.pool_metric`** | `fusion_zone` (primary) or `fl_bbox` (legacy liquid bbox) |
+| **`auto_dt_ma`** | Shrink/raise `dt` so design velocity stays under Ma cap and τ≥0.505 |

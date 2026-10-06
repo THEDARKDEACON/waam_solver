@@ -11,7 +11,12 @@ import os
 from typing import Any
 
 from waam_twin import WAAMTwin
-from waam_twin.benchmark import measure_bead_metrics, measure_pool_mm, pool_error_pct
+from waam_twin.benchmark import (
+    measure_bead_metrics,
+    measure_fusion_zone_mm,
+    measure_pool_mm,
+    pool_error_pct,
+)
 from waam_twin.job import load_job_config
 from waam_twin.runtime import init_taichi, reset_taichi
 from waam_twin.validation.bead_helpers import plan_linear_bead_run, run_bead_travel
@@ -22,6 +27,11 @@ HELDOUT_HOT_JOB = "jobs/examples/bead_calibrate_heldout_hot.yaml"
 HELDOUT_MACRO2_JOB = "jobs/examples/bead_calibrate_heldout_macro2.yaml"
 HELDOUT_BRUNO_JOB = "jobs/examples/bead_bruno_gmaw.yaml"
 PIONEER_WALL_JOB = "jobs/examples/wall_pioneer_m1.yaml"
+
+CALIBRATE_HPC_JOB = "jobs/examples/bead_calibrate_hpc.yaml"
+HELDOUT_HPC_FAST_JOB = "jobs/examples/bead_calibrate_hpc_heldout_fast.yaml"
+HELDOUT_HPC_HOT_JOB = "jobs/examples/bead_calibrate_hpc_heldout_hot.yaml"
+HELDOUT_HPC_MACRO2_JOB = "jobs/examples/bead_calibrate_hpc_heldout_macro2.yaml"
 
 # Keys that must match the calibrate lock exactly for a held-out to be "prediction".
 _LOCKED_PROCESS = ("arc_efficiency",)
@@ -36,15 +46,52 @@ _LOCKED_ADV = (
     "L_vapor_J_kg",
     "R_spec_vapor_J_kgK",
 )
+_LOCKED_SIM_BOOL = (
+    "use_variable_tau", "use_srt", "auto_dt_ma",
+)
+_LOCKED_SIM_FLOAT = (
+    "dx_mm", "dt_scale", "C_darcy", "u_mach_limit_lu", "force_limit_lu", "u_design_m_s",
+)
+
+
+def _sim_lock_defaults(sim: dict[str, Any], claim: dict[str, Any]) -> dict[str, Any]:
+    """Normalize mesh / collision fingerprint with defaults for older jobs."""
+    out: dict[str, Any] = {}
+    out["dx_mm"] = float(sim["dx_mm"]) if sim.get("dx_mm") is not None else None
+    out["dt_scale"] = float(sim.get("dt_scale", 1.0))
+    out["use_variable_tau"] = bool(sim.get("use_variable_tau", True))
+    # None = follow preset; lock compares explicit values only when set on either side
+    out["use_srt"] = sim.get("use_srt")
+    out["auto_dt_ma"] = bool(sim.get("auto_dt_ma", False))
+    out["C_darcy"] = float(sim.get("C_darcy", 1.6e5))
+    out["u_mach_limit_lu"] = float(sim.get("u_mach_limit_lu", 0.08))
+    out["force_limit_lu"] = float(sim.get("force_limit_lu", 0.05))
+    out["u_design_m_s"] = float(sim.get("u_design_m_s", 0.5))
+    out["pool_metric"] = str(
+        claim.get("pool_metric") or sim.get("pool_metric") or "fusion_zone"
+    )
+    out["mesh_tier"] = claim.get("mesh_tier")
+    return out
+
+
+def _float_close(a: Any, b: Any, *, rel: float = 1e-9) -> bool:
+    if a is None and b is None:
+        return True
+    if a is None or b is None:
+        return False
+    fa, fb = float(a), float(b)
+    scale = max(abs(fa), abs(fb), 1e-30)
+    return abs(fa - fb) <= rel * scale
 
 
 def extract_locked_physics(job: dict[str, Any]) -> dict[str, Any]:
-    """Snapshot of fitted knobs that must not change on held-outs."""
+    """Snapshot of fitted knobs + mesh fingerprint that must not change on held-outs."""
     process = job.get("process") or {}
     goldak = job.get("goldak") or {}
     arc = job.get("arc_physics") or {}
     adv = job.get("advanced_physics") or {}
     sim = job.get("simulation") or {}
+    claim = job.get("claim") or {}
     return {
         "material": job.get("material"),
         "heat_source": job.get("heat_source"),
@@ -55,6 +102,7 @@ def extract_locked_physics(job: dict[str, Any]) -> dict[str, Any]:
         "goldak": {k: goldak.get(k) for k in _LOCKED_GOLDAK},
         "arc_physics": {k: arc.get(k) for k in _LOCKED_ARC},
         "advanced_physics": {k: adv.get(k) for k in _LOCKED_ADV},
+        "mesh": _sim_lock_defaults(sim, claim),
     }
 
 
@@ -64,7 +112,7 @@ def assert_physics_lock(
     *,
     label: str = "heldout",
 ) -> None:
-    """Raise if fitted Goldak/η/recoil knobs differ from the calibrate lock."""
+    """Raise if fitted knobs or mesh fingerprint differ from the calibrate lock."""
     base = extract_locked_physics(baseline_job)
     cand = extract_locked_physics(candidate_job)
     diffs: list[str] = []
@@ -76,9 +124,30 @@ def assert_physics_lock(
             v1 = cand[section].get(k)
             if v0 != v1:
                 diffs.append(f"{section}.{k}: {v0!r} → {v1!r}")
+
+    bm, cm = base["mesh"], cand["mesh"]
+    for k in ("dx_mm", "dt_scale", "C_darcy", "u_mach_limit_lu", "force_limit_lu", "u_design_m_s"):
+        if not _float_close(bm.get(k), cm.get(k)):
+            diffs.append(f"mesh.{k}: {bm.get(k)!r} → {cm.get(k)!r}")
+    for k in ("use_variable_tau", "auto_dt_ma", "pool_metric", "mesh_tier"):
+        if bm.get(k) != cm.get(k):
+            diffs.append(f"mesh.{k}: {bm.get(k)!r} → {cm.get(k)!r}")
+    # use_srt: only enforce when either side sets it explicitly
+    if bm.get("use_srt") is not None or cm.get("use_srt") is not None:
+        if bm.get("use_srt") != cm.get("use_srt"):
+            diffs.append(f"mesh.use_srt: {bm.get('use_srt')!r} → {cm.get('use_srt')!r}")
+
     if diffs:
+        mesh_hint = ""
+        if any(d.startswith("mesh.") for d in diffs):
+            mesh_hint = (
+                "\n  mesh-tier mismatch — do not reuse fine-lock knobs on coarse jobs "
+                "(or vice versa); held-outs must share dx/dt_scale/collision path."
+            )
         raise AssertionError(
-            f"{label} retuned locked physics (not a prediction):\n  " + "\n  ".join(diffs)
+            f"{label} retuned locked physics (not a prediction):\n  "
+            + "\n  ".join(diffs)
+            + mesh_hint
         )
 
 
@@ -119,7 +188,20 @@ def run_job_metrics(
 
     run_bead_travel(twin, n_steps, x_start_m=x_start, y_m=y_m, direction_x=dir_x)
 
-    W_mm, D_mm, n_liq = measure_pool_mm(twin)
+    W_bbox, D_bbox, n_liq = measure_pool_mm(twin)
+    fusion = measure_fusion_zone_mm(twin)
+    W_fus = float(fusion.get("fusion_width_mm", 0.0))
+    D_fus = float(fusion.get("fusion_depth_mm", 0.0))
+    claim = job.get("claim") or {}
+    pool_metric = str(
+        claim.get("pool_metric")
+        or (job.get("simulation") or {}).get("pool_metric")
+        or "fusion_zone"
+    )
+    if pool_metric == "fl_bbox":
+        W_mm, D_mm = W_bbox, D_bbox
+    else:
+        W_mm, D_mm = W_fus, D_fus
     bead = measure_bead_metrics(twin)
     telem = twin.get_telemetry()
     fd = telem.get("force_diagnostics") or {}
@@ -139,8 +221,13 @@ def run_job_metrics(
         "eta": float(twin.eta),
         "recoil_accommodation": float(twin.recoil_accommodation),
         "evap_cooling_scale": float(getattr(twin, "evap_cooling_scale", 25.0)),
+        "pool_metric": pool_metric,
         "pool_width_mm": float(W_mm),
         "pool_depth_mm": float(D_mm),
+        "pool_width_bbox_mm": float(W_bbox),
+        "pool_depth_bbox_mm": float(D_bbox),
+        "pool_width_fusion_mm": W_fus,
+        "pool_depth_fusion_mm": D_fus,
         "n_liquid": int(n_liq),
         "bead_height_mm": float(bead.get("bead_height_mm", telem.get("bead_height_mm", 0))),
         "bead_width_mm": float(bead.get("bead_width_mm", 0)),

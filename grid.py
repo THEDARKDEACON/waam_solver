@@ -68,6 +68,9 @@ class WAAMGrid:
         allocate_vof: bool = False,
         allocate_export: bool = False,
         dt_scale: float = 1.0,
+        auto_dt_ma: bool = False,
+        u_mach_limit_lu: float = 0.08,
+        u_design_m_s: float = 0.5,
     ):
         self.nx, self.ny, self.nz = nx, ny, nz
         self.dx = dx
@@ -81,6 +84,9 @@ class WAAMGrid:
         if scale <= 0.0:
             raise ValueError(f"dt_scale must be > 0, got {dt_scale}")
         self.dt_scale = scale
+        self.auto_dt_ma = bool(auto_dt_ma)
+        self.u_mach_limit_lu = float(u_mach_limit_lu)
+        self.u_design_m_s = float(u_design_m_s)
 
         # ── LBM non-dimensionalisation ────────────────────────────────────
         # We target Ma ≈ 0.05 for stability with molten steel velocities.
@@ -90,20 +96,62 @@ class WAAMGrid:
         self.u_ref_lu   = 0.05         # lu/ts (lattice reference velocity)
         self.dt         = dx * self.u_ref_lu / self.u_ref_phys * scale   # [s]
 
+        from . import logging_util as log
+
+        if self.auto_dt_ma:
+            # Cap lattice velocity at design physical speed: u_lu = u_phys * dt / dx
+            u_des = max(self.u_design_m_s, 1e-6)
+            u_cap = max(self.u_mach_limit_lu, 1e-6)
+            dt_ma = u_cap * dx / u_des
+            if self.dt > dt_ma:
+                self.dt = dt_ma
+                self.dt_scale = self.dt / (dx * self.u_ref_lu / self.u_ref_phys)
+                log.info(
+                    f"[WAAMGrid] auto_dt_ma: shrink dt → {self.dt*1e6:.3f}µs "
+                    f"(effective dt_scale={self.dt_scale:.4f}) for "
+                    f"u_design={u_des:.2f} m/s ≤ u_mach_limit_lu={u_cap:g}"
+                )
+
         # Kinematic viscosity in lattice units
         nu_phys = mat.mu / mat.rho     # m²/s
         nu_lu   = nu_phys * self.dt / (dx ** 2)
         self.tau = 3.0 * nu_lu + 0.5  # SRT relaxation time (will use MRT/Cumulant)
+
+        if self.auto_dt_ma and self.tau < 0.505:
+            # Smaller dt raises τ (= 3 ν dt/dx² + 1/2). Grow dt toward τ=0.505
+            # only if Ma cap still holds; otherwise shrink is already done — raise.
+            # τ = 3 ν dt/dx² + 0.5 → dt = (τ - 0.5) * dx² / (3 ν)
+            nu_safe = max(nu_phys, 1e-20)
+            dt_tau = (0.505 - 0.5) * (dx ** 2) / (3.0 * nu_safe)
+            u_des = max(self.u_design_m_s, 1e-6)
+            u_cap = max(self.u_mach_limit_lu, 1e-6)
+            dt_ma = u_cap * dx / u_des
+            # Need larger dt for τ, but Ma forbids dt > dt_ma. Impossible → error.
+            if dt_tau > dt_ma + 1e-30:
+                raise ValueError(
+                    f"auto_dt_ma cannot satisfy τ≥0.505 and Ma cap together "
+                    f"(need dt≥{dt_tau:.3e}s for τ, dt≤{dt_ma:.3e}s for Ma). "
+                    f"Increase dx or viscosity, or raise u_mach_limit_lu."
+                )
+            if self.dt < dt_tau:
+                self.dt = dt_tau
+                self.dt_scale = self.dt / (dx * self.u_ref_lu / self.u_ref_phys)
+                nu_lu = nu_phys * self.dt / (dx ** 2)
+                self.tau = 3.0 * nu_lu + 0.5
+                log.info(
+                    f"[WAAMGrid] auto_dt_ma: raise dt → {self.dt*1e6:.3f}µs "
+                    f"for τ={self.tau:.4f} ≥ 0.505"
+                )
 
         # Thermal diffusivity in lattice units
         alpha_lu = mat.alpha * self.dt / (dx ** 2)
         self.alpha_lu = alpha_lu
         self.tau_T = 3.0 * alpha_lu + 0.5  # Thermal relaxation time
 
-        from . import logging_util as log
         log.info(
             f"[WAAMGrid] Domain: {nx}×{ny}×{nz}  |  dx={dx*1000:.3f}mm  "
             f"dt={self.dt*1e6:.3f}µs  τ={self.tau:.4f}  τ_T={self.tau_T:.4f}"
+            + (f"  auto_dt_ma=on" if self.auto_dt_ma else "")
         )
 
         # ── Stability checks (previously printed but never enforced) ─────

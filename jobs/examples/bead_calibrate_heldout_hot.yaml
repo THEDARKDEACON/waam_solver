@@ -1,18 +1,14 @@
-# =============================================================================
-# Held-out prediction — HOTTER ARC (locked physics from bead_calibrate)
-# =============================================================================
-# DO NOT retune: η, Goldak a_f/a_r/b/c, σ, penetration, C_acc, T_boil,
-#                 evap_cooling_scale. Only I (and WFS for mass) change.
-#
-# Expected trend vs calibrate (100 A): larger pool W and/or D, higher T_peak.
-# No experimental macrograph — prediction-only credibility gate.
-# =============================================================================
+# Auto-updated mesh-lock shop job — see docs/validation/UNDERSTANDING_CALIBRATION_AND_DATA.md
+# Source role: heldout
 
 simulation:
   preset: standard
   backend: cuda
   physics_tier: full
-  domain_mm: [80, 40, 25]
+  domain_mm:
+  - 80
+  - 40
+  - 25
   dx_mm: 0.4
   enable_vof: true
   enable_csf_tension: true
@@ -27,15 +23,24 @@ simulation:
   enable_enthalpy_cap: true
   enable_evaporative_cooling: true
   arc_surface_weighting: true
-
+  dt_scale: 1.0
+  use_variable_tau: true
+  use_srt: true
+  auto_dt_ma: false
+  u_design_m_s: 0.5
+  u_mach_limit_lu: 0.08
+  force_limit_lu: 0.05
+  C_darcy: 160000.0
+  warn_on_force_clamp: true
+  strict_mode: true
 plate:
   thickness_mm: 8.0
-  size_mm: [50, 20]
-
+  size_mm:
+  - 50
+  - 20
 material: materials/validated/ER70S-6.v1.yaml
 calibration: null
 torch_path_csv: jobs/paths/bead_calibrate.csv
-
 heat_source: goldak
 goldak:
   ff: 0.6
@@ -44,7 +49,6 @@ goldak:
   a_rear_mm: 4.2
   b_mm: 3.0
   c_mm: 1.5
-
 arc_physics:
   sigma_mm: 2.0
   penetration_mm: 2.1
@@ -52,7 +56,6 @@ arc_physics:
   surface_weighting: true
   pressure_model: lin_eagar
   pressure_pa: 150.0
-
 advanced_physics:
   evap_cooling_scale: 25.0
   T_boiling_K: 3000.0
@@ -60,14 +63,12 @@ advanced_physics:
   L_vapor_J_kg: 6.0e6
   R_spec_vapor_J_kgK: 450.0
   lorentz_jacobi_iters: 300
-  lorentz_jacobi_tol: 1.0e-3
+  lorentz_jacobi_tol: 0.001
   sigma_liquid_Sm: 1.0e6
   sigma_solid_Sm: 1.0e5
   gas_jet_velocity_m_s: 12.0
   gas_shear_coeff: 1.0
-
 process:
-  # Held-out: +20% current vs calibrate 100 A (Q_w 1800 W vs 1500 W)
   current_A: 120
   voltage_V: 15
   arc_efficiency: 0.72
@@ -81,28 +82,74 @@ process:
   transfer_mode: auto
   droplet_size_jitter: 0.05
   impact_lead_angle_deg: 5.0
-
+  power_factor: 1.0
+  duty_cycle: 1.0
 deposition:
   superheat_K: 400.0
   footprint_sigma_scale: 1.0
   trailing_solidify_lookback_mm: 6.0
   trailing_solidify_temp_margin_K: 10.0
-
 surface_wetting:
   contact_angle_deg: 80.0
-
 heat_loss:
   convection: true
   radiation: true
   h_conv: 35.0
-
 prediction:
   role: heldout
   baseline_job: jobs/examples/bead_calibrate.yaml
   expected_trend: larger_pool
-  vary: [current_A, wire_feed_m_min]
-
+  vary:
+  - current_A
+  - wire_feed_m_min
 model_reference:
   n_steps: 8000
   bead_height_mm_min: 0.5
   f_recoil_active: true
+claim:
+  mesh_tier: shop
+  absolute_wd: false
+  trend_only: true
+  tier_label: engineering_trend_predictor
+  pool_metric: fusion_zone
+  characterisation: "Qualitatively predictive; quantitatively usable to roughly \xB120\u201325% pool W/D\
+    \ at the training process point on the declared mesh tier, degrading off-calibration; primary W/D\
+    \ is liquidus T_max fusion envelope (f_l bbox secondary); thermal advection is minmod-limited (not\
+    \ 1st-order); shop path is SRT+variable-\u03C4, HPC path is two-rate MRT+variable-\u03C4; CSF toe\
+    \ uses solid-aware stencils; fitted knobs are mesh-tier locked; suitable as an engineering-grade process\
+    \ trend predictor."
+  accuracy:
+    T_peak: "moderate when calibrated; Goldak/\u03B7 absorb arc plasma uncertainty"
+    pool_width: "moderate at lock mesh with fusion metric; \xB115\u201325% typical"
+    pool_depth: similar to width; sulphur/Sahoo sensitive
+    bead_height: low absolute, moderate trends with WFS
+    marangoni_velocity: "order-of-magnitude / sign; better with variable-\u03C4"
+    HAZ: moderate; slightly conservative spread
+    porosity: qualitative tracers only
+  knobs_fitted:
+  - eta
+  - goldak_axes
+  - evap_cooling_scale
+  - recoil_accommodation
+  knobs_predicted:
+  - lin_eagar_p0
+  - cc_Psat_shape
+  - sahoo_dgamma
+  - carman_kozeny_form
+  - lorentz_JxB
+  limitations:
+  - fl_bbox_overestimate_secondary
+  - mesh_dependent_fitted_knobs
+  - operator_splitting_lag
+  - lorentz_per_step_skip_possible
+  - force_ablation_sensitivity_uncertain
+  - residual_phi_fl_one_way_sync
+  - not_full_multirate_MRT
+  out_of_scope:
+  - mushy_turbulence
+  - pinch_droplet_detachment
+  - arc_plasma_shielding
+  - oxide_film
+  - keyhole_cavity_collapse
+  - residual_stress_FEA
+  notes: 'Shop held-out: process varies only; mesh fingerprint + fitted knobs locked to bead_calibrate.'

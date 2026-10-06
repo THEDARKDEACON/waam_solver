@@ -512,6 +512,8 @@ def _lock_unknown_physics_keys() -> None:
 
 
 def _lock_fitted_knobs() -> None:
+    import copy
+
     from waam_twin.validation.prediction import (
         CALIBRATE_JOB,
         HELDOUT_FAST_JOB,
@@ -525,9 +527,49 @@ def _lock_fitted_knobs() -> None:
     locked = extract_locked_physics(base)
     if "evap_cooling_scale" not in (locked.get("advanced_physics") or {}):
         raise AssertionError("extract_locked_physics must include evap_cooling_scale")
+    mesh = locked.get("mesh") or {}
+    if mesh.get("dx_mm") is None:
+        raise AssertionError("extract_locked_physics mesh.dx_mm missing")
+    if "dt_scale" not in mesh:
+        raise AssertionError("extract_locked_physics mesh.dt_scale missing")
     for path in (HELDOUT_FAST_JOB, HELDOUT_HOT_JOB, HELDOUT_MACRO2_JOB):
         assert_physics_lock(base, load_job_config(path), label=path)
-    print("[job_locks] fitted knobs  assert_physics_lock held-outs OK")
+
+    bad = copy.deepcopy(base)
+    bad.setdefault("simulation", {})["dx_mm"] = float(mesh["dx_mm"]) * 0.5
+    try:
+        assert_physics_lock(base, bad, label="wrong_dx")
+    except AssertionError as exc:
+        if "mesh.dx_mm" not in str(exc) and "mesh-tier" not in str(exc):
+            raise AssertionError(f"wrong dx should mention mesh: {exc}") from exc
+    else:
+        raise AssertionError("assert_physics_lock must fail on dx_mm mismatch")
+
+    from waam_twin.validation.prediction import (
+        CALIBRATE_HPC_JOB,
+        HELDOUT_HPC_FAST_JOB,
+        HELDOUT_HPC_HOT_JOB,
+        HELDOUT_HPC_MACRO2_JOB,
+    )
+
+    hpc = load_job_config(CALIBRATE_HPC_JOB)
+    hpc_mesh = (extract_locked_physics(hpc).get("mesh") or {})
+    if hpc_mesh.get("mesh_tier") != "hpc":
+        raise AssertionError("HPC calibrate claim.mesh_tier must be hpc")
+    if hpc_mesh.get("use_srt") is not False:
+        raise AssertionError("HPC calibrate must lock use_srt=false (MRT path)")
+    if not hpc_mesh.get("auto_dt_ma"):
+        raise AssertionError("HPC calibrate must lock auto_dt_ma=true")
+    for path in (HELDOUT_HPC_FAST_JOB, HELDOUT_HPC_HOT_JOB, HELDOUT_HPC_MACRO2_JOB):
+        assert_physics_lock(hpc, load_job_config(path), label=path)
+    try:
+        assert_physics_lock(base, hpc, label="shop_vs_hpc")
+    except AssertionError as exc:
+        if "mesh." not in str(exc):
+            raise AssertionError(f"shop vs hpc should fail on mesh: {exc}") from exc
+    else:
+        raise AssertionError("assert_physics_lock must fail shop vs hpc mesh tiers")
+    print("[job_locks] fitted knobs + mesh fingerprint  assert_physics_lock OK")
 
 
 def _lock_dt_scale() -> None:

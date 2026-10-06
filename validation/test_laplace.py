@@ -53,7 +53,8 @@ def run(tol_frac: float = 0.15, min_force_lu: float = 1e-12) -> float:
 
     g.ensure_export_buffers()
     kernels.compute_curvature_field(
-        g.phi, g.flags, g.kappa_field, g.FLAG_GAS, g.nx, g.ny, g.nz,
+        g.phi, g.flags, g.kappa_field,
+        g.FLAG_SOLID, g.FLAG_GAS, g.nx, g.ny, g.nz,
     )
     kappa = g.kappa_field.to_numpy()
     iface = (phi_np > 0.25) & (phi_np < 0.75) & (flags_np != g.FLAG_GAS)

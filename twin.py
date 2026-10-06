@@ -124,6 +124,10 @@ class WAAMTwin:
         bulk_tau: float | None = None,
         dt_scale: float = 1.0,
         warn_on_force_clamp: bool = False,
+        auto_dt_ma: bool = False,
+        u_design_m_s: float = 0.5,
+        u_mach_limit_lu: float = 0.08,
+        force_limit_lu: float = 0.05,
     ):
         # ── Basic physical-plausibility validation ────────────────────────
         if arc_power_W < 0:
@@ -160,8 +164,8 @@ class WAAMTwin:
         self._last_arc_ijk: tuple[float, float, float] | None = None
         self.recoil_accommodation = 0.54
         # LBM stability caps (Ma ≲ 0.15 with c_s = 1/√3 ≈ 0.577)
-        self.u_mach_limit_lu = 0.08
-        self.force_limit_lu = 0.05
+        self.u_mach_limit_lu = float(u_mach_limit_lu)
+        self.force_limit_lu = float(force_limit_lu)
         self._lorentz_unconverged = 0
         self._lorentz_unconverged_streak = 0
         self.droplet_freq = droplet_freq_hz
@@ -182,12 +186,18 @@ class WAAMTwin:
         self.enable_lorentz = enable_lorentz
         self.enable_gas_shear = enable_gas_shear
         # Grid after feature flags we care about for optional allocation.
+        self.auto_dt_ma = bool(auto_dt_ma)
+        self.u_design_m_s = float(u_design_m_s)
+        self.pool_metric = "fusion_zone"
         self.grid = WAAMGrid(
             nx, ny, nz, dx, self.mat,
             max_tracers=max_tracers,
             allocate_lorentz=enable_lorentz,
             allocate_vof=enable_vof,
             dt_scale=dt_scale,
+            auto_dt_ma=self.auto_dt_ma,
+            u_mach_limit_lu=self.u_mach_limit_lu,
+            u_design_m_s=self.u_design_m_s,
         )
         self.warn_on_force_clamp = bool(warn_on_force_clamp)
         self.enable_droplet_impact_pressure = enable_droplet_impact_pressure
@@ -611,6 +621,18 @@ class WAAMTwin:
         v = _sim_or_adv("C_darcy")
         if v is not None:
             ctor_kw["C_darcy"] = float(v)
+        v = _sim_or_adv("auto_dt_ma")
+        if v is not None:
+            ctor_kw["auto_dt_ma"] = bool(v)
+        v = _sim_or_adv("u_design_m_s")
+        if v is not None:
+            ctor_kw["u_design_m_s"] = float(v)
+        v = _sim_or_adv("u_mach_limit_lu")
+        if v is not None:
+            ctor_kw["u_mach_limit_lu"] = float(v)
+        v = _sim_or_adv("force_limit_lu")
+        if v is not None:
+            ctor_kw["force_limit_lu"] = float(v)
         if "bulk_tau" in adv_job and adv_job["bulk_tau"] is not None:
             ctor_kw["bulk_tau"] = float(adv_job["bulk_tau"])
 
@@ -1097,6 +1119,18 @@ class WAAMTwin:
         bead_w = bead_reinforcement_width_mm(self, g)
         toe_deg = estimate_toe_angle_deg(self, g) if self.enable_wetting else 0.0
 
+        from .benchmark import measure_fusion_zone_mm
+        fusion = measure_fusion_zone_mm(self)
+        W_fus = float(fusion.get("fusion_width_mm", 0.0))
+        D_fus = float(fusion.get("fusion_depth_mm", 0.0))
+        pool_metric = str(getattr(self, "pool_metric", "fusion_zone"))
+        W_bbox_mm = pool_width_m * 1000
+        D_bbox_mm = pool_depth_m * 1000
+        if pool_metric == "fl_bbox":
+            W_rep_mm, D_rep_mm = W_bbox_mm, D_bbox_mm
+        else:
+            W_rep_mm, D_rep_mm = W_fus, D_fus
+
         force_diag = dict(getattr(self, "_force_diag", {}) or {})
         if getattr(self, "enable_force_diagnostics", True) and self._step_n > 0:
             try:
@@ -1125,8 +1159,13 @@ class WAAMTwin:
             "evap_energy_J_cum": round(float(getattr(self, "_evap_energy_J_cum", 0.0)), 4),
             "peak_cooling_rate_Ks": round(min(float(peak_cool), 1.0e5), 1),
             "peak_cooling_rate_raw_Ks": round(float(peak_cool), 1),
-            "pool_width_mm": round(pool_width_m * 1000, 3),
-            "pool_depth_mm": round(pool_depth_m * 1000, 3),
+            "pool_metric": pool_metric,
+            "pool_width_mm": round(W_rep_mm, 3),
+            "pool_depth_mm": round(D_rep_mm, 3),
+            "pool_width_bbox_mm": round(W_bbox_mm, 3),
+            "pool_depth_bbox_mm": round(D_bbox_mm, 3),
+            "pool_width_fusion_mm": round(W_fus, 3),
+            "pool_depth_fusion_mm": round(D_fus, 3),
             "pool_length_mm": round(pool_length_m * 1000, 3),
             "n_liquid_cells": n_liquid,
             "marangoni_vel_ms": round(u_max_phys, 4),
