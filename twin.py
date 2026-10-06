@@ -500,6 +500,7 @@ class WAAMTwin:
             lorentz=vram_lorentz, vof=vram_vof, export=vram_export,
         )
 
+        use_srt = bool(kwargs.pop("use_srt", cfg.use_srt))
         twin = cls(
             material=material,
             plate_material=plate_material,
@@ -507,7 +508,7 @@ class WAAMTwin:
             ny=ny,
             nz=nz,
             dx=dx,
-            use_srt=cfg.use_srt,
+            use_srt=use_srt,
             max_tracers=tracers,
             **kwargs,
         )
@@ -587,9 +588,32 @@ class WAAMTwin:
         from .runtime import vram_flags_from_job
         v_lorentz, v_vof, v_export = vram_flags_from_job(job)
         sim_job = job.get("simulation") or {}
+        adv_job = job.get("advanced_physics") or {}
         dt_scale = float(kwargs.pop("dt_scale", sim_job.get("dt_scale", 1.0)))
         if auto_grid is None:
             auto_grid = bool(sim_job.get("auto_grid", True))
+
+        # Constructor-time accuracy knobs (simulation preferred; advanced_physics alias).
+        def _sim_or_adv(key: str):
+            if key in sim_job:
+                return sim_job[key]
+            if key in adv_job:
+                return adv_job[key]
+            return None
+
+        ctor_kw: dict[str, Any] = {}
+        v = _sim_or_adv("use_variable_tau")
+        if v is not None:
+            ctor_kw["use_variable_tau"] = bool(v)
+        v = _sim_or_adv("use_srt")
+        if v is not None:
+            ctor_kw["use_srt"] = bool(v)
+        v = _sim_or_adv("C_darcy")
+        if v is not None:
+            ctor_kw["C_darcy"] = float(v)
+        if "bulk_tau" in adv_job and adv_job["bulk_tau"] is not None:
+            ctor_kw["bulk_tau"] = float(adv_job["bulk_tau"])
+
         twin = cls.from_preset(
             preset=preset,
             material=material,
@@ -606,6 +630,7 @@ class WAAMTwin:
             vram_export=v_export,
             dt_scale=dt_scale,
             auto_grid=bool(auto_grid),
+            **ctor_kw,
             **heat_kwargs,
             **kwargs,
         )

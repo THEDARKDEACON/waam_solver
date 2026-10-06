@@ -372,6 +372,7 @@ _KNOWN_SIM_KEYS = frozenset({
     "plate_length_mm", "plate_width_mm", "substrate_thickness_mm",
     "domain_margin_mm", "air_gap_mm",
     "dt_scale", "warn_on_force_clamp", "alloy_mix_rate",
+    "use_variable_tau", "use_srt", "u_mach_limit_lu", "force_limit_lu", "C_darcy",
 })
 
 _KNOWN_PROCESS_KEYS = frozenset({
@@ -398,6 +399,8 @@ _KNOWN_ADVANCED_PHYSICS_KEYS = frozenset({
     "lorentz_jacobi_iters", "lorentz_jacobi_cold_iters", "lorentz_jacobi_tol",
     "T_boiling_K", "T_recoil_onset_K", "L_vapor_J_kg", "R_spec_vapor_J_kgK",
     "recoil_accommodation", "evap_cooling_scale",
+    "bulk_tau", "marangoni_scale", "C_darcy",
+    "u_mach_limit_lu", "force_limit_lu", "use_variable_tau", "use_srt",
 })
 
 _KNOWN_DEPOSITION_KEYS = frozenset({
@@ -550,6 +553,10 @@ def apply_job_to_twin(twin, job: dict[str, Any] | JobConfig) -> None:
         twin.recoil_accommodation = float(adv["recoil_accommodation"])
     if "evap_cooling_scale" in adv:
         twin.evap_cooling_scale = float(adv["evap_cooling_scale"])
+    if "marangoni_scale" in adv:
+        twin.marangoni_scale = float(adv["marangoni_scale"])
+    if "bulk_tau" in adv and adv["bulk_tau"] is not None:
+        twin.omega_bulk = 1.0 / float(adv["bulk_tau"])
 
     sim = job.get("simulation", {})
     if "physics_tier" in sim:
@@ -558,6 +565,30 @@ def apply_job_to_twin(twin, job: dict[str, Any] | JobConfig) -> None:
         twin.strict_mode = bool(sim["strict_mode"])
     if "warn_on_force_clamp" in sim:
         twin.warn_on_force_clamp = bool(sim["warn_on_force_clamp"])
+
+    # Accuracy / numerics knobs (simulation preferred; advanced_physics accepted as alias).
+    def _sim_or_adv(key: str):
+        if key in sim:
+            return sim[key]
+        if key in adv:
+            return adv[key]
+        return None
+
+    v = _sim_or_adv("use_variable_tau")
+    if v is not None:
+        twin.use_variable_tau = bool(v)
+    v = _sim_or_adv("use_srt")
+    if v is not None:
+        twin.use_srt = bool(v)
+    v = _sim_or_adv("u_mach_limit_lu")
+    if v is not None:
+        twin.u_mach_limit_lu = float(v)
+    v = _sim_or_adv("force_limit_lu")
+    if v is not None:
+        twin.force_limit_lu = float(v)
+    v = _sim_or_adv("C_darcy")
+    if v is not None:
+        twin.C_darcy = float(v)
     import os
     if os.environ.get("WAAM_STRICT", "").strip() in ("1", "true", "True", "yes"):
         twin.strict_mode = True

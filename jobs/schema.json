@@ -65,11 +65,34 @@
         "dt_scale": {
           "type": "number",
           "exclusiveMinimum": 0,
-          "description": "Optional multiplier on WAAMGrid.dt (default 1.0). τ>0.5 and α_lu≤1/6 guards still apply."
+          "description": "Optional multiplier on WAAMGrid.dt (default 1.0). τ>0.5 and α_lu≤1/6 guards still apply. Values <1 reduce thermal–flow operator-splitting lag."
         },
         "warn_on_force_clamp": {
           "type": "boolean",
           "description": "Log a warning when the body-force clamp fires. Default false. strict_mode abort is unchanged."
+        },
+        "use_variable_tau": {
+          "type": "boolean",
+          "description": "Per-cell τ from μ(T) tables (SRT path). When true, the two-rate MRT kernel is not used even if use_srt is false."
+        },
+        "use_srt": {
+          "type": "boolean",
+          "description": "Override preset collision. false → two-rate central-moment MRT when use_variable_tau is also false."
+        },
+        "u_mach_limit_lu": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Lattice-velocity Mach clamp (default 0.08). strict_mode aborts on sustained hits."
+        },
+        "force_limit_lu": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Body-force magnitude clamp in lattice units (default 0.05)."
+        },
+        "C_darcy": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Carman–Kozeny mushy-zone constant (default 1.6e5)."
         },
         "plate_thickness_mm": { "type": "number" },
         "plate_size_mm": {
@@ -202,7 +225,39 @@
         "L_vapor_J_kg": { "type": "number" },
         "R_spec_vapor_J_kgK": { "type": "number" },
         "recoil_accommodation": { "type": "number" },
-        "evap_cooling_scale": { "type": "number" }
+        "evap_cooling_scale": { "type": "number" },
+        "bulk_tau": {
+          "type": "number",
+          "exclusiveMinimum": 0.5,
+          "description": "Bulk/trace relaxation time for two-rate MRT (omega_b = 1/bulk_tau). Ignored when use_variable_tau is true."
+        },
+        "marangoni_scale": {
+          "type": "number",
+          "description": "Multiplier on material dγ/dT (default 1.0). Prefer material surfactant model over this knob."
+        },
+        "C_darcy": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Alias for simulation.C_darcy (Carman–Kozeny)."
+        },
+        "u_mach_limit_lu": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Alias for simulation.u_mach_limit_lu."
+        },
+        "force_limit_lu": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Alias for simulation.force_limit_lu."
+        },
+        "use_variable_tau": {
+          "type": "boolean",
+          "description": "Alias for simulation.use_variable_tau."
+        },
+        "use_srt": {
+          "type": "boolean",
+          "description": "Alias for simulation.use_srt."
+        }
       }
     },
     "deposition": {
