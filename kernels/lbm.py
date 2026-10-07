@@ -347,6 +347,8 @@ def clamp_body_force_magnitude(
 
 @ti.kernel
 def clamp_velocity_mach(
+    f_dst: ti.template(),
+    rho: ti.template(),
     ux: ti.template(),
     uy: ti.template(),
     uz: ti.template(),
@@ -356,9 +358,11 @@ def clamp_velocity_mach(
     FLAG_SOLID: ti.i32,
     FLAG_GAS: ti.i32,
 ):
-    """Cap macroscopic lattice velocity (keeps VOF / telemetry physical).
+    """Cap macroscopic lattice velocity and resync post-collision populations.
 
-    ``hit_buf`` accumulates the number of fluid cells clamped this call.
+    Scales ``ux,uy,uz`` then projects ``f_dst`` onto the clamped velocity via
+    ``f ← feq(ρ,u_new) + (f − feq(ρ,u_old))`` so streaming does not carry
+    unclamped momentum. ``hit_buf`` counts clamped fluid cells.
     """
     eps = 1e-12
     hit_buf[None] = 0
@@ -371,9 +375,25 @@ def clamp_velocity_mach(
         mag = ti.sqrt(vx * vx + vy * vy + vz * vz)
         if mag > u_max_lu:
             s = u_max_lu / (mag + eps)
-            ux[i, j, k] = vx * s
-            uy[i, j, k] = vy * s
-            uz[i, j, k] = vz * s
+            ux_n = vx * s
+            uy_n = vy * s
+            uz_n = vz * s
+            ux[i, j, k] = ux_n
+            uy[i, j, k] = uy_n
+            uz[i, j, k] = uz_n
+            r = rho[i, j, k]
+            u2_old = vx * vx + vy * vy + vz * vz
+            u2_new = ux_n * ux_n + uy_n * uy_n + uz_n * uz_n
+            for q in ti.static(range(19)):
+                ex_q = EX[q]
+                ey_q = EY[q]
+                ez_q = EZ[q]
+                w_q = W[q]
+                eu_old = ex_q * vx + ey_q * vy + ez_q * vz
+                eu_new = ex_q * ux_n + ey_q * uy_n + ez_q * uz_n
+                feq_old = w_q * r * (1.0 + 3.0 * eu_old + 4.5 * eu_old * eu_old - 1.5 * u2_old)
+                feq_new = w_q * r * (1.0 + 3.0 * eu_new + 4.5 * eu_new * eu_new - 1.5 * u2_new)
+                f_dst[q, i, j, k] = feq_new + (f_dst[q, i, j, k] - feq_old)
             ti.atomic_add(hit_buf[None], 1)
 
 

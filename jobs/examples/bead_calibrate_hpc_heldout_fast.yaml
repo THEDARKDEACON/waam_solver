@@ -1,5 +1,3 @@
-# HPC held-out fast — trend only vs Park HPC calibrate
-
 simulation:
   preset: high
   backend: cuda
@@ -29,9 +27,11 @@ simulation:
   u_design_m_s: 0.5
   u_mach_limit_lu: 0.2
   force_limit_lu: 0.25
+  force_limit_m_s2: 8000.0
   C_darcy: 160000.0
-  warn_on_force_clamp: true
   strict_mode: true
+  C_darcy_ref_dt_s: 7.179487179487187e-05
+  warn_on_force_clamp: true
 plate:
   thickness_mm: 9.0
   size_mm:
@@ -55,18 +55,20 @@ arc_physics:
   surface_weighting: true
   pressure_model: lin_eagar
   pressure_pa: 150.0
+  pressure_sigma_mm: 2.0
 advanced_physics:
   evap_cooling_scale: 25.0
   T_boiling_K: 3000.0
   recoil_accommodation: 0.25
   L_vapor_J_kg: 6.0e6
-  R_spec_vapor_J_kgK: 450.0
+  R_spec_vapor_J_kgK: 149.0
   lorentz_jacobi_iters: 600
   lorentz_jacobi_tol: 0.001
   sigma_liquid_Sm: 1.0e6
   sigma_solid_Sm: 1.0e5
   gas_jet_velocity_m_s: 12.0
   gas_shear_coeff: 1.0
+  marangoni_scale: 1.0
 process:
   current_A: 91
   voltage_V: 22.0
@@ -105,24 +107,33 @@ model_reference:
   bead_height_mm_min: 0.5
   f_recoil_active: true
   mesh_tier: hpc
+  note: Simulator W/D awaiting re-fit after fingerprint/MRT restore.
 claim:
   mesh_tier: hpc
   absolute_wd: false
-  trend_only: true
+  trend_only: false
   tier_label: engineering_trend_predictor
   pool_metric: fusion_zone
-  characterisation: "Qualitatively predictive; quantitatively usable to roughly \xB120\u201325% pool W/D\
-    \ at the training process point on the declared mesh tier, degrading off-calibration; primary W/D\
-    \ is liquidus T_max fusion envelope (f_l bbox secondary); thermal advection is minmod-limited (not\
-    \ 1st-order); shop path is SRT+variable-\u03C4, HPC path is two-rate MRT+variable-\u03C4; CSF toe\
-    \ uses solid-aware stencils; fitted knobs are mesh-tier locked; suitable as an engineering-grade process\
-    \ trend predictor."
+  characterisation: >
+    Qualitatively predictive; quantitatively usable to roughly ±20–25% pool W/D at the training
+    process point on the declared mesh tier, degrading off-calibration. Bead geometry is only
+    partly physics-emergent: deposition footprint and trailing solidify are geometric priors.
+    Primary W/D is liquidus T_max fusion envelope (f_l bbox secondary). Thermal advection
+    is minmod-limited. Shop uses SRT+variable-τ; HPC uses two-rate MRT+variable-τ (force/mass
+    unit-tested). CSF toe uses solid-aware stencils. Liquid-steel μ implies τ near 0.5 at
+    lock dx — Ma/force clamps can limit the run. C_darcy is the lock-mesh lattice value at
+    C_darcy_ref_dt_s (C_eff ∝ dt). Fitted knobs are mesh-tier locked; prefer --fit-set eta.
+    Engineering-grade process trend predictor, not continuum mesh-independent truth.
+  operating_regime: >
+    Handbook liquid-steel ν (μ/ρ from ER70S-6.v1) → τ≈0.5 at shop/HPC dx; design Ma via u_mach_limit_lu
+    / auto_dt_ma. Level A mesh studies require force and Mach clamps inactive. Do not treat
+    η/Goldak as portable across collision operators.
   accuracy:
-    T_peak: "moderate when calibrated; Goldak/\u03B7 absorb arc plasma uncertainty"
-    pool_width: "moderate at lock mesh with fusion metric; \xB115\u201325% typical"
+    T_peak: moderate when calibrated; Goldak/η absorb arc plasma uncertainty
+    pool_width: moderate at lock mesh with fusion metric; ±15–25% typical
     pool_depth: similar to width; sulphur/Sahoo sensitive
-    bead_height: low absolute, moderate trends with WFS
-    marangoni_velocity: "order-of-magnitude / sign; better with variable-\u03C4"
+    bead_height: low absolute, moderate trends with WFS; deposition priors dominate
+    marangoni_velocity: order-of-magnitude / sign; better with variable-τ
     HAZ: moderate; slightly conservative spread
     porosity: qualitative tracers only
   knobs_fitted:
@@ -134,8 +145,20 @@ claim:
   - lin_eagar_p0
   - cc_Psat_shape
   - sahoo_dgamma
-  - carman_kozeny_form
   - lorentz_JxB
+  - carman_kozeny_form
+  knobs_locked:
+  - marangoni_scale
+  - C_darcy
+  - C_darcy_ref_dt_s
+  - superheat_K
+  - footprint_sigma_scale
+  - contact_angle_deg
+  - pressure_sigma_mm
+  - trailing_solidify_lookback_mm
+  - trailing_solidify_temp_margin_K
+  - R_spec_vapor_J_kgK
+  known_defects: []
   limitations:
   - fl_bbox_overestimate_secondary
   - mesh_dependent_fitted_knobs
@@ -143,7 +166,8 @@ claim:
   - lorentz_per_step_skip_possible
   - force_ablation_sensitivity_uncertain
   - residual_phi_fl_one_way_sync
-  - not_full_multirate_MRT
+  - deposition_footprint_and_trailing_solidify_priors
+  - clamp_limited_regime_possible
   out_of_scope:
   - mushy_turbulence
   - pinch_droplet_detachment
@@ -151,7 +175,9 @@ claim:
   - oxide_film
   - keyhole_cavity_collapse
   - residual_stress_FEA
-  notes: "HPC held-out fast travel vs Park lock \u2014 trend only."
+  notes: >
+    Park 2019 flat calibrate lock (DOI 10.3390/app9214626). absolute_wd false until re-fit
+    after fingerprint changes. Do not copy knobs across shop/HPC. HPC uses two-rate MRT+variable-tau.
 reference:
   awaiting_measurement: true
   gate: trend_only

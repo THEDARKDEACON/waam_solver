@@ -560,6 +560,13 @@ def _lock_fitted_knobs() -> None:
         raise AssertionError("HPC calibrate must lock use_srt=false (MRT path)")
     if not hpc_mesh.get("auto_dt_ma"):
         raise AssertionError("HPC calibrate must lock auto_dt_ma=true")
+    r_shop = float((base.get("advanced_physics") or {}).get("R_spec_vapor_J_kgK", 0))
+    r_hpc = float((hpc.get("advanced_physics") or {}).get("R_spec_vapor_J_kgK", 0))
+    if abs(r_shop - 149.0) > 1e-9 or abs(r_hpc - 149.0) > 1e-9:
+        raise AssertionError(
+            f"ER70S-6 locks must use Fe-vapour R_spec=149 J/kg·K "
+            f"(shop={r_shop}, hpc={r_hpc})"
+        )
     for path in (HELDOUT_HPC_FAST_JOB, HELDOUT_HPC_HOT_JOB, HELDOUT_HPC_MACRO2_JOB):
         assert_physics_lock(hpc, load_job_config(path), label=path)
     try:

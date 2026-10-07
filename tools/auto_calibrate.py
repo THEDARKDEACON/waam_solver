@@ -248,8 +248,10 @@ def _write_calibration_yaml(
         "use_srt": m.get("use_srt"),
         "auto_dt_ma": m.get("auto_dt_ma"),
         "C_darcy": m.get("C_darcy"),
+        "C_darcy_ref_dt_s": m.get("C_darcy_ref_dt_s"),
         "u_mach_limit_lu": m.get("u_mach_limit_lu"),
         "force_limit_lu": m.get("force_limit_lu"),
+        "force_limit_m_s2": m.get("force_limit_m_s2"),
         "u_design_m_s": m.get("u_design_m_s"),
         "pool_metric": m.get("pool_metric") or best.pool_metric,
     }
@@ -322,9 +324,21 @@ def _patch_job_yaml(job_path: Path, knobs: KnobState) -> None:
         yaml.dump(data, f, default_flow_style=False, sort_keys=False)
 
 
-def _candidate_schedule(base: KnobState, *, quick: bool) -> list[tuple[str, KnobState]]:
-    """Ordered (label, knobs) list — baseline first, then coordinate probes."""
+def _candidate_schedule(
+    base: KnobState,
+    *,
+    quick: bool,
+    fit_set: str = "all",
+) -> list[tuple[str, KnobState]]:
+    """Ordered (label, knobs) list — baseline first, then coordinate probes.
+
+    ``fit_set``:
+      - ``all`` — η, Goldak b/c, C_acc, evap (legacy)
+      - ``eta_goldak`` — η + Goldak axes only (freeze recoil/evap)
+      - ``eta`` — η only (Phase 3 / Level B target)
+    """
     out: list[tuple[str, KnobState]] = [("baseline", base.clone())]
+    fit_set = str(fit_set or "all").lower().strip()
 
     def add(label: str, **updates: float) -> None:
         k = base.clone()
@@ -338,6 +352,9 @@ def _candidate_schedule(base: KnobState, *, quick: bool) -> list[tuple[str, Knob
         if abs(e - base.eta) > 1e-6:
             add(f"eta={e:.2f}", eta=e)
 
+    if fit_set == "eta":
+        return out
+
     # Goldak width / depth
     b_grid = [2.4, 3.0, 3.6] if quick else [2.2, 2.6, 3.0, 3.4, 3.8]
     for b in b_grid:
@@ -348,6 +365,9 @@ def _candidate_schedule(base: KnobState, *, quick: bool) -> list[tuple[str, Knob
     for c in c_grid:
         if abs(c - base.c_mm) > 1e-6:
             add(f"c={c:.1f}", c_mm=c)
+
+    if fit_set == "eta_goldak":
+        return out
 
     # Recoil / evaporative cooling (secondary)
     if not quick:
@@ -391,6 +411,7 @@ def run_auto_calibrate(
     quick: bool = False,
     backend: str | None = None,
     refine: bool = True,
+    fit_set: str = "all",
 ) -> AutoCalibrateReport:
     gate = float(gate_pct if gate_pct is not None else process_gate_pct(25.0))
     backend = backend or os.environ.get("WAAM_BACKEND", "cuda")
@@ -420,11 +441,14 @@ def run_auto_calibrate(
             "use_variable_tau": mesh_fp.get("use_variable_tau"),
             "use_srt": mesh_fp.get("use_srt"),
             "auto_dt_ma": mesh_fp.get("auto_dt_ma"),
+            "C_darcy": mesh_fp.get("C_darcy"),
+            "C_darcy_ref_dt_s": mesh_fp.get("C_darcy_ref_dt_s"),
+            "force_limit_m_s2": mesh_fp.get("force_limit_m_s2"),
             "pool_metric": mesh_fp.get("pool_metric") or pool_metric,
         },
     )
 
-    schedule = _candidate_schedule(base, quick=quick)
+    schedule = _candidate_schedule(base, quick=quick, fit_set=fit_set)
     seen: set[tuple] = set()
     best: TrialResult | None = None
     trial_i = 0
@@ -443,7 +467,7 @@ def run_auto_calibrate(
         f"[auto_calibrate] job={job_path}\n"
         f"  gate≤{gate:.1f}%  W/D_ref={W_ref:.2f}×{D_ref:.2f} mm  "
         f"pool_metric={pool_metric}  mesh_tier={mesh_fp.get('mesh_tier')}  "
-        f"dx_mm={mesh_fp.get('dx_mm')}  "
+        f"dx_mm={mesh_fp.get('dx_mm')}  fit_set={fit_set}  "
         f"max_trials={max_trials}  n_steps≈{n_steps}  backend={backend}",
         flush=True,
     )
@@ -486,6 +510,9 @@ def run_auto_calibrate(
                 # Also nudge η if both large or pool too cold/hot overall
                 if result.pool_width_mm + result.pool_depth_mm < 0.5 * (W_ref + D_ref):
                     focus = "eta"
+                # Phase 3: eta-only fits must not wander Goldak axes.
+                if fit_set == "eta":
+                    focus = "eta"
                 k_best = KnobState(**{
                     "eta": result.knobs["eta"],
                     "a_front_mm": result.knobs["a_front_mm"],
@@ -499,9 +526,9 @@ def run_auto_calibrate(
                 })
                 for k in _refine_around(k_best, focus=focus):
                     queue.insert(0, (f"refine-{focus}", k))
-                if focus != "eta":
+                if focus != "eta" and fit_set != "eta":
                     for k in _refine_around(k_best, focus="eta"):
-                        queue.append((f"refine-eta", k))
+                        queue.append(("refine-eta", k))
 
         if result.passed:
             report.satisfied = True
@@ -536,6 +563,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--quick", action="store_true", help="Smaller grid + fewer steps")
     ap.add_argument("--no-refine", action="store_true", help="Disable local refine around best")
     ap.add_argument(
+        "--fit-set",
+        choices=("all", "eta_goldak", "eta"),
+        default="all",
+        help="Which knobs may move: all (legacy), eta_goldak, or eta only (Phase 3)",
+    )
+    ap.add_argument(
         "--write",
         action="store_true",
         help="Write materials/calibration/ER70S-6.auto_calibrate.yaml from best",
@@ -561,6 +594,7 @@ def main(argv: list[str] | None = None) -> int:
         quick=args.quick,
         backend=args.backend,
         refine=not args.no_refine,
+        fit_set=args.fit_set,
     )
 
     cal_path = Path("materials/calibration/ER70S-6.auto_calibrate.yaml")

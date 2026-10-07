@@ -77,6 +77,7 @@ from .vof import (
     _vof_face_flux,
     advect_phi,
     reinitialize_phi,
+    sum_phi_metal_volume,
     update_flags_from_phi,
     solidify_cooled_metal,
     solidify_cooled_metal_dual,

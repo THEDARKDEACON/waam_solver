@@ -111,7 +111,7 @@ class WAAMTwin:
         T_boiling_K: float = 3100.0,
         P_vapor_ref_Pa: float = 101325.0,
         L_vapor_J_kg: float = 6.0e6,
-        R_spec_vapor_J_kgK: float = 450.0,
+        R_spec_vapor_J_kgK: float = 149.0,
         travel_speed_m_s: float = 0.0,
         use_variable_tau: bool = True,
         enable_enthalpy_cap: bool = True,
@@ -128,6 +128,7 @@ class WAAMTwin:
         u_design_m_s: float = 0.5,
         u_mach_limit_lu: float = 0.08,
         force_limit_lu: float = 0.05,
+        force_limit_m_s2: float = 0.0,
     ):
         # ── Basic physical-plausibility validation ────────────────────────
         if arc_power_W < 0:
@@ -154,6 +155,8 @@ class WAAMTwin:
         self.T_amb = T_ambient
         self.use_srt = use_srt
         self.C_darcy = C_darcy
+        # Job-facing lattice Darcy at reference dt; kernels use effective_C_darcy().
+        self._C_darcy_ref_dt_s = 0.0
         self.arc_pressure = arc_pressure_pa
         self.arc_pressure_model = "constant"  # or lin_eagar
         self.pressure_sigma_m: float | None = None  # None → use arc_sigma_m
@@ -166,6 +169,9 @@ class WAAMTwin:
         # LBM stability caps (Ma ≲ 0.15 with c_s = 1/√3 ≈ 0.577)
         self.u_mach_limit_lu = float(u_mach_limit_lu)
         self.force_limit_lu = float(force_limit_lu)
+        # Physical body-force cap [m/s²]. When >0, overrides force_limit_lu via
+        # F_lu = a_phys * dt² / dx (mesh-invariant for Level A/B studies).
+        self.force_limit_m_s2 = float(force_limit_m_s2)
         self._lorentz_unconverged = 0
         self._lorentz_unconverged_streak = 0
         self.droplet_freq = droplet_freq_hz
@@ -247,6 +253,8 @@ class WAAMTwin:
         self.evap_cooling_scale = 25.0
         self._evap_energy_J_step = 0.0
         self._evap_energy_J_cum = 0.0
+        self._enthalpy_cap_energy_J_step = 0.0
+        self._enthalpy_cap_energy_J_cum = 0.0
         self.T_vapor_cap_K = T_vapor_cap_K
         self.arc_surface_weighting = arc_surface_weighting
         self.arc_penetration_m = arc_penetration_mm * 1e-3
@@ -633,6 +641,9 @@ class WAAMTwin:
         v = _sim_or_adv("force_limit_lu")
         if v is not None:
             ctor_kw["force_limit_lu"] = float(v)
+        v = _sim_or_adv("force_limit_m_s2")
+        if v is not None:
+            ctor_kw["force_limit_m_s2"] = float(v)
         if "bulk_tau" in adv_job and adv_job["bulk_tau"] is not None:
             ctor_kw["bulk_tau"] = float(adv_job["bulk_tau"])
 
@@ -736,6 +747,8 @@ class WAAMTwin:
         self._window_offset_z_m = 0.0
         self._evap_energy_J_step = 0.0
         self._evap_energy_J_cum = 0.0
+        self._enthalpy_cap_energy_J_step = 0.0
+        self._enthalpy_cap_energy_J_cum = 0.0
         self._force_clamp_hits_step = 0
         self._mach_clamp_hits_step = 0
         self._force_clamp_hits_cum = 0
@@ -810,10 +823,12 @@ class WAAMTwin:
             f_steps = int(getattr(self, "_force_clamp_steps", 0) or 0)
             u_steps = int(getattr(self, "_mach_clamp_steps", 0) or 0)
             if f_steps > 0.5 * self._step_n:
+                f_eff = self.effective_force_limit_lu()
                 raise RuntimeError(
                     f"[strict_mode] body-force clamp active on {f_steps}/{self._step_n} "
-                    f"steps (force_limit_lu={self.force_limit_lu}) — refine grid or "
-                    "raise force_limit_lu / lower force magnitudes"
+                    f"steps (F_cap={f_eff:g} lu/ts², force_limit_lu={self.force_limit_lu}, "
+                    f"force_limit_m_s2={getattr(self, 'force_limit_m_s2', 0):g}) — "
+                    "refine grid, raise force_limit_m_s2 / force_limit_lu, or lower forces"
                 )
             if u_steps > 0.5 * self._step_n:
                 raise RuntimeError(
@@ -839,6 +854,33 @@ class WAAMTwin:
                 f"(deposited vs ṁ·t_weld) after {self._n_droplets_fired} droplets "
                 f"(overflow_count={self._deposition_overflow})"
             )
+
+    def effective_C_darcy(self) -> float:
+        """Lattice Carman–Kozeny coefficient scaled to the current ``dt``.
+
+        Job ``C_darcy`` is the lock-mesh lattice value at ``C_darcy_ref_dt_s``.
+        ``C_eff = C_darcy · (dt / dt_ref)`` so mush drag per physical second
+        stays approximately mesh-invariant under ``auto_dt_ma`` / dx changes.
+        """
+        C = float(getattr(self, "C_darcy", 0.0) or 0.0)
+        dt_ref = float(getattr(self, "_C_darcy_ref_dt_s", 0.0) or 0.0)
+        dt = float(self.grid.dt)
+        if C <= 0.0 or dt_ref <= 0.0:
+            return C
+        return C * (dt / dt_ref)
+
+    def effective_force_limit_lu(self) -> float:
+        """Body-force clamp in lattice units (lu/ts²).
+
+        Prefer ``force_limit_m_s2`` when set (>0): ``F_lu = a_phys · dt² / dx``.
+        That keeps a fixed *physical* acceleration ceiling across meshes (Phase 3 / Level A).
+        Otherwise use legacy ``force_limit_lu``.
+        """
+        a = float(getattr(self, "force_limit_m_s2", 0.0) or 0.0)
+        if a > 0.0:
+            g = self.grid
+            return a * (float(g.dt) ** 2) / max(float(g.dx), 1e-30)
+        return float(getattr(self, "force_limit_lu", 0.05))
 
     def window_offset_m(self) -> tuple[float, float, float]:
         return (
@@ -1115,6 +1157,23 @@ class WAAMTwin:
         exp_drop_mass = self._n_droplets_fired * m_drop
         mass_ratio = dep_mass / max(exp_mass, 1e-12)
 
+        phi_metal_mass = 0.0
+        phi_wire_ratio = 0.0
+        if self.enable_vof and getattr(g, "phi", None) is not None:
+            try:
+                from . import kernels as _k
+                g.ensure_vof_buffers()
+                _k.sum_phi_metal_volume(
+                    g.phi, g.flags, g.phi_volume_buf, g.dx,
+                    int(self.nz_solid), g.FLAG_GAS,
+                )
+                phi_vol = float(g.phi_volume_buf[None])
+                phi_metal_mass = phi_vol * self.mat.rho
+                phi_wire_ratio = phi_metal_mass / max(exp_mass, 1e-12)
+            except Exception:
+                if self.strict_mode:
+                    raise
+
         bead_h = bead_reinforcement_height_mm(self, g)
         bead_w = bead_reinforcement_width_mm(self, g)
         toe_deg = estimate_toe_angle_deg(self, g) if self.enable_wetting else 0.0
@@ -1157,6 +1216,14 @@ class WAAMTwin:
             ),
             "evap_energy_J_step": round(float(getattr(self, "_evap_energy_J_step", 0.0)), 6),
             "evap_energy_J_cum": round(float(getattr(self, "_evap_energy_J_cum", 0.0)), 4),
+            "enthalpy_cap_energy_J_step": round(
+                float(getattr(self, "_enthalpy_cap_energy_J_step", 0.0)), 6
+            ),
+            "enthalpy_cap_energy_J_cum": round(
+                float(getattr(self, "_enthalpy_cap_energy_J_cum", 0.0)), 4
+            ),
+            "phi_metal_mass_g": round(phi_metal_mass * 1000, 4),
+            "phi_wire_mass_ratio": round(phi_wire_ratio, 3),
             "peak_cooling_rate_Ks": round(min(float(peak_cool), 1.0e5), 1),
             "peak_cooling_rate_raw_Ks": round(float(peak_cool), 1),
             "pool_metric": pool_metric,
@@ -1230,6 +1297,8 @@ class WAAMTwin:
             "mach_clamp_steps": int(getattr(self, "_mach_clamp_steps", 0) or 0),
             "u_mach_limit_lu": float(getattr(self, "u_mach_limit_lu", 0.08)),
             "force_limit_lu": float(getattr(self, "force_limit_lu", 0.05)),
+            "force_limit_m_s2": float(getattr(self, "force_limit_m_s2", 0.0) or 0.0),
+            "force_limit_lu_effective": float(self.effective_force_limit_lu()),
             "force_diagnostics": force_diag,
         }
 

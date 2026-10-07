@@ -1,10 +1,14 @@
-# Hardware profiles — compute / memory only. NO geometry.
+# Hardware profiles — primarily compute / memory. NO geometry.
 #
 # Owns:
 #   vram_budget_mb  — recorded profile size; not an allocation cap
 #   max_cells       — recorded profile size; not an allocation cap
 #   target_dx_mm    — preferred dx when the job omits dx_mm
-#   max_tracers, use_srt
+#   max_tracers
+#   use_srt         — default collision path when the job omits use_srt
+#
+# NOTE: use_srt is a profile default, not a pure memory knob. Mesh-locked
+# calibrate jobs set and lock simulation.use_srt explicitly (shop SRT, HPC MRT).
 #
 # Does NOT own domain or plate. Job YAML owns:
 #   plate.size_mm / thickness_mm

@@ -864,6 +864,8 @@ def clamp_enthalpy_ceiling_scalar(
     T_liquidus: ti.f32,
     T_vapor_cap: ti.f32,
     L_rho: ti.f32,
+    dx: ti.f32,
+    energy_J_buf: ti.template(),
     FLAG_GAS: ti.i32,
 ):
     """Cap enthalpy so recovered T ≤ T_vapor_cap (matches update_phase).
@@ -872,21 +874,29 @@ def clamp_enthalpy_ceiling_scalar(
     Ceiling must be H_liq + cp·(T_cap − T_liquidus), otherwise T overshoots
     the vapor cap by ~(T_liquidus − T_solidus) ≈ 45 K and the HUD sticks at
     ~2977 °C whenever the hotspot saturates.
+
+    Discarded energy is accumulated in ``energy_J_buf`` [J] via ΔH·Δx³.
     """
     H_sol = cp_rho * T_solidus
     H_liq = H_sol + L_rho
     h_cap_liquid = H_liq + cp_rho * (T_vapor_cap - T_liquidus)
     h_cap_solid = cp_rho * T_vapor_cap
+    dx3 = dx * dx * dx
+    energy_J_buf[None] = 0.0
     for i, j, k in H:
         if flags[i, j, k] == FLAG_GAS:
             continue
         h = H[i, j, k]
+        h_new = h
         if h > H_liq:
             if h > h_cap_liquid:
-                H[i, j, k] = h_cap_liquid
+                h_new = h_cap_liquid
         else:
             if h > h_cap_solid:
-                H[i, j, k] = h_cap_solid
+                h_new = h_cap_solid
+        if h_new < h:
+            H[i, j, k] = h_new
+            ti.atomic_add(energy_J_buf[None], (h - h_new) * dx3)
 
 
 @ti.kernel
@@ -897,9 +907,13 @@ def clamp_enthalpy_ceiling_variable_cp(
     H_liq: ti.f32,
     T_liquidus: ti.f32,
     T_vapor_cap: ti.f32,
+    dx: ti.f32,
+    energy_J_buf: ti.template(),
     FLAG_GAS: ti.i32,
 ):
     """Cap H using the same H_liq as update_phase_variable_cp."""
+    dx3 = dx * dx * dx
+    energy_J_buf[None] = 0.0
     for i, j, k in H:
         if flags[i, j, k] == FLAG_GAS:
             continue
@@ -907,12 +921,16 @@ def clamp_enthalpy_ceiling_variable_cp(
         h_cap_liquid = H_liq + cp_r * (T_vapor_cap - T_liquidus)
         h_cap_solid = cp_r * T_vapor_cap
         h = H[i, j, k]
+        h_new = h
         if h > H_liq:
             if h > h_cap_liquid:
-                H[i, j, k] = h_cap_liquid
+                h_new = h_cap_liquid
         else:
             if h > h_cap_solid:
-                H[i, j, k] = h_cap_solid
+                h_new = h_cap_solid
+        if h_new < h:
+            H[i, j, k] = h_new
+            ti.atomic_add(energy_J_buf[None], (h - h_new) * dx3)
 
 
 @ti.kernel
@@ -926,9 +944,13 @@ def clamp_enthalpy_ceiling_dual(
     H_liq_p: ti.f32,
     T_liq_p: ti.f32,
     T_vapor_cap: ti.f32,
+    dx: ti.f32,
+    energy_J_buf: ti.template(),
     FLAG_GAS: ti.i32,
 ):
     """Vapor-cap enthalpy using each cell's composition-weighted H_liq / T_liquidus."""
+    dx3 = dx * dx * dx
+    energy_J_buf[None] = 0.0
     for i, j, k in H:
         if flags[i, j, k] == FLAG_GAS:
             continue
@@ -938,12 +960,16 @@ def clamp_enthalpy_ceiling_dual(
         h_cap_liquid = H_liq + cp_r * (T_vapor_cap - T_liq)
         h_cap_solid = cp_r * T_vapor_cap
         h = H[i, j, k]
+        h_new = h
         if h > H_liq:
             if h > h_cap_liquid:
-                H[i, j, k] = h_cap_liquid
+                h_new = h_cap_liquid
         else:
             if h > h_cap_solid:
-                H[i, j, k] = h_cap_solid
+                h_new = h_cap_solid
+        if h_new < h:
+            H[i, j, k] = h_new
+            ti.atomic_add(energy_J_buf[None], (h - h_new) * dx3)
 
 
 @ti.kernel

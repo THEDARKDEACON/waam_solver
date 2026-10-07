@@ -42,19 +42,31 @@ _LOCKED_PROCESS = ("arc_efficiency",)
 _LOCKED_GOLDAK = (
     "ff", "fr", "a_front_mm", "a_rear_mm", "b_mm", "c_mm",
 )
-_LOCKED_ARC = ("sigma_mm", "penetration_mm", "T_vapor_cap_K", "pressure_model")
+_LOCKED_ARC = (
+    "sigma_mm", "penetration_mm", "T_vapor_cap_K", "pressure_model",
+    "pressure_sigma_mm",
+)
 _LOCKED_ADV = (
     "evap_cooling_scale",
     "T_boiling_K",
     "recoil_accommodation",
     "L_vapor_J_kg",
     "R_spec_vapor_J_kgK",
+    "marangoni_scale",
 )
+_LOCKED_DEPOSITION = (
+    "superheat_K",
+    "footprint_sigma_scale",
+    "trailing_solidify_lookback_mm",
+    "trailing_solidify_temp_margin_K",
+)
+_LOCKED_WETTING = ("contact_angle_deg",)
 _LOCKED_SIM_BOOL = (
     "use_variable_tau", "use_srt", "auto_dt_ma",
 )
 _LOCKED_SIM_FLOAT = (
-    "dx_mm", "dt_scale", "C_darcy", "u_mach_limit_lu", "force_limit_lu", "u_design_m_s",
+    "dx_mm", "dt_scale", "C_darcy", "C_darcy_ref_dt_s", "u_mach_limit_lu",
+    "force_limit_lu", "force_limit_m_s2", "u_design_m_s",
 )
 
 
@@ -68,8 +80,15 @@ def _sim_lock_defaults(sim: dict[str, Any], claim: dict[str, Any]) -> dict[str, 
     out["use_srt"] = sim.get("use_srt")
     out["auto_dt_ma"] = bool(sim.get("auto_dt_ma", False))
     out["C_darcy"] = float(sim.get("C_darcy", 1.6e5))
+    # None = identity at candidate dt (older jobs); lock when either side sets it
+    out["C_darcy_ref_dt_s"] = (
+        float(sim["C_darcy_ref_dt_s"])
+        if sim.get("C_darcy_ref_dt_s") is not None
+        else None
+    )
     out["u_mach_limit_lu"] = float(sim.get("u_mach_limit_lu", 0.08))
     out["force_limit_lu"] = float(sim.get("force_limit_lu", 0.05))
+    out["force_limit_m_s2"] = float(sim.get("force_limit_m_s2", 0.0) or 0.0)
     out["u_design_m_s"] = float(sim.get("u_design_m_s", 0.5))
     out["pool_metric"] = str(
         claim.get("pool_metric") or sim.get("pool_metric") or "fusion_zone"
@@ -94,6 +113,8 @@ def extract_locked_physics(job: dict[str, Any]) -> dict[str, Any]:
     goldak = job.get("goldak") or {}
     arc = job.get("arc_physics") or {}
     adv = job.get("advanced_physics") or {}
+    dep = job.get("deposition") or {}
+    wet = job.get("surface_wetting") or {}
     sim = job.get("simulation") or {}
     claim = job.get("claim") or {}
     return {
@@ -106,6 +127,8 @@ def extract_locked_physics(job: dict[str, Any]) -> dict[str, Any]:
         "goldak": {k: goldak.get(k) for k in _LOCKED_GOLDAK},
         "arc_physics": {k: arc.get(k) for k in _LOCKED_ARC},
         "advanced_physics": {k: adv.get(k) for k in _LOCKED_ADV},
+        "deposition": {k: dep.get(k) for k in _LOCKED_DEPOSITION},
+        "surface_wetting": {k: wet.get(k) for k in _LOCKED_WETTING},
         "mesh": _sim_lock_defaults(sim, claim),
     }
 
@@ -123,16 +146,32 @@ def assert_physics_lock(
     for section in ("material", "heat_source", "calibration", "physics_tier", "enable_recoil"):
         if base[section] != cand[section]:
             diffs.append(f"{section}: {base[section]!r} → {cand[section]!r}")
-    for section in ("process", "goldak", "arc_physics", "advanced_physics"):
+    for section in (
+        "process", "goldak", "arc_physics", "advanced_physics",
+        "deposition", "surface_wetting",
+    ):
         for k, v0 in base[section].items():
             v1 = cand[section].get(k)
-            if v0 != v1:
+            if isinstance(v0, (int, float)) or isinstance(v1, (int, float)):
+                if not _float_close(v0, v1):
+                    diffs.append(f"{section}.{k}: {v0!r} → {v1!r}")
+            elif v0 != v1:
                 diffs.append(f"{section}.{k}: {v0!r} → {v1!r}")
 
     bm, cm = base["mesh"], cand["mesh"]
-    for k in ("dx_mm", "dt_scale", "C_darcy", "u_mach_limit_lu", "force_limit_lu", "u_design_m_s"):
+    for k in (
+        "dx_mm", "dt_scale", "C_darcy", "u_mach_limit_lu", "force_limit_lu",
+        "force_limit_m_s2", "u_design_m_s",
+    ):
         if not _float_close(bm.get(k), cm.get(k)):
             diffs.append(f"mesh.{k}: {bm.get(k)!r} → {cm.get(k)!r}")
+    # C_darcy_ref_dt_s: only enforce when either side sets it explicitly
+    if bm.get("C_darcy_ref_dt_s") is not None or cm.get("C_darcy_ref_dt_s") is not None:
+        if not _float_close(bm.get("C_darcy_ref_dt_s"), cm.get("C_darcy_ref_dt_s")):
+            diffs.append(
+                f"mesh.C_darcy_ref_dt_s: {bm.get('C_darcy_ref_dt_s')!r} → "
+                f"{cm.get('C_darcy_ref_dt_s')!r}"
+            )
     for k in ("use_variable_tau", "auto_dt_ma", "pool_metric", "mesh_tier"):
         if bm.get(k) != cm.get(k):
             diffs.append(f"mesh.{k}: {bm.get(k)!r} → {cm.get(k)!r}")

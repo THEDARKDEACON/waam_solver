@@ -2,7 +2,7 @@
 
 **Status:** Implementation brief (fix plan)  
 **Audience:** Kernel / `coupled_step` / validation authors  
-**Depends on:** `WAAM_WELD_POOL_PHYSICS_CENTRE.md`, `BEAD_GEOMETRY_PHYSICS_SPEC.md`, `solvers/coupled_step.py`, `kernels.py`  
+**Depends on:** `WAAM_WELD_POOL_PHYSICS_CENTRE.md`, `BEAD_GEOMETRY_PHYSICS_SPEC.md`, `solvers/coupled_step.py`, `kernels/` (LBM/VOF/force kernels; MRT in `cumulant_kernel.py`)  
 **Goal:** A continuum WAAM melt-pool simulator whose **live force balance matches the documented equations**, with every Physics Centre force present, additive, and unit-consistent.
 
 ---
@@ -427,7 +427,10 @@ physics_tier
 \(P_{\mathrm{sat}}=P_{\mathrm{ref}}\exp[\frac{L_v}{R}(\frac1{T_b}-\frac1T)],\ p_{\mathrm{rec}}=0.54\,P_{\mathrm{sat}}\)
 
 **Darcy:**
-\(\mathbf u\leftarrow\mathbf u/\bigl(1+C(1-f_l)^2/(f_l^3+\varepsilon)\bigr)\)
+\(\mathbf u\leftarrow\mathbf u/\bigl(1+C_{\mathrm{eff}}(1-f_l)^2/(f_l^3+\varepsilon)\bigr)\)
+with job-facing \(C\) at reference \(\Delta t_{\mathrm{ref}}\) (`C_darcy_ref_dt_s`) and
+\(C_{\mathrm{eff}}=C\cdot(\Delta t/\Delta t_{\mathrm{ref}})\) so mush drag per physical
+second stays approximately mesh-invariant under `auto_dt_ma` / dx changes.
 
 ---
 

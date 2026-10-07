@@ -23,21 +23,27 @@ def _clamp_enthalpy_ceiling(twin: "WAAMTwin", g) -> None:
             g.H, g.flags, g.cp_rho_field, g.alloy_frac,
             twin.H_liq, twin.mat.T_liquidus,
             twin.plate_H_liq, twin.plate_mat.T_liquidus,
-            twin.T_vapor_cap_K, g.FLAG_GAS,
+            twin.T_vapor_cap_K, g.dx, g.enthalpy_cap_energy_J_buf, g.FLAG_GAS,
         )
-        return
-    if twin.use_material_tables:
+    elif twin.use_material_tables:
         thermal.clamp_enthalpy_ceiling_variable_cp(
             g.H, g.flags, g.cp_rho_field,
             twin.H_liq, twin.mat.T_liquidus, twin.T_vapor_cap_K,
-            g.FLAG_GAS,
+            g.dx, g.enthalpy_cap_energy_J_buf, g.FLAG_GAS,
         )
     else:
         thermal.clamp_enthalpy_ceiling_scalar(
             g.H, g.flags, twin.cp_rho,
             twin.mat.T_solidus, twin.mat.T_liquidus, twin.T_vapor_cap_K,
-            twin.L_rho, g.FLAG_GAS,
+            twin.L_rho, g.dx, g.enthalpy_cap_energy_J_buf, g.FLAG_GAS,
         )
+    e = float(g.enthalpy_cap_energy_J_buf[None])
+    twin._enthalpy_cap_energy_J_step = float(
+        getattr(twin, "_enthalpy_cap_energy_J_step", 0.0)
+    ) + e
+    twin._enthalpy_cap_energy_J_cum = float(
+        getattr(twin, "_enthalpy_cap_energy_J_cum", 0.0)
+    ) + e
 
 
 def _resolve_arc_k(
@@ -194,6 +200,7 @@ def coupled_step(
     twin._last_arc_ijk = (float(arc_i), float(arc_j), float(arc_k))
 
     forces.clear_forces(g.Fx, g.Fy, g.Fz)
+    twin._enthalpy_cap_energy_J_step = 0.0
 
     if twin.enable_ctwd:
         update_ctwd(twin, g)
@@ -467,9 +474,13 @@ def coupled_step(
         weld_forces.solve_lorentz(twin, g, arc_i, arc_j, arc_k)
 
     # Stability: full-tier surface/body forces on coarse grids can drive Ma≫1.
+    # Prefer physical force_limit_m_s2 (mesh-scaled LU) when set — Phase 3 / Level A.
     # Hit counts are surfaced in telemetry (and fail under strict_mode).
     u_cap = float(getattr(twin, "u_mach_limit_lu", 0.08))
-    F_cap = float(getattr(twin, "force_limit_lu", 0.05))
+    if hasattr(twin, "effective_force_limit_lu"):
+        F_cap = float(twin.effective_force_limit_lu())
+    else:
+        F_cap = float(getattr(twin, "force_limit_lu", 0.05))
     twin._force_clamp_hits_step = 0
     twin._mach_clamp_hits_step = 0
     if F_cap > 0.0:
@@ -484,11 +495,14 @@ def coupled_step(
         twin._force_clamp_steps = int(getattr(twin, "_force_clamp_steps", 0)) + (1 if n_f > 0 else 0)
         if n_f > 0 and getattr(twin, "warn_on_force_clamp", False):
             from .. import logging_util as log
+            a_phys = float(getattr(twin, "force_limit_m_s2", 0.0) or 0.0)
+            extra = f", a_phys={a_phys:g} m/s²" if a_phys > 0.0 else ""
             log.warning(
                 f"[coupled_step] body-force clamp hit {n_f} cells this step "
-                f"(cap={F_cap:g} lu/ts²)"
+                f"(cap={F_cap:g} lu/ts²{extra})"
             )
 
+    C_darcy_eff = float(twin.effective_C_darcy())
     if twin.use_material_tables and twin.use_variable_tau and (not twin.use_srt):
         # Two-rate central-moment MRT with per-cell μ(T) → τ.
         lbm.collide_mrt_variable_tau(
@@ -498,7 +512,7 @@ def coupled_step(
             g.f_l, g.tau_field, g.flags,
             g.ex, g.ey, g.ez, g.w, g.opp,
             twin.omega_bulk,
-            twin.C_darcy,
+            C_darcy_eff,
             g.FLAG_SOLID, g.FLAG_GAS,
             g.nx, g.ny, g.nz,
         )
@@ -508,7 +522,7 @@ def coupled_step(
             g.rho, g.ux, g.uy, g.uz,
             g.Fx, g.Fy, g.Fz,
             g.f_l, g.flags,
-            g.tau_field, twin.C_darcy,
+            g.tau_field, C_darcy_eff,
             g.FLAG_SOLID, g.FLAG_GAS,
             g.nx, g.ny, g.nz,
         )
@@ -519,7 +533,7 @@ def coupled_step(
             g.Fx, g.Fy, g.Fz,
             g.f_l, g.flags,
             g.tau, twin.omega, 1.0,
-            twin.C_darcy,
+            C_darcy_eff,
             g.FLAG_SOLID, g.FLAG_GAS,
             g.nx, g.ny, g.nz,
         )
@@ -531,14 +545,14 @@ def coupled_step(
             g.f_l, g.flags,
             g.ex, g.ey, g.ez, g.w, g.opp,
             twin.omega, twin.omega_bulk,
-            twin.C_darcy,
+            C_darcy_eff,
             g.FLAG_SOLID, g.FLAG_GAS,
             g.nx, g.ny, g.nz,
         )
 
     if u_cap > 0.0:
         kernels.clamp_velocity_mach(
-            g.ux, g.uy, g.uz, g.flags, u_cap,
+            g.f_dst, g.rho, g.ux, g.uy, g.uz, g.flags, u_cap,
             g.clamp_mach_hits_buf,
             g.FLAG_SOLID, g.FLAG_GAS,
         )
@@ -582,6 +596,7 @@ def coupled_step(
         if getattr(twin, "use_dual_alloy", False):
             free_surface.remelt_hot_solid_dual(
                 g.T, g.H, g.f_l, g.phi, g.flags, g.alloy_frac,
+                g.f_src, g.rho, g.ux, g.uy, g.uz, g.w,
                 twin.L_rho, twin.H_sol, twin.H_liq,
                 twin.plate_L_rho, twin.plate_H_sol, twin.plate_H_liq,
                 g.FLAG_SOLID, g.FLAG_FLUID,
@@ -589,12 +604,14 @@ def coupled_step(
         elif twin.use_material_tables:
             free_surface.remelt_hot_solid(
                 g.T, g.H, g.f_l, g.phi, g.flags,
+                g.f_src, g.rho, g.ux, g.uy, g.uz, g.w,
                 twin.L_rho, twin.H_sol, twin.H_liq,
                 g.FLAG_SOLID, g.FLAG_FLUID,
             )
         else:
             free_surface.remelt_hot_solid_scalar(
                 g.T, g.H, g.f_l, g.phi, g.flags,
+                g.f_src, g.rho, g.ux, g.uy, g.uz, g.w,
                 twin.L_rho, twin.H_sol, twin.H_liq,
                 g.FLAG_SOLID, g.FLAG_FLUID,
             )

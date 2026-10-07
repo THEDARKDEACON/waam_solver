@@ -2,9 +2,9 @@
 
 ## Scheme
 
-- **Lattice:** D3Q19 velocity set with SRT (minimal/standard) or MRT (high/ultra presets).
-- **Forcing:** Guo et al. (2002) body-force scheme for Marangoni, buoyancy, arc pressure, CSF.
-- **Mushy zone:** Semi-implicit Carman–Kozeny drag on velocity before collision.
+- **Lattice:** D3Q19. Collision is chosen by job `use_srt` (not by preset alone): SRT or two-rate central-moment MRT. Presets supply a default `use_srt` that jobs override and lock.
+- **Forcing:** Guo et al. (2002) body-force scheme for Marangoni, buoyancy, arc pressure, CSF. Variable-τ MRT uses regenerate-and-rediff \(S=0.5\,F_i\) plus an \(f_0\) mass correction (see `cumulant_kernel.py`, `test_mrt_force_mass`).
+- **Mushy zone:** Semi-implicit Carman–Kozeny drag inside collide. Job `C_darcy` is defined at `C_darcy_ref_dt_s`; kernels use \(C_{\mathrm{eff}}=C\cdot(\Delta t/\Delta t_{\mathrm{ref}})\).
 - **Streaming:** Pull scheme with bounce-back on solid; gas cells use pulled populations.
 
 ## Lattice units
@@ -22,9 +22,9 @@ When `use_material_tables=True`:
 
 - `cp(T)`, `k(T)` → per-cell thermal diffusion (`alpha_lu_field`).
 - `dγ/dT(T)` → Marangoni CSF scale (`dgamma_lu_field`).
-- `μ(T)` → per-cell `tau_field` when `use_variable_tau=True` (SRT path).
+- `μ(T)` → per-cell `tau_field` when `use_variable_tau=True` (SRT and two-rate MRT paths).
 
-MRT collision currently uses uniform `omega`; variable-τ MRT is a future stretch.
+Variable-τ two-rate MRT is implemented in `cumulant_kernel.collide_mrt_variable_tau` (wired from `kernels/lbm.py`). Mach clamp resyncs `f` via equilibrium projection (`test_mach_clamp_population_sync`). Enthalpy-ceiling discard and φ metal volume above substrate are ledgered in telemetry.
 
 ## Free surface
 
@@ -38,7 +38,11 @@ MRT collision currently uses uniform `omega`; variable-τ MRT is a future stretc
 |------|--------|
 | `test_lbm_poiseuille` | Parabolic profile preservation |
 | `test_mass_conservation` | ρ drift < 2% |
-| `test_laplace` | Non-zero CSF on interface |
+| `test_laplace` | CSF Laplace pressure / interface force gate (mass conservation is separate) |
+| `test_mrt_force_mass` | Two-rate MRT mass + Guo force impulse vs SRT |
+| `test_remelt_population_init` | SOLID→FLUID reinit of equilibrium populations |
+| `test_mach_clamp_population_sync` | Mach clamp resyncs population momentum to capped `u` |
+| `test_operator_splitting` | Peak-T change between `dt` and `dt/2` |
 | `test_soak_10k` | 10k steps, no NaN |
 
 ## References

@@ -51,6 +51,13 @@ def run(tolerance: float = 0.35, n_steps: int = 8000) -> float:
         raise AssertionError("Droplet schedule never fired — check wire_feed / droplet_freq")
     if telem["deposited_mass_g"] <= 0:
         raise AssertionError("No metal deposited — droplet schedule may not have fired")
+    phi_g = float(telem.get("phi_metal_mass_g", 0.0))
+    if phi_g <= 0.0:
+        raise AssertionError("phi metal inventory above substrate was not ledgered")
+    print(
+        f"[mass_balance] phi_metal={phi_g:.4f}g  "
+        f"phi_wire_ratio={telem.get('phi_wire_mass_ratio', 0):.3f}"
+    )
     if ratio < 1.0 - tolerance or ratio > 1.0 + tolerance:
         raise AssertionError(
             f"Mass balance ratio {ratio:.3f} (deposited / ṁ·t_weld) outside ±{tolerance}"

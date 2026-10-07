@@ -52,7 +52,7 @@ def collide_mrt(
     D3Q19 two-rate collision in the central moment space.
 
     Deviatoric stress relaxed at omega_s (shear viscosity), stress trace at
-    omega_b (bulk viscosity). Density and momentum are conserved exactly.
+    omega_b (bulk viscosity). Density is restored by an f0 mass correction after Hermite rebuild; momentum uses Guo half-force in u* plus S=0.5·F_i (regenerate-and-rediff).
     Semi-implicit Carman-Kozeny drag is applied to the post-collision u.
     Guo forcing is included for body forces (Marangoni + buoyancy).
     """
@@ -144,63 +144,74 @@ def collide_mrt(
         #              - rho*u²/(2cs²) + K_correction]
         _u2 = _ux*_ux + _uy*_uy + _uz*_uz
 
-        _feq0 = 0.3333333333 * (_rho + _rho * inv_cs2 * (0*_ux + 0*_uy + 0*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (0*_ux + 0*_uy + 0*_uz)*(0*_ux + 0*_uy + 0*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * (0.0))
-        _S0   = 0.3333333333 * (1.0 - 0.5*omega_s) * (inv_cs2*(0*fx + 0*fy + 0*fz) + inv_cs2*inv_cs2*(0*fx + 0*fy + 0*fz)*(0*_ux + 0*_uy + 0*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
+        _feq0 = 0.3333333333 * (_rho + _rho * inv_cs2 * (0*_ux + 0*_uy + 0*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (0*_ux + 0*_uy + 0*_uz)*(0*_ux + 0*_uy + 0*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * (-(_k_mean_p - _rho * cs2)))
+        _S0   = 0.3333333333 * 0.5 * (inv_cs2*(0*fx + 0*fy + 0*fz) + inv_cs2*inv_cs2*(0*fx + 0*fy + 0*fz)*(0*_ux + 0*_uy + 0*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
         f_dst[0, i, j, k] = _feq0 + _S0
         _feq1 = 0.0555555556 * (_rho + _rho * inv_cs2 * (1*_ux + 0*_uy + 0*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (1*_ux + 0*_uy + 0*_uz)*(1*_ux + 0*_uy + 0*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * ((1 * (_kxx_p - _rho * cs2))))
-        _S1   = 0.0555555556 * (1.0 - 0.5*omega_s) * (inv_cs2*(1*fx + 0*fy + 0*fz) + inv_cs2*inv_cs2*(1*fx + 0*fy + 0*fz)*(1*_ux + 0*_uy + 0*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
+        _S1   = 0.0555555556 * 0.5 * (inv_cs2*(1*fx + 0*fy + 0*fz) + inv_cs2*inv_cs2*(1*fx + 0*fy + 0*fz)*(1*_ux + 0*_uy + 0*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
         f_dst[1, i, j, k] = _feq1 + _S1
         _feq2 = 0.0555555556 * (_rho + _rho * inv_cs2 * (-1*_ux + 0*_uy + 0*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (-1*_ux + 0*_uy + 0*_uz)*(-1*_ux + 0*_uy + 0*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * ((1 * (_kxx_p - _rho * cs2))))
-        _S2   = 0.0555555556 * (1.0 - 0.5*omega_s) * (inv_cs2*(-1*fx + 0*fy + 0*fz) + inv_cs2*inv_cs2*(-1*fx + 0*fy + 0*fz)*(-1*_ux + 0*_uy + 0*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
+        _S2   = 0.0555555556 * 0.5 * (inv_cs2*(-1*fx + 0*fy + 0*fz) + inv_cs2*inv_cs2*(-1*fx + 0*fy + 0*fz)*(-1*_ux + 0*_uy + 0*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
         f_dst[2, i, j, k] = _feq2 + _S2
         _feq3 = 0.0555555556 * (_rho + _rho * inv_cs2 * (0*_ux + 1*_uy + 0*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (0*_ux + 1*_uy + 0*_uz)*(0*_ux + 1*_uy + 0*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * ((1 * (_kyy_p - _rho * cs2))))
-        _S3   = 0.0555555556 * (1.0 - 0.5*omega_s) * (inv_cs2*(0*fx + 1*fy + 0*fz) + inv_cs2*inv_cs2*(0*fx + 1*fy + 0*fz)*(0*_ux + 1*_uy + 0*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
+        _S3   = 0.0555555556 * 0.5 * (inv_cs2*(0*fx + 1*fy + 0*fz) + inv_cs2*inv_cs2*(0*fx + 1*fy + 0*fz)*(0*_ux + 1*_uy + 0*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
         f_dst[3, i, j, k] = _feq3 + _S3
         _feq4 = 0.0555555556 * (_rho + _rho * inv_cs2 * (0*_ux + -1*_uy + 0*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (0*_ux + -1*_uy + 0*_uz)*(0*_ux + -1*_uy + 0*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * ((1 * (_kyy_p - _rho * cs2))))
-        _S4   = 0.0555555556 * (1.0 - 0.5*omega_s) * (inv_cs2*(0*fx + -1*fy + 0*fz) + inv_cs2*inv_cs2*(0*fx + -1*fy + 0*fz)*(0*_ux + -1*_uy + 0*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
+        _S4   = 0.0555555556 * 0.5 * (inv_cs2*(0*fx + -1*fy + 0*fz) + inv_cs2*inv_cs2*(0*fx + -1*fy + 0*fz)*(0*_ux + -1*_uy + 0*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
         f_dst[4, i, j, k] = _feq4 + _S4
         _feq5 = 0.0555555556 * (_rho + _rho * inv_cs2 * (0*_ux + 0*_uy + 1*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (0*_ux + 0*_uy + 1*_uz)*(0*_ux + 0*_uy + 1*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * ((1 * (_kzz_p - _rho * cs2))))
-        _S5   = 0.0555555556 * (1.0 - 0.5*omega_s) * (inv_cs2*(0*fx + 0*fy + 1*fz) + inv_cs2*inv_cs2*(0*fx + 0*fy + 1*fz)*(0*_ux + 0*_uy + 1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
+        _S5   = 0.0555555556 * 0.5 * (inv_cs2*(0*fx + 0*fy + 1*fz) + inv_cs2*inv_cs2*(0*fx + 0*fy + 1*fz)*(0*_ux + 0*_uy + 1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
         f_dst[5, i, j, k] = _feq5 + _S5
         _feq6 = 0.0555555556 * (_rho + _rho * inv_cs2 * (0*_ux + 0*_uy + -1*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (0*_ux + 0*_uy + -1*_uz)*(0*_ux + 0*_uy + -1*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * ((1 * (_kzz_p - _rho * cs2))))
-        _S6   = 0.0555555556 * (1.0 - 0.5*omega_s) * (inv_cs2*(0*fx + 0*fy + -1*fz) + inv_cs2*inv_cs2*(0*fx + 0*fy + -1*fz)*(0*_ux + 0*_uy + -1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
+        _S6   = 0.0555555556 * 0.5 * (inv_cs2*(0*fx + 0*fy + -1*fz) + inv_cs2*inv_cs2*(0*fx + 0*fy + -1*fz)*(0*_ux + 0*_uy + -1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
         f_dst[6, i, j, k] = _feq6 + _S6
         _feq7 = 0.0277777778 * (_rho + _rho * inv_cs2 * (1*_ux + 1*_uy + 0*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (1*_ux + 1*_uy + 0*_uz)*(1*_ux + 1*_uy + 0*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * ((1 * (_kxx_p - _rho * cs2)) + (1 * (_kyy_p - _rho * cs2)) + (2*1 * _kxy_p)))
-        _S7   = 0.0277777778 * (1.0 - 0.5*omega_s) * (inv_cs2*(1*fx + 1*fy + 0*fz) + inv_cs2*inv_cs2*(1*fx + 1*fy + 0*fz)*(1*_ux + 1*_uy + 0*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
+        _S7   = 0.0277777778 * 0.5 * (inv_cs2*(1*fx + 1*fy + 0*fz) + inv_cs2*inv_cs2*(1*fx + 1*fy + 0*fz)*(1*_ux + 1*_uy + 0*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
         f_dst[7, i, j, k] = _feq7 + _S7
         _feq8 = 0.0277777778 * (_rho + _rho * inv_cs2 * (-1*_ux + -1*_uy + 0*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (-1*_ux + -1*_uy + 0*_uz)*(-1*_ux + -1*_uy + 0*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * ((1 * (_kxx_p - _rho * cs2)) + (1 * (_kyy_p - _rho * cs2)) + (2*1 * _kxy_p)))
-        _S8   = 0.0277777778 * (1.0 - 0.5*omega_s) * (inv_cs2*(-1*fx + -1*fy + 0*fz) + inv_cs2*inv_cs2*(-1*fx + -1*fy + 0*fz)*(-1*_ux + -1*_uy + 0*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
+        _S8   = 0.0277777778 * 0.5 * (inv_cs2*(-1*fx + -1*fy + 0*fz) + inv_cs2*inv_cs2*(-1*fx + -1*fy + 0*fz)*(-1*_ux + -1*_uy + 0*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
         f_dst[8, i, j, k] = _feq8 + _S8
         _feq9 = 0.0277777778 * (_rho + _rho * inv_cs2 * (1*_ux + -1*_uy + 0*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (1*_ux + -1*_uy + 0*_uz)*(1*_ux + -1*_uy + 0*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * ((1 * (_kxx_p - _rho * cs2)) + (1 * (_kyy_p - _rho * cs2)) + (2*-1 * _kxy_p)))
-        _S9   = 0.0277777778 * (1.0 - 0.5*omega_s) * (inv_cs2*(1*fx + -1*fy + 0*fz) + inv_cs2*inv_cs2*(1*fx + -1*fy + 0*fz)*(1*_ux + -1*_uy + 0*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
+        _S9   = 0.0277777778 * 0.5 * (inv_cs2*(1*fx + -1*fy + 0*fz) + inv_cs2*inv_cs2*(1*fx + -1*fy + 0*fz)*(1*_ux + -1*_uy + 0*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
         f_dst[9, i, j, k] = _feq9 + _S9
         _feq10 = 0.0277777778 * (_rho + _rho * inv_cs2 * (-1*_ux + 1*_uy + 0*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (-1*_ux + 1*_uy + 0*_uz)*(-1*_ux + 1*_uy + 0*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * ((1 * (_kxx_p - _rho * cs2)) + (1 * (_kyy_p - _rho * cs2)) + (2*-1 * _kxy_p)))
-        _S10   = 0.0277777778 * (1.0 - 0.5*omega_s) * (inv_cs2*(-1*fx + 1*fy + 0*fz) + inv_cs2*inv_cs2*(-1*fx + 1*fy + 0*fz)*(-1*_ux + 1*_uy + 0*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
+        _S10   = 0.0277777778 * 0.5 * (inv_cs2*(-1*fx + 1*fy + 0*fz) + inv_cs2*inv_cs2*(-1*fx + 1*fy + 0*fz)*(-1*_ux + 1*_uy + 0*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
         f_dst[10, i, j, k] = _feq10 + _S10
         _feq11 = 0.0277777778 * (_rho + _rho * inv_cs2 * (1*_ux + 0*_uy + 1*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (1*_ux + 0*_uy + 1*_uz)*(1*_ux + 0*_uy + 1*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * ((1 * (_kxx_p - _rho * cs2)) + (1 * (_kzz_p - _rho * cs2)) + (2*1 * _kxz_p)))
-        _S11   = 0.0277777778 * (1.0 - 0.5*omega_s) * (inv_cs2*(1*fx + 0*fy + 1*fz) + inv_cs2*inv_cs2*(1*fx + 0*fy + 1*fz)*(1*_ux + 0*_uy + 1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
+        _S11   = 0.0277777778 * 0.5 * (inv_cs2*(1*fx + 0*fy + 1*fz) + inv_cs2*inv_cs2*(1*fx + 0*fy + 1*fz)*(1*_ux + 0*_uy + 1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
         f_dst[11, i, j, k] = _feq11 + _S11
         _feq12 = 0.0277777778 * (_rho + _rho * inv_cs2 * (-1*_ux + 0*_uy + -1*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (-1*_ux + 0*_uy + -1*_uz)*(-1*_ux + 0*_uy + -1*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * ((1 * (_kxx_p - _rho * cs2)) + (1 * (_kzz_p - _rho * cs2)) + (2*1 * _kxz_p)))
-        _S12   = 0.0277777778 * (1.0 - 0.5*omega_s) * (inv_cs2*(-1*fx + 0*fy + -1*fz) + inv_cs2*inv_cs2*(-1*fx + 0*fy + -1*fz)*(-1*_ux + 0*_uy + -1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
+        _S12   = 0.0277777778 * 0.5 * (inv_cs2*(-1*fx + 0*fy + -1*fz) + inv_cs2*inv_cs2*(-1*fx + 0*fy + -1*fz)*(-1*_ux + 0*_uy + -1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
         f_dst[12, i, j, k] = _feq12 + _S12
         _feq13 = 0.0277777778 * (_rho + _rho * inv_cs2 * (1*_ux + 0*_uy + -1*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (1*_ux + 0*_uy + -1*_uz)*(1*_ux + 0*_uy + -1*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * ((1 * (_kxx_p - _rho * cs2)) + (1 * (_kzz_p - _rho * cs2)) + (2*-1 * _kxz_p)))
-        _S13   = 0.0277777778 * (1.0 - 0.5*omega_s) * (inv_cs2*(1*fx + 0*fy + -1*fz) + inv_cs2*inv_cs2*(1*fx + 0*fy + -1*fz)*(1*_ux + 0*_uy + -1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
+        _S13   = 0.0277777778 * 0.5 * (inv_cs2*(1*fx + 0*fy + -1*fz) + inv_cs2*inv_cs2*(1*fx + 0*fy + -1*fz)*(1*_ux + 0*_uy + -1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
         f_dst[13, i, j, k] = _feq13 + _S13
         _feq14 = 0.0277777778 * (_rho + _rho * inv_cs2 * (-1*_ux + 0*_uy + 1*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (-1*_ux + 0*_uy + 1*_uz)*(-1*_ux + 0*_uy + 1*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * ((1 * (_kxx_p - _rho * cs2)) + (1 * (_kzz_p - _rho * cs2)) + (2*-1 * _kxz_p)))
-        _S14   = 0.0277777778 * (1.0 - 0.5*omega_s) * (inv_cs2*(-1*fx + 0*fy + 1*fz) + inv_cs2*inv_cs2*(-1*fx + 0*fy + 1*fz)*(-1*_ux + 0*_uy + 1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
+        _S14   = 0.0277777778 * 0.5 * (inv_cs2*(-1*fx + 0*fy + 1*fz) + inv_cs2*inv_cs2*(-1*fx + 0*fy + 1*fz)*(-1*_ux + 0*_uy + 1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
         f_dst[14, i, j, k] = _feq14 + _S14
         _feq15 = 0.0277777778 * (_rho + _rho * inv_cs2 * (0*_ux + 1*_uy + 1*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (0*_ux + 1*_uy + 1*_uz)*(0*_ux + 1*_uy + 1*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * ((1 * (_kyy_p - _rho * cs2)) + (1 * (_kzz_p - _rho * cs2)) + (2*1 * _kyz_p)))
-        _S15   = 0.0277777778 * (1.0 - 0.5*omega_s) * (inv_cs2*(0*fx + 1*fy + 1*fz) + inv_cs2*inv_cs2*(0*fx + 1*fy + 1*fz)*(0*_ux + 1*_uy + 1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
+        _S15   = 0.0277777778 * 0.5 * (inv_cs2*(0*fx + 1*fy + 1*fz) + inv_cs2*inv_cs2*(0*fx + 1*fy + 1*fz)*(0*_ux + 1*_uy + 1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
         f_dst[15, i, j, k] = _feq15 + _S15
         _feq16 = 0.0277777778 * (_rho + _rho * inv_cs2 * (0*_ux + -1*_uy + -1*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (0*_ux + -1*_uy + -1*_uz)*(0*_ux + -1*_uy + -1*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * ((1 * (_kyy_p - _rho * cs2)) + (1 * (_kzz_p - _rho * cs2)) + (2*1 * _kyz_p)))
-        _S16   = 0.0277777778 * (1.0 - 0.5*omega_s) * (inv_cs2*(0*fx + -1*fy + -1*fz) + inv_cs2*inv_cs2*(0*fx + -1*fy + -1*fz)*(0*_ux + -1*_uy + -1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
+        _S16   = 0.0277777778 * 0.5 * (inv_cs2*(0*fx + -1*fy + -1*fz) + inv_cs2*inv_cs2*(0*fx + -1*fy + -1*fz)*(0*_ux + -1*_uy + -1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
         f_dst[16, i, j, k] = _feq16 + _S16
         _feq17 = 0.0277777778 * (_rho + _rho * inv_cs2 * (0*_ux + 1*_uy + -1*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (0*_ux + 1*_uy + -1*_uz)*(0*_ux + 1*_uy + -1*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * ((1 * (_kyy_p - _rho * cs2)) + (1 * (_kzz_p - _rho * cs2)) + (2*-1 * _kyz_p)))
-        _S17   = 0.0277777778 * (1.0 - 0.5*omega_s) * (inv_cs2*(0*fx + 1*fy + -1*fz) + inv_cs2*inv_cs2*(0*fx + 1*fy + -1*fz)*(0*_ux + 1*_uy + -1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
+        _S17   = 0.0277777778 * 0.5 * (inv_cs2*(0*fx + 1*fy + -1*fz) + inv_cs2*inv_cs2*(0*fx + 1*fy + -1*fz)*(0*_ux + 1*_uy + -1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
         f_dst[17, i, j, k] = _feq17 + _S17
         _feq18 = 0.0277777778 * (_rho + _rho * inv_cs2 * (0*_ux + -1*_uy + 1*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (0*_ux + -1*_uy + 1*_uz)*(0*_ux + -1*_uy + 1*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * ((1 * (_kyy_p - _rho * cs2)) + (1 * (_kzz_p - _rho * cs2)) + (2*-1 * _kyz_p)))
-        _S18   = 0.0277777778 * (1.0 - 0.5*omega_s) * (inv_cs2*(0*fx + -1*fy + 1*fz) + inv_cs2*inv_cs2*(0*fx + -1*fy + 1*fz)*(0*_ux + -1*_uy + 1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
+        _S18   = 0.0277777778 * 0.5 * (inv_cs2*(0*fx + -1*fy + 1*fz) + inv_cs2*inv_cs2*(0*fx + -1*fy + 1*fz)*(0*_ux + -1*_uy + 1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
         f_dst[18, i, j, k] = _feq18 + _S18
+
+
+        # ── Mass correction (Hermite rebuild can drift Σf from ρ) ─────
+        _sum_f = (
+            f_dst[0, i, j, k] + f_dst[1, i, j, k] + f_dst[2, i, j, k] + f_dst[3, i, j, k]
+            + f_dst[4, i, j, k] + f_dst[5, i, j, k] + f_dst[6, i, j, k] + f_dst[7, i, j, k]
+            + f_dst[8, i, j, k] + f_dst[9, i, j, k] + f_dst[10, i, j, k] + f_dst[11, i, j, k]
+            + f_dst[12, i, j, k] + f_dst[13, i, j, k] + f_dst[14, i, j, k] + f_dst[15, i, j, k]
+            + f_dst[16, i, j, k] + f_dst[17, i, j, k] + f_dst[18, i, j, k]
+        )
+        f_dst[0, i, j, k] += _rho - _sum_f
 
         # ── Update macroscopic fields ────────────────────────────────
         rho[i, j, k] = _rho
@@ -236,7 +247,7 @@ def collide_mrt_variable_tau(
     D3Q19 two-rate collision with per-cell omega_s = 1/tau_field.
 
     Deviatoric stress relaxed at omega_s (shear viscosity), stress trace at
-    omega_b (bulk viscosity). Density and momentum are conserved exactly.
+    omega_b (bulk viscosity). Density is restored by an f0 mass correction after Hermite rebuild; momentum uses Guo half-force in u* plus S=0.5·F_i (regenerate-and-rediff).
     Semi-implicit Carman-Kozeny drag is applied to the post-collision u.
     Guo forcing is included for body forces (Marangoni + buoyancy).
     """
@@ -333,63 +344,74 @@ def collide_mrt_variable_tau(
         #              - rho*u²/(2cs²) + K_correction]
         _u2 = _ux*_ux + _uy*_uy + _uz*_uz
 
-        _feq0 = 0.3333333333 * (_rho + _rho * inv_cs2 * (0*_ux + 0*_uy + 0*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (0*_ux + 0*_uy + 0*_uz)*(0*_ux + 0*_uy + 0*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * (0.0))
-        _S0   = 0.3333333333 * (1.0 - 0.5*omega_s) * (inv_cs2*(0*fx + 0*fy + 0*fz) + inv_cs2*inv_cs2*(0*fx + 0*fy + 0*fz)*(0*_ux + 0*_uy + 0*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
+        _feq0 = 0.3333333333 * (_rho + _rho * inv_cs2 * (0*_ux + 0*_uy + 0*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (0*_ux + 0*_uy + 0*_uz)*(0*_ux + 0*_uy + 0*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * (-(_k_mean_p - _rho * cs2)))
+        _S0   = 0.3333333333 * 0.5 * (inv_cs2*(0*fx + 0*fy + 0*fz) + inv_cs2*inv_cs2*(0*fx + 0*fy + 0*fz)*(0*_ux + 0*_uy + 0*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
         f_dst[0, i, j, k] = _feq0 + _S0
         _feq1 = 0.0555555556 * (_rho + _rho * inv_cs2 * (1*_ux + 0*_uy + 0*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (1*_ux + 0*_uy + 0*_uz)*(1*_ux + 0*_uy + 0*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * ((1 * (_kxx_p - _rho * cs2))))
-        _S1   = 0.0555555556 * (1.0 - 0.5*omega_s) * (inv_cs2*(1*fx + 0*fy + 0*fz) + inv_cs2*inv_cs2*(1*fx + 0*fy + 0*fz)*(1*_ux + 0*_uy + 0*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
+        _S1   = 0.0555555556 * 0.5 * (inv_cs2*(1*fx + 0*fy + 0*fz) + inv_cs2*inv_cs2*(1*fx + 0*fy + 0*fz)*(1*_ux + 0*_uy + 0*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
         f_dst[1, i, j, k] = _feq1 + _S1
         _feq2 = 0.0555555556 * (_rho + _rho * inv_cs2 * (-1*_ux + 0*_uy + 0*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (-1*_ux + 0*_uy + 0*_uz)*(-1*_ux + 0*_uy + 0*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * ((1 * (_kxx_p - _rho * cs2))))
-        _S2   = 0.0555555556 * (1.0 - 0.5*omega_s) * (inv_cs2*(-1*fx + 0*fy + 0*fz) + inv_cs2*inv_cs2*(-1*fx + 0*fy + 0*fz)*(-1*_ux + 0*_uy + 0*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
+        _S2   = 0.0555555556 * 0.5 * (inv_cs2*(-1*fx + 0*fy + 0*fz) + inv_cs2*inv_cs2*(-1*fx + 0*fy + 0*fz)*(-1*_ux + 0*_uy + 0*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
         f_dst[2, i, j, k] = _feq2 + _S2
         _feq3 = 0.0555555556 * (_rho + _rho * inv_cs2 * (0*_ux + 1*_uy + 0*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (0*_ux + 1*_uy + 0*_uz)*(0*_ux + 1*_uy + 0*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * ((1 * (_kyy_p - _rho * cs2))))
-        _S3   = 0.0555555556 * (1.0 - 0.5*omega_s) * (inv_cs2*(0*fx + 1*fy + 0*fz) + inv_cs2*inv_cs2*(0*fx + 1*fy + 0*fz)*(0*_ux + 1*_uy + 0*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
+        _S3   = 0.0555555556 * 0.5 * (inv_cs2*(0*fx + 1*fy + 0*fz) + inv_cs2*inv_cs2*(0*fx + 1*fy + 0*fz)*(0*_ux + 1*_uy + 0*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
         f_dst[3, i, j, k] = _feq3 + _S3
         _feq4 = 0.0555555556 * (_rho + _rho * inv_cs2 * (0*_ux + -1*_uy + 0*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (0*_ux + -1*_uy + 0*_uz)*(0*_ux + -1*_uy + 0*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * ((1 * (_kyy_p - _rho * cs2))))
-        _S4   = 0.0555555556 * (1.0 - 0.5*omega_s) * (inv_cs2*(0*fx + -1*fy + 0*fz) + inv_cs2*inv_cs2*(0*fx + -1*fy + 0*fz)*(0*_ux + -1*_uy + 0*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
+        _S4   = 0.0555555556 * 0.5 * (inv_cs2*(0*fx + -1*fy + 0*fz) + inv_cs2*inv_cs2*(0*fx + -1*fy + 0*fz)*(0*_ux + -1*_uy + 0*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
         f_dst[4, i, j, k] = _feq4 + _S4
         _feq5 = 0.0555555556 * (_rho + _rho * inv_cs2 * (0*_ux + 0*_uy + 1*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (0*_ux + 0*_uy + 1*_uz)*(0*_ux + 0*_uy + 1*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * ((1 * (_kzz_p - _rho * cs2))))
-        _S5   = 0.0555555556 * (1.0 - 0.5*omega_s) * (inv_cs2*(0*fx + 0*fy + 1*fz) + inv_cs2*inv_cs2*(0*fx + 0*fy + 1*fz)*(0*_ux + 0*_uy + 1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
+        _S5   = 0.0555555556 * 0.5 * (inv_cs2*(0*fx + 0*fy + 1*fz) + inv_cs2*inv_cs2*(0*fx + 0*fy + 1*fz)*(0*_ux + 0*_uy + 1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
         f_dst[5, i, j, k] = _feq5 + _S5
         _feq6 = 0.0555555556 * (_rho + _rho * inv_cs2 * (0*_ux + 0*_uy + -1*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (0*_ux + 0*_uy + -1*_uz)*(0*_ux + 0*_uy + -1*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * ((1 * (_kzz_p - _rho * cs2))))
-        _S6   = 0.0555555556 * (1.0 - 0.5*omega_s) * (inv_cs2*(0*fx + 0*fy + -1*fz) + inv_cs2*inv_cs2*(0*fx + 0*fy + -1*fz)*(0*_ux + 0*_uy + -1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
+        _S6   = 0.0555555556 * 0.5 * (inv_cs2*(0*fx + 0*fy + -1*fz) + inv_cs2*inv_cs2*(0*fx + 0*fy + -1*fz)*(0*_ux + 0*_uy + -1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
         f_dst[6, i, j, k] = _feq6 + _S6
         _feq7 = 0.0277777778 * (_rho + _rho * inv_cs2 * (1*_ux + 1*_uy + 0*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (1*_ux + 1*_uy + 0*_uz)*(1*_ux + 1*_uy + 0*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * ((1 * (_kxx_p - _rho * cs2)) + (1 * (_kyy_p - _rho * cs2)) + (2*1 * _kxy_p)))
-        _S7   = 0.0277777778 * (1.0 - 0.5*omega_s) * (inv_cs2*(1*fx + 1*fy + 0*fz) + inv_cs2*inv_cs2*(1*fx + 1*fy + 0*fz)*(1*_ux + 1*_uy + 0*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
+        _S7   = 0.0277777778 * 0.5 * (inv_cs2*(1*fx + 1*fy + 0*fz) + inv_cs2*inv_cs2*(1*fx + 1*fy + 0*fz)*(1*_ux + 1*_uy + 0*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
         f_dst[7, i, j, k] = _feq7 + _S7
         _feq8 = 0.0277777778 * (_rho + _rho * inv_cs2 * (-1*_ux + -1*_uy + 0*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (-1*_ux + -1*_uy + 0*_uz)*(-1*_ux + -1*_uy + 0*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * ((1 * (_kxx_p - _rho * cs2)) + (1 * (_kyy_p - _rho * cs2)) + (2*1 * _kxy_p)))
-        _S8   = 0.0277777778 * (1.0 - 0.5*omega_s) * (inv_cs2*(-1*fx + -1*fy + 0*fz) + inv_cs2*inv_cs2*(-1*fx + -1*fy + 0*fz)*(-1*_ux + -1*_uy + 0*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
+        _S8   = 0.0277777778 * 0.5 * (inv_cs2*(-1*fx + -1*fy + 0*fz) + inv_cs2*inv_cs2*(-1*fx + -1*fy + 0*fz)*(-1*_ux + -1*_uy + 0*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
         f_dst[8, i, j, k] = _feq8 + _S8
         _feq9 = 0.0277777778 * (_rho + _rho * inv_cs2 * (1*_ux + -1*_uy + 0*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (1*_ux + -1*_uy + 0*_uz)*(1*_ux + -1*_uy + 0*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * ((1 * (_kxx_p - _rho * cs2)) + (1 * (_kyy_p - _rho * cs2)) + (2*-1 * _kxy_p)))
-        _S9   = 0.0277777778 * (1.0 - 0.5*omega_s) * (inv_cs2*(1*fx + -1*fy + 0*fz) + inv_cs2*inv_cs2*(1*fx + -1*fy + 0*fz)*(1*_ux + -1*_uy + 0*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
+        _S9   = 0.0277777778 * 0.5 * (inv_cs2*(1*fx + -1*fy + 0*fz) + inv_cs2*inv_cs2*(1*fx + -1*fy + 0*fz)*(1*_ux + -1*_uy + 0*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
         f_dst[9, i, j, k] = _feq9 + _S9
         _feq10 = 0.0277777778 * (_rho + _rho * inv_cs2 * (-1*_ux + 1*_uy + 0*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (-1*_ux + 1*_uy + 0*_uz)*(-1*_ux + 1*_uy + 0*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * ((1 * (_kxx_p - _rho * cs2)) + (1 * (_kyy_p - _rho * cs2)) + (2*-1 * _kxy_p)))
-        _S10   = 0.0277777778 * (1.0 - 0.5*omega_s) * (inv_cs2*(-1*fx + 1*fy + 0*fz) + inv_cs2*inv_cs2*(-1*fx + 1*fy + 0*fz)*(-1*_ux + 1*_uy + 0*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
+        _S10   = 0.0277777778 * 0.5 * (inv_cs2*(-1*fx + 1*fy + 0*fz) + inv_cs2*inv_cs2*(-1*fx + 1*fy + 0*fz)*(-1*_ux + 1*_uy + 0*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
         f_dst[10, i, j, k] = _feq10 + _S10
         _feq11 = 0.0277777778 * (_rho + _rho * inv_cs2 * (1*_ux + 0*_uy + 1*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (1*_ux + 0*_uy + 1*_uz)*(1*_ux + 0*_uy + 1*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * ((1 * (_kxx_p - _rho * cs2)) + (1 * (_kzz_p - _rho * cs2)) + (2*1 * _kxz_p)))
-        _S11   = 0.0277777778 * (1.0 - 0.5*omega_s) * (inv_cs2*(1*fx + 0*fy + 1*fz) + inv_cs2*inv_cs2*(1*fx + 0*fy + 1*fz)*(1*_ux + 0*_uy + 1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
+        _S11   = 0.0277777778 * 0.5 * (inv_cs2*(1*fx + 0*fy + 1*fz) + inv_cs2*inv_cs2*(1*fx + 0*fy + 1*fz)*(1*_ux + 0*_uy + 1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
         f_dst[11, i, j, k] = _feq11 + _S11
         _feq12 = 0.0277777778 * (_rho + _rho * inv_cs2 * (-1*_ux + 0*_uy + -1*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (-1*_ux + 0*_uy + -1*_uz)*(-1*_ux + 0*_uy + -1*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * ((1 * (_kxx_p - _rho * cs2)) + (1 * (_kzz_p - _rho * cs2)) + (2*1 * _kxz_p)))
-        _S12   = 0.0277777778 * (1.0 - 0.5*omega_s) * (inv_cs2*(-1*fx + 0*fy + -1*fz) + inv_cs2*inv_cs2*(-1*fx + 0*fy + -1*fz)*(-1*_ux + 0*_uy + -1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
+        _S12   = 0.0277777778 * 0.5 * (inv_cs2*(-1*fx + 0*fy + -1*fz) + inv_cs2*inv_cs2*(-1*fx + 0*fy + -1*fz)*(-1*_ux + 0*_uy + -1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
         f_dst[12, i, j, k] = _feq12 + _S12
         _feq13 = 0.0277777778 * (_rho + _rho * inv_cs2 * (1*_ux + 0*_uy + -1*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (1*_ux + 0*_uy + -1*_uz)*(1*_ux + 0*_uy + -1*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * ((1 * (_kxx_p - _rho * cs2)) + (1 * (_kzz_p - _rho * cs2)) + (2*-1 * _kxz_p)))
-        _S13   = 0.0277777778 * (1.0 - 0.5*omega_s) * (inv_cs2*(1*fx + 0*fy + -1*fz) + inv_cs2*inv_cs2*(1*fx + 0*fy + -1*fz)*(1*_ux + 0*_uy + -1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
+        _S13   = 0.0277777778 * 0.5 * (inv_cs2*(1*fx + 0*fy + -1*fz) + inv_cs2*inv_cs2*(1*fx + 0*fy + -1*fz)*(1*_ux + 0*_uy + -1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
         f_dst[13, i, j, k] = _feq13 + _S13
         _feq14 = 0.0277777778 * (_rho + _rho * inv_cs2 * (-1*_ux + 0*_uy + 1*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (-1*_ux + 0*_uy + 1*_uz)*(-1*_ux + 0*_uy + 1*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * ((1 * (_kxx_p - _rho * cs2)) + (1 * (_kzz_p - _rho * cs2)) + (2*-1 * _kxz_p)))
-        _S14   = 0.0277777778 * (1.0 - 0.5*omega_s) * (inv_cs2*(-1*fx + 0*fy + 1*fz) + inv_cs2*inv_cs2*(-1*fx + 0*fy + 1*fz)*(-1*_ux + 0*_uy + 1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
+        _S14   = 0.0277777778 * 0.5 * (inv_cs2*(-1*fx + 0*fy + 1*fz) + inv_cs2*inv_cs2*(-1*fx + 0*fy + 1*fz)*(-1*_ux + 0*_uy + 1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
         f_dst[14, i, j, k] = _feq14 + _S14
         _feq15 = 0.0277777778 * (_rho + _rho * inv_cs2 * (0*_ux + 1*_uy + 1*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (0*_ux + 1*_uy + 1*_uz)*(0*_ux + 1*_uy + 1*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * ((1 * (_kyy_p - _rho * cs2)) + (1 * (_kzz_p - _rho * cs2)) + (2*1 * _kyz_p)))
-        _S15   = 0.0277777778 * (1.0 - 0.5*omega_s) * (inv_cs2*(0*fx + 1*fy + 1*fz) + inv_cs2*inv_cs2*(0*fx + 1*fy + 1*fz)*(0*_ux + 1*_uy + 1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
+        _S15   = 0.0277777778 * 0.5 * (inv_cs2*(0*fx + 1*fy + 1*fz) + inv_cs2*inv_cs2*(0*fx + 1*fy + 1*fz)*(0*_ux + 1*_uy + 1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
         f_dst[15, i, j, k] = _feq15 + _S15
         _feq16 = 0.0277777778 * (_rho + _rho * inv_cs2 * (0*_ux + -1*_uy + -1*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (0*_ux + -1*_uy + -1*_uz)*(0*_ux + -1*_uy + -1*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * ((1 * (_kyy_p - _rho * cs2)) + (1 * (_kzz_p - _rho * cs2)) + (2*1 * _kyz_p)))
-        _S16   = 0.0277777778 * (1.0 - 0.5*omega_s) * (inv_cs2*(0*fx + -1*fy + -1*fz) + inv_cs2*inv_cs2*(0*fx + -1*fy + -1*fz)*(0*_ux + -1*_uy + -1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
+        _S16   = 0.0277777778 * 0.5 * (inv_cs2*(0*fx + -1*fy + -1*fz) + inv_cs2*inv_cs2*(0*fx + -1*fy + -1*fz)*(0*_ux + -1*_uy + -1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
         f_dst[16, i, j, k] = _feq16 + _S16
         _feq17 = 0.0277777778 * (_rho + _rho * inv_cs2 * (0*_ux + 1*_uy + -1*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (0*_ux + 1*_uy + -1*_uz)*(0*_ux + 1*_uy + -1*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * ((1 * (_kyy_p - _rho * cs2)) + (1 * (_kzz_p - _rho * cs2)) + (2*-1 * _kyz_p)))
-        _S17   = 0.0277777778 * (1.0 - 0.5*omega_s) * (inv_cs2*(0*fx + 1*fy + -1*fz) + inv_cs2*inv_cs2*(0*fx + 1*fy + -1*fz)*(0*_ux + 1*_uy + -1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
+        _S17   = 0.0277777778 * 0.5 * (inv_cs2*(0*fx + 1*fy + -1*fz) + inv_cs2*inv_cs2*(0*fx + 1*fy + -1*fz)*(0*_ux + 1*_uy + -1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
         f_dst[17, i, j, k] = _feq17 + _S17
         _feq18 = 0.0277777778 * (_rho + _rho * inv_cs2 * (0*_ux + -1*_uy + 1*_uz) + _rho * inv_cs2 * inv_cs2 * 0.5 * (0*_ux + -1*_uy + 1*_uz)*(0*_ux + -1*_uy + 1*_uz) - _rho * 0.5 * inv_cs2 * _u2 + 0.5 * inv_cs2 * inv_cs2 * ((1 * (_kyy_p - _rho * cs2)) + (1 * (_kzz_p - _rho * cs2)) + (2*-1 * _kyz_p)))
-        _S18   = 0.0277777778 * (1.0 - 0.5*omega_s) * (inv_cs2*(0*fx + -1*fy + 1*fz) + inv_cs2*inv_cs2*(0*fx + -1*fy + 1*fz)*(0*_ux + -1*_uy + 1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
+        _S18   = 0.0277777778 * 0.5 * (inv_cs2*(0*fx + -1*fy + 1*fz) + inv_cs2*inv_cs2*(0*fx + -1*fy + 1*fz)*(0*_ux + -1*_uy + 1*_uz) - inv_cs2*(_ux*fx + _uy*fy + _uz*fz))
         f_dst[18, i, j, k] = _feq18 + _S18
+
+
+        # ── Mass correction (Hermite rebuild can drift Σf from ρ) ─────
+        _sum_f = (
+            f_dst[0, i, j, k] + f_dst[1, i, j, k] + f_dst[2, i, j, k] + f_dst[3, i, j, k]
+            + f_dst[4, i, j, k] + f_dst[5, i, j, k] + f_dst[6, i, j, k] + f_dst[7, i, j, k]
+            + f_dst[8, i, j, k] + f_dst[9, i, j, k] + f_dst[10, i, j, k] + f_dst[11, i, j, k]
+            + f_dst[12, i, j, k] + f_dst[13, i, j, k] + f_dst[14, i, j, k] + f_dst[15, i, j, k]
+            + f_dst[16, i, j, k] + f_dst[17, i, j, k] + f_dst[18, i, j, k]
+        )
+        f_dst[0, i, j, k] += _rho - _sum_f
 
         # ── Update macroscopic fields ────────────────────────────────
         rho[i, j, k] = _rho

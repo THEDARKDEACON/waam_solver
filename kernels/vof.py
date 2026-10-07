@@ -669,6 +669,32 @@ def reinitialize_phi(
 
 
 @ti.kernel
+def sum_phi_metal_volume(
+    phi: ti.template(),
+    flags: ti.template(),
+    vol_buf: ti.template(),
+    dx: ti.f32,
+    nz_solid: ti.i32,
+    FLAG_GAS: ti.i32,
+):
+    """Sum φ·Δx³ above the substrate band (deposited / free-surface metal).
+
+    Plate cells (k < nz_solid) are excluded so the ledger can be compared to
+    wire-feed deposited mass without the coupon stock.
+    """
+    dx3 = dx * dx * dx
+    vol_buf[None] = 0.0
+    for i, j, k in phi:
+        if k < nz_solid:
+            continue
+        if flags[i, j, k] == FLAG_GAS:
+            continue
+        p = phi[i, j, k]
+        if p > 0.0:
+            ti.atomic_add(vol_buf[None], p * dx3)
+
+
+@ti.kernel
 def update_flags_from_phi(
     phi: ti.template(),
     f_l: ti.template(),
@@ -788,6 +814,12 @@ def remelt_hot_solid(
     f_l: ti.template(),
     phi: ti.template(),
     flags: ti.template(),
+    f_src: ti.template(),
+    rho: ti.template(),
+    ux: ti.template(),
+    uy: ti.template(),
+    uz: ti.template(),
+    W: ti.template(),
     L_rho: ti.f32,
     H_sol: ti.f32,
     H_liq: ti.f32,
@@ -800,8 +832,12 @@ def remelt_hot_solid(
     from temperature, which *created* latent heat whenever a sensible-only
     solid crossed T_solidus — prolonging liquid lifetime and, with VOF flag
     fill-in, runaway heating toward the vapor cap.
+
+    Newly fluid cells get quiescent equilibrium populations (ρ_lu=1, u=0)
+    so the melting front does not inherit stale solid bounce-back data.
     """
     margin = 0.02 * L_rho
+    rho0 = 1.0
     for i, j, k in T:
         if flags[i, j, k] != FLAG_SOLID:
             continue
@@ -814,6 +850,12 @@ def remelt_hot_solid(
             f_l[i, j, k] = (h - H_sol) / (L_rho + 1e-9)
         phi[i, j, k] = 1.0
         flags[i, j, k] = FLAG_FLUID
+        rho[i, j, k] = rho0
+        ux[i, j, k] = 0.0
+        uy[i, j, k] = 0.0
+        uz[i, j, k] = 0.0
+        for q in ti.static(range(19)):
+            f_src[q, i, j, k] = W[q] * rho0
 
         # H unchanged — latent heat must arrive via conduction/advection.
 
@@ -826,6 +868,12 @@ def remelt_hot_solid_dual(
     phi: ti.template(),
     flags: ti.template(),
     alloy_id: ti.template(),
+    f_src: ti.template(),
+    rho: ti.template(),
+    ux: ti.template(),
+    uy: ti.template(),
+    uz: ti.template(),
+    W: ti.template(),
     L_rho_w: ti.f32,
     H_sol_w: ti.f32,
     H_liq_w: ti.f32,
@@ -836,6 +884,7 @@ def remelt_hot_solid_dual(
     FLAG_FLUID: ti.i32,
 ):
     """Enthalpy-driven remelt with birth-alloy H_sol / L."""
+    rho0 = 1.0
     for i, j, k in T:
         if flags[i, j, k] != FLAG_SOLID:
             continue
@@ -852,6 +901,12 @@ def remelt_hot_solid_dual(
             f_l[i, j, k] = (h - H_sol) / (L_rho + 1e-9)
         phi[i, j, k] = 1.0
         flags[i, j, k] = FLAG_FLUID
+        rho[i, j, k] = rho0
+        ux[i, j, k] = 0.0
+        uy[i, j, k] = 0.0
+        uz[i, j, k] = 0.0
+        for q in ti.static(range(19)):
+            f_src[q, i, j, k] = W[q] * rho0
 
 
 @ti.kernel
@@ -861,6 +916,12 @@ def remelt_hot_solid_scalar(
     f_l: ti.template(),
     phi: ti.template(),
     flags: ti.template(),
+    f_src: ti.template(),
+    rho: ti.template(),
+    ux: ti.template(),
+    uy: ti.template(),
+    uz: ti.template(),
+    W: ti.template(),
     L_rho: ti.f32,
     H_sol: ti.f32,
     H_liq: ti.f32,
@@ -869,6 +930,7 @@ def remelt_hot_solid_scalar(
 ):
     """Scalar-cp twin of remelt_hot_solid (enthalpy-driven, no H rewrite)."""
     margin = 0.02 * L_rho
+    rho0 = 1.0
     for i, j, k in T:
         if flags[i, j, k] != FLAG_SOLID:
             continue
@@ -881,6 +943,12 @@ def remelt_hot_solid_scalar(
             f_l[i, j, k] = (h - H_sol) / (L_rho + 1e-9)
         phi[i, j, k] = 1.0
         flags[i, j, k] = FLAG_FLUID
+        rho[i, j, k] = rho0
+        ux[i, j, k] = 0.0
+        uy[i, j, k] = 0.0
+        uz[i, j, k] = 0.0
+        for q in ti.static(range(19)):
+            f_src[q, i, j, k] = W[q] * rho0
 
 @ti.kernel
 def solidify_trailing_pool(

@@ -228,15 +228,18 @@ For **physics-accuracy / re-fit** on the fine mesh (not the shop `dx=0.4` lock),
 
 | Job | Role |
 |-----|------|
-| `jobs/examples/bead_calibrate_hpc.yaml` | HPC calibrate lock (`dx_mm: 0.2`, MRT+variable-τ, `auto_dt_ma: true`) |
+| `jobs/examples/bead_calibrate_hpc.yaml` | HPC calibrate lock (`dx_mm: 0.2`, two-rate MRT+variable-τ, `auto_dt_ma: true`) |
 | `jobs/examples/bead_calibrate_hpc_heldout_*.yaml` | Held-outs (process only; mesh fingerprint locked) |
 | `jobs/examples/bead_physics_accuracy.yaml` | Alias of `bead_calibrate_hpc.yaml` |
+
+HPC uses `use_srt: false` (MRT force/mass unit-tested). After pulling fingerprint changes,
+re-run `auto_calibrate --fit-set eta` then `mesh_convergence_report`.
 
 ```bash
 export WAAM_BACKEND=cuda
 python -m waam_twin.tools.auto_calibrate \
   --job jobs/examples/bead_calibrate_hpc.yaml \
-  --gate-pct 25 --max-trials 24 --write
+  --fit-set eta --gate-pct 25 --max-trials 16 --write
 
 python -m waam_twin.tools.prediction_report --tier hpc
 
@@ -252,11 +255,20 @@ Do **not** copy η/Goldak/recoil from the shop lock into these jobs (or the reve
 Primary W/D gate uses `claim.pool_metric: fusion_zone` (liquidus `T_max` envelope).
 `auto_dt_ma` raises `dt` until τ≥0.505 while respecting `u_mach_limit_lu` (HPC lock uses
 `0.20` so fine `dx` can meet both; shop keeps `0.08` with `auto_dt_ma: false`).
-HPC family also uses `force_limit_lu: 0.25` (shop stays `0.05`): at `dx=0.2` with full
-CSF/Marangoni/recoil, `0.05` trips `strict_mode` (sustained body-force clamp). Raise it
-on **all** HPC calibrate + held-out YAMLs together (mesh fingerprint). After calibrate,
-Level A must still show clamps inactive — if not, raise further or fix force scaling
-before claiming a clean convergence band.
+HPC family uses `force_limit_m_s2: 8000` (physical acceleration cap). Each step
+`F_lu = a · dt² / dx`, so the ceiling tracks the mesh instead of a fixed lattice number.
+`force_limit_lu: 0.25` remains the fallback if `force_limit_m_s2` is 0 (shop stays
+`force_limit_lu: 0.05` only). Set the physical cap on **all** HPC calibrate + held-out
+YAMLs together (mesh fingerprint). After calibrate, Level A must still show clamps
+inactive — if not, raise `force_limit_m_s2` before claiming a clean band.
+
+Phase 3 fit (η only; Goldak/recoil/evap frozen):
+
+```bash
+python -m waam_twin.tools.auto_calibrate \
+  --job jobs/examples/bead_calibrate_hpc.yaml \
+  --fit-set eta --gate-pct 25 --max-trials 16 --write
+```
 
 If `strict_mode` fails with `mass_balance_ratio` ≪ 1 and `overflow_count>0`, the deposit
 footprint cell-cap was too small in physical mm at fine `dx` (fixed in

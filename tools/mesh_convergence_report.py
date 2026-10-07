@@ -58,11 +58,13 @@ _FROZEN_PATHS: tuple[tuple[str, ...], ...] = (
     ("advanced_physics", "recoil_accommodation"),
     ("advanced_physics", "evap_cooling_scale"),
     ("simulation", "force_limit_lu"),
+    ("simulation", "force_limit_m_s2"),
     ("simulation", "u_mach_limit_lu"),
     ("simulation", "use_srt"),
     ("simulation", "use_variable_tau"),
     ("simulation", "auto_dt_ma"),
     ("simulation", "C_darcy"),
+    ("simulation", "C_darcy_ref_dt_s"),
     ("simulation", "physics_tier"),
 )
 

@@ -372,7 +372,8 @@ _KNOWN_SIM_KEYS = frozenset({
     "plate_length_mm", "plate_width_mm", "substrate_thickness_mm",
     "domain_margin_mm", "air_gap_mm",
     "dt_scale", "warn_on_force_clamp", "alloy_mix_rate",
-    "use_variable_tau", "use_srt", "u_mach_limit_lu", "force_limit_lu", "C_darcy",
+    "use_variable_tau", "use_srt", "u_mach_limit_lu", "force_limit_lu",
+    "force_limit_m_s2", "C_darcy", "C_darcy_ref_dt_s",
     "auto_dt_ma", "u_design_m_s", "pool_metric",
 })
 
@@ -400,8 +401,9 @@ _KNOWN_ADVANCED_PHYSICS_KEYS = frozenset({
     "lorentz_jacobi_iters", "lorentz_jacobi_cold_iters", "lorentz_jacobi_tol",
     "T_boiling_K", "T_recoil_onset_K", "L_vapor_J_kg", "R_spec_vapor_J_kgK",
     "recoil_accommodation", "evap_cooling_scale",
-    "bulk_tau", "marangoni_scale", "C_darcy",
-    "u_mach_limit_lu", "force_limit_lu", "use_variable_tau", "use_srt",
+    "bulk_tau", "marangoni_scale", "C_darcy", "C_darcy_ref_dt_s",
+    "u_mach_limit_lu", "force_limit_lu", "force_limit_m_s2",
+    "use_variable_tau", "use_srt",
 })
 
 _KNOWN_DEPOSITION_KEYS = frozenset({
@@ -469,6 +471,7 @@ def _warn_unknown_section(log, section: str, data: dict, known: frozenset) -> No
 _KNOWN_CLAIM_KEYS = frozenset({
     "mesh_tier", "absolute_wd", "trend_only", "tier_label", "pool_metric",
     "characterisation", "accuracy", "knobs_fitted", "knobs_predicted",
+    "knobs_locked", "known_defects", "operating_regime",
     "limitations", "out_of_scope", "notes",
 })
 
@@ -596,9 +599,18 @@ def apply_job_to_twin(twin, job: dict[str, Any] | JobConfig) -> None:
     v = _sim_or_adv("force_limit_lu")
     if v is not None:
         twin.force_limit_lu = float(v)
+    v = _sim_or_adv("force_limit_m_s2")
+    if v is not None:
+        twin.force_limit_m_s2 = float(v)
     v = _sim_or_adv("C_darcy")
     if v is not None:
         twin.C_darcy = float(v)
+    v = _sim_or_adv("C_darcy_ref_dt_s")
+    if v is not None:
+        twin._C_darcy_ref_dt_s = float(v)
+    else:
+        # Lock identity at this mesh's dt unless the job pins a reference.
+        twin._C_darcy_ref_dt_s = float(twin.grid.dt)
     v = _sim_or_adv("auto_dt_ma")
     if v is not None:
         twin.auto_dt_ma = bool(v)

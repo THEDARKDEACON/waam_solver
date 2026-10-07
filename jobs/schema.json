@@ -101,12 +101,22 @@
         "force_limit_lu": {
           "type": "number",
           "exclusiveMinimum": 0,
-          "description": "Body-force magnitude clamp in lattice units (default 0.05)."
+          "description": "Body-force magnitude clamp in lattice units (default 0.05). Used when force_limit_m_s2 is unset/0."
+        },
+        "force_limit_m_s2": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Physical body-force acceleration cap [m/s²]. When >0, F_lu=a·dt²/dx each step (mesh-invariant Phase 3 path)."
         },
         "C_darcy": {
           "type": "number",
           "minimum": 0,
-          "description": "Carman–Kozeny mushy-zone constant (default 1.6e5)."
+          "description": "Carman–Kozeny lattice constant at C_darcy_ref_dt_s (default 1.6e5). Kernels use C_eff=C·(dt/dt_ref)."
+        },
+        "C_darcy_ref_dt_s": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Reference timestep [s] at which job C_darcy was defined. Effective C scales as dt/dt_ref."
         },
         "plate_thickness_mm": { "type": "number" },
         "plate_size_mm": {
@@ -254,6 +264,11 @@
           "minimum": 0,
           "description": "Alias for simulation.C_darcy (Carman–Kozeny)."
         },
+        "C_darcy_ref_dt_s": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Alias for simulation.C_darcy_ref_dt_s."
+        },
         "u_mach_limit_lu": {
           "type": "number",
           "exclusiveMinimum": 0,
@@ -263,6 +278,11 @@
           "type": "number",
           "exclusiveMinimum": 0,
           "description": "Alias for simulation.force_limit_lu."
+        },
+        "force_limit_m_s2": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Alias for simulation.force_limit_m_s2."
         },
         "use_variable_tau": {
           "type": "boolean",
@@ -331,6 +351,20 @@
         "accuracy": { "type": "object", "additionalProperties": { "type": "string" } },
         "knobs_fitted": { "type": "array", "items": { "type": "string" } },
         "knobs_predicted": { "type": "array", "items": { "type": "string" } },
+        "knobs_locked": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Must match calibrate lock on held-outs (not free process knobs)."
+        },
+        "known_defects": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Documented solver/claim defects; shrink as fixes land."
+        },
+        "operating_regime": {
+          "type": "string",
+          "description": "τ/Ma/clamp honesty for the lock mesh."
+        },
         "limitations": { "type": "array", "items": { "type": "string" } },
         "out_of_scope": { "type": "array", "items": { "type": "string" } },
         "notes": { "type": "string" }

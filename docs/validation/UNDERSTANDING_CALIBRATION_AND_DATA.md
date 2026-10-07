@@ -139,9 +139,11 @@ Fitted knobs (η, Goldak, recoil, …) are **mesh-tier locked**. Coarse and fine
 | Tier | Jobs | Mesh / collision | Claim notes |
 |------|------|------------------|-------------|
 | **shop** | `bead_calibrate.yaml` + `bead_calibrate_heldout_*.yaml` | `dx_mm: 0.4`, SRT + variable-τ, `auto_dt_ma: false` | Absolute W/D claimed only after fit on this mesh |
-| **hpc** | `bead_calibrate_hpc.yaml` + `bead_calibrate_hpc_heldout_*.yaml` (alias: `bead_physics_accuracy.yaml`) | `dx_mm: 0.2`, two-rate MRT + variable-τ, `auto_dt_ma: true`, `u_mach_limit_lu: 0.20` (needed so τ≥0.505 and Ma can both be met) | Re-fit before claiming absolute W/D; until then `absolute_wd: false` |
+| **hpc** | `bead_calibrate_hpc.yaml` + `bead_calibrate_hpc_heldout_*.yaml` (alias: `bead_physics_accuracy.yaml`) | `dx_mm: 0.2`, two-rate MRT + variable-τ (`use_srt: false`), `auto_dt_ma: true`, `u_mach_limit_lu: 0.20`, `force_limit_m_s2: 8000` | Re-fit before claiming absolute W/D; `absolute_wd: false`; `known_defects` is empty (limitations remain) |
 
-Every calibrate / held-out job carries a top-level `claim:` block (`mesh_tier`, `pool_metric`, accuracy phrases, fitted vs predicted knobs, out-of-scope physics). `assert_physics_lock` also fingerprints `dx_mm`, `dt_scale`, collision path, Ma/force caps, and `pool_metric`.
+Both tiers use Fe-vapour `R_spec_vapor_J_kgK: 149` and an explicit `arc_physics.pressure_sigma_mm` (Lin–Eagar not silently tied to fitted heat σ). Held-outs also lock deposition footprint/trailing solidify, contact angle, `marangoni_scale`, and `C_darcy` / `C_darcy_ref_dt_s` (`assert_physics_lock`). Mush drag uses \(C_{\mathrm{eff}}=C\cdot(\Delta t/\Delta t_{\mathrm{ref}})\).
+
+Every calibrate / held-out job carries a top-level `claim:` block (`mesh_tier`, `pool_metric`, accuracy phrases, fitted vs predicted knobs, `known_defects`, out-of-scope physics). `assert_physics_lock` also fingerprints `dx_mm`, `dt_scale`, collision path, Ma/force caps, and `pool_metric`.
 
 **Primary pool metric:** `claim.pool_metric: fusion_zone` — liquidus envelope from `T_max` (macrograph-like). `f_l` bounding-box W/D is still logged as secondary.
 
@@ -177,6 +179,22 @@ WAAM_BACKEND=cuda python3 -m waam_twin.tools.mesh_convergence_report \
 
 Report JSON (gitignored): `validation/baselines/mesh_convergence_latest.json`.  
 **B** needs Level A green on a tighter band + fewer catch-all knobs; **C** (experiment at all meshes) needs B first.
+
+### Phase 3 — reduce mesh dependence (until Level A is green at ~5%)
+
+Do one change at a time, then re-run the Level A command above.
+
+1. **Physical force cap** (in HPC jobs now): `simulation.force_limit_m_s2: 8000` maps to lattice units as \(F_\mathrm{lu}=a\,\mathrm{d}t^2/\mathrm{d}x\), so the same physical ceiling follows the mesh. Legacy `force_limit_lu` remains the fallback when this is 0 (shop).
+2. **Darcy dt scaling:** job `C_darcy` is defined at `C_darcy_ref_dt_s`; kernels use \(C_{\mathrm{eff}}=C\cdot(\Delta t/\Delta t_{\mathrm{ref}})\) so mush drag does not jump as \(1/\Delta t\) across meshes.
+3. **Shrink fitted knobs** — freeze Goldak / recoil / evap; fit η only:
+
+```bash
+WAAM_BACKEND=cuda python3 -m waam_twin.tools.auto_calibrate \
+  --job jobs/examples/bead_calibrate_hpc.yaml \
+  --fit-set eta --gate-pct 25 --max-trials 16 --write
+```
+
+`--fit-set` choices: `all` (legacy), `eta_goldak`, `eta`. Then re-run Level A with those knobs frozen. If the band still fails, the remaining gap is interface/LBM physics, not another free Goldak axis.
 
 New solver flags of interest: `simulation.auto_dt_ma` / `u_design_m_s` (Ma-aware dt with τ≥0.505), `use_srt: false` + `use_variable_tau: true` (variable-τ MRT on HPC), CSF solid-neighbour curvature in `kernels/vof.py`.
 

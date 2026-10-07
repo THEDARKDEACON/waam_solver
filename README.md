@@ -9,7 +9,7 @@ The compiler is [Quadrants](https://github.com/Genesis-Embodied-AI/quadrants) (i
 
 ## What this project does
 
-Predicts melt-pool **temperature**, **liquid fraction**, **Marangoni-driven flow**, and **bead geometry** for wire-arc additive manufacturing. Bead width and depth emerge from coupled physics (not drawn in as inputs). Calibration overlays (arc efficiency η, heat-loss factor, σ scale) tune process terms against reference runs.
+Predicts melt-pool **temperature**, **liquid fraction**, and **Marangoni-driven flow** for wire-arc additive manufacturing. With `physics_tier: full` (VOF on), bead width/depth are partly physics-emergent and partly geometric priors (deposition footprint, trailing solidify). Calibration overlays (arc efficiency η, heat-loss factor, σ scale) tune process terms against reference runs. A `physics_tier: flow` quick-start twin is thermal + LBM flow without a full free-surface bead claim.
 
 **Explicit non-goals:** grain structure, residual-stress FEA, powder DEM, laser ray-tracing, full G-code CAM.
 
@@ -79,7 +79,7 @@ waam_twin/                    ← git repository root (this folder)
 ├── docs/validation/data/
 │   ├── published_macrograph_catalog.json
 │   └── pioneer_bruno_metrics.json
-└── .github/workflows/verify.yml
+└── verify.py                 # local entry → validation.run_all (no GitHub Actions workflow)
 ```
 
 ---
@@ -273,6 +273,9 @@ WAAM_BACKEND=cuda python3 -m waam_twin.tools.auto_calibrate \
 geometry only; amplitude is renormalized so \(\int q\,dV=\eta\,V\,I\).
 
 ### Preset-only (no job file)
+
+Thermal + LBM smoke path (preset defaults; VOF/bead free-surface off unless you enable
+them). Not a full bead-geometry claim — use `bead_calibrate.yaml` for that.
 
 ```python
 from waam_twin.runtime import init_taichi
@@ -984,6 +987,8 @@ when you do run validation; tests own their grids.
 ```bash
 python3 -m waam_twin.tools.auto_calibrate \
   --job jobs/examples/bead_calibrate.yaml --write   # fit η/Goldak/recoil → Park 6.1×1.8
+python3 -m waam_twin.tools.auto_calibrate \
+  --job jobs/examples/bead_calibrate_hpc.yaml --fit-set eta --write   # Phase 3: η only
 python3 -m waam_twin.tools.prediction_report --tier shop --with-bruno
 python3 -m waam_twin.tools.prediction_report --tier hpc
 python3 -m waam_twin.tools.mesh_convergence_report \
