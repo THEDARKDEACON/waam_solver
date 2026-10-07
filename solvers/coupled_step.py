@@ -475,7 +475,7 @@ def coupled_step(
 
     # Stability: full-tier surface/body forces on coarse grids can drive Ma≫1.
     # Prefer physical force_limit_m_s2 (mesh-scaled LU) when set — Phase 3 / Level A.
-    # Hit counts are surfaced in telemetry (and fail under strict_mode).
+    # Hit counts are surfaced in telemetry. strict_mode warns once if they persist.
     u_cap = float(getattr(twin, "u_mach_limit_lu", 0.08))
     if hasattr(twin, "effective_force_limit_lu"):
         F_cap = float(twin.effective_force_limit_lu())

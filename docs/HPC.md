@@ -219,6 +219,7 @@ srun --gres=gpu:1 --mem=32G --time=04:00:00 --pty bash
 | Quadrants prints CPU / CUDA init fails | Fix `module load cuda/…`; re-create venv after loading modules |
 | CUDA OOM | Mesh is larger than the device. Halving `dx` multiplies cells by 8. Coarsen `dx` or shrink `domain_mm` |
 | Job path not found | `cd` to repo root; use `jobs/examples/...` not `waam_twin/jobs/...` |
+| `[strict_mode] Mach velocity clamp` abort (older tree) | Pull current `twin.py`: sustained clamps warn and continue. At HPC `dt≈72 µs`, `dx=0.2 mm`, `u_mach_limit_lu=0.2` is only ~0.56 m/s — Marangoni above that is capped |
 
 VRAM / timestep background: [HARDWARE.md](HARDWARE.md).
 

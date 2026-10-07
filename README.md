@@ -1098,7 +1098,7 @@ before this fix should describe the collision as central-moment SRT.
 
 Schema: [validation/telemetry_schema.json](validation/telemetry_schema.json).
 
-`strict_mode` / `WAAM_STRICT=1`: aborts on mass-balance drift, Lorentz non-convergence streaks, or NaN force diagnostics.
+`strict_mode` / `WAAM_STRICT=1`: aborts on mass-balance drift, Lorentz non-convergence streaks, or NaN force diagnostics. Sustained Mach or body-force clamps warn once and keep running (populations stay synced); `mesh_convergence_report` still marks that run `FAIL_CLAMPS`.
 
 ---
 

@@ -304,6 +304,7 @@ class WAAMTwin:
         self._mach_clamp_hits_cum = 0
         self._force_clamp_steps = 0
         self._mach_clamp_steps = 0
+        self._clamp_regime_warned = False
 
         kernels.bind_velocity_set(self.grid)
 
@@ -755,6 +756,7 @@ class WAAMTwin:
         self._mach_clamp_hits_cum = 0
         self._force_clamp_steps = 0
         self._mach_clamp_steps = 0
+        self._clamp_regime_warned = False
         g.deposit_vol_buf[None] = 0.0
         g.deposit_real_buf[None] = 0.0
         log.info(f"[WAAMTwin] Grid reset. T_ambient={T0:.1f}K  test_fluid={test_fluid_domain}")
@@ -819,22 +821,23 @@ class WAAMTwin:
                 f"consecutive steps — raise lorentz_jacobi_iters or disable strict_mode"
             )
         # Sustained Mach/force clamping means the pool is numerically limited.
-        if self._step_n >= 100:
+        # Populations are resynced on clamp, so this is a regime warning, not an abort.
+        # Level A mesh_convergence_report still fails the study when clamps fire.
+        if self._step_n >= 100 and not getattr(self, "_clamp_regime_warned", False):
             f_steps = int(getattr(self, "_force_clamp_steps", 0) or 0)
             u_steps = int(getattr(self, "_mach_clamp_steps", 0) or 0)
-            if f_steps > 0.5 * self._step_n:
+            if f_steps > 0.5 * self._step_n or u_steps > 0.5 * self._step_n:
+                self._clamp_regime_warned = True
+                dx = float(self.grid.dx)
+                dt = float(self.grid.dt)
+                u_cap_ms = float(self.u_mach_limit_lu) * dx / max(dt, 1e-30)
                 f_eff = self.effective_force_limit_lu()
-                raise RuntimeError(
-                    f"[strict_mode] body-force clamp active on {f_steps}/{self._step_n} "
-                    f"steps (F_cap={f_eff:g} lu/ts², force_limit_lu={self.force_limit_lu}, "
-                    f"force_limit_m_s2={getattr(self, 'force_limit_m_s2', 0):g}) — "
-                    "refine grid, raise force_limit_m_s2 / force_limit_lu, or lower forces"
-                )
-            if u_steps > 0.5 * self._step_n:
-                raise RuntimeError(
-                    f"[strict_mode] Mach velocity clamp active on {u_steps}/{self._step_n} "
-                    f"steps (u_mach_limit_lu={self.u_mach_limit_lu}) — refine grid or "
-                    "reduce driving forces"
+                log.warning(
+                    f"[strict_mode] clamp-limited regime: force {f_steps}/{self._step_n} "
+                    f"steps (F_cap={f_eff:g} lu/ts²), Mach {u_steps}/{self._step_n} steps "
+                    f"(u_mach_limit_lu={self.u_mach_limit_lu:g} ≈ {u_cap_ms:.2f} m/s). "
+                    "Handbook μ forces a large dt for τ≥0.505, so Marangoni above that "
+                    "speed is capped. Run continues; mesh_convergence_report marks FAIL_CLAMPS."
                 )
         diag = getattr(self, "_force_diag", None) or {}
         if diag:
