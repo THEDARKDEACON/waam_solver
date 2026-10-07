@@ -33,7 +33,7 @@ def run(n_steps: int = 4000, threshold_pct: float = 50.0) -> float:
     w = telem["pool_width_mm"]
     model_w = float(job.get("model_reference", {}).get("pool_width_mm", 2.5))
     err = abs(w - model_w) / max(model_w, 0.1) * 100.0
-    ref = float(job.get("reference", {}).get("pool_width_mm", 7.0))
+    ref = float(job.get("reference", {}).get("pool_width_mm", 6.1))
     err_macro = abs(w - ref) / ref * 100.0 if ref > 0 else 0.0
 
     print(

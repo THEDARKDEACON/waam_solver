@@ -59,8 +59,8 @@ def run(n_steps: int | None = None, threshold_pct: float = 35.0) -> float:
     W, D, n_liq = measure_pool_mm(twin)
     err = pool_error_pct(
         W, D,
-        float(ref.get("pool_width_mm", 7.0)),
-        float(ref.get("pool_depth_mm", 3.0)),
+        float(ref.get("pool_width_mm", 6.1)),
+        float(ref.get("pool_depth_mm", 1.8)),
     )
     telem = twin.get_telemetry()
     fd = telem.get("force_diagnostics") or {}

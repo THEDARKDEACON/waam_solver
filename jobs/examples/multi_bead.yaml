@@ -27,8 +27,11 @@ torch_path:
   - {x_mm: 35, y_mm: 10, z_mm: 0}
 
 reference:
-  pool_width_mm: 7.0
-  pool_depth_mm: 2.8
+  # Grounded Park 2019 flat (DOI 10.3390/app9214626) — same as bead_calibrate lock
+  pool_width_mm: 6.1
+  pool_depth_mm: 1.8
+  citation_doi: "10.3390/app9214626"
+  source: park_appl_sci_2019_doi_10.3390/app9214626_flat
 
 model_reference:
   pool_width_mm: 2.5

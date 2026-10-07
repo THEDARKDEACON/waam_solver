@@ -1,5 +1,4 @@
-# Auto-updated mesh-lock shop job — see docs/validation/UNDERSTANDING_CALIBRATION_AND_DATA.md
-# Source role: heldout
+# Shop held-out: faster travel vs Park calibrate — TREND ONLY (no absolute macro)
 
 simulation:
   preset: standard
@@ -34,7 +33,7 @@ simulation:
   warn_on_force_clamp: true
   strict_mode: true
 plate:
-  thickness_mm: 8.0
+  thickness_mm: 9.0
   size_mm:
   - 50
   - 20
@@ -69,13 +68,13 @@ advanced_physics:
   gas_jet_velocity_m_s: 12.0
   gas_shear_coeff: 1.0
 process:
-  current_A: 100
-  voltage_V: 15
+  current_A: 91
+  voltage_V: 22.0
   arc_efficiency: 0.72
-  travel_speed_mm_s: 11.0
-  wire_feed_m_min: 3.2
-  wire_diameter_mm: 1.2
-  droplet_length_mm: 3.0
+  travel_speed_mm_s: 15.0
+  wire_feed_m_min: 7.0
+  wire_diameter_mm: 1.0
+  droplet_length_mm: 2.5
   T_ambient_K: 293
   stickout_mm: 12.0
   ctwd_mm: 15.0
@@ -96,7 +95,7 @@ heat_loss:
   radiation: true
   h_conv: 35.0
 prediction:
-  role: heldout
+  role: heldout_trend
   baseline_job: jobs/examples/bead_calibrate.yaml
   expected_trend: smaller_pool
   vary:
@@ -105,6 +104,7 @@ model_reference:
   n_steps: 8000
   bead_height_mm_min: 0.5
   f_recoil_active: true
+  mesh_tier: shop
 claim:
   mesh_tier: shop
   absolute_wd: false
@@ -151,4 +151,12 @@ claim:
   - oxide_film
   - keyhole_cavity_collapse
   - residual_stress_FEA
-  notes: 'Shop held-out: process varies only; mesh fingerprint + fitted knobs locked to bead_calibrate.'
+  notes: "Shop held-out fast travel vs Park lock \u2014 trend only."
+reference:
+  awaiting_measurement: true
+  gate: trend_only
+  pool_width_mm: null
+  pool_depth_mm: null
+  source: no_absolute_macro_trend_only_vs_park_calibrate
+  citation_doi: 10.3390/app9214626
+  note: Absolute W/D not claimed; grounded baseline is Park calibrate. Faster than 10 mm/s.

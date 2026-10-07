@@ -27,8 +27,8 @@ def run(n_steps: int | None = None, threshold_pct: float = 30.0) -> float:
     job = load_job_config(job_path)
     ref = job.get("reference", {})
     model = job.get("model_reference") or {}
-    W_ref = float(ref.get("pool_width_mm", 7.0))
-    D_ref = float(ref.get("pool_depth_mm", 3.0))
+    W_ref = float(ref.get("pool_width_mm", 6.1))
+    D_ref = float(ref.get("pool_depth_mm", 1.8))
     travel = float(job.get("process", {}).get("travel_speed_mm_s", 5.0)) / 1000.0
     if n_steps is None:
         n_steps = int(os.environ.get("WAAM_BEAD_STEPS", model.get("n_steps", 8000)))

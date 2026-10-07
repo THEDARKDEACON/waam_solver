@@ -22,8 +22,8 @@ def run(n_steps: int | None = None, threshold_pct: float = 20.0) -> float:
     init_taichi(backend=os.environ.get("WAAM_BACKEND", "cuda"))
     job = load_job_config("jobs/examples/bead_on_plate.yaml")
     ref = job.get("reference", {})
-    W_ref = float(ref.get("pool_width_mm", 7.0))
-    D_ref = float(ref.get("pool_depth_mm", 3.0))
+    W_ref = float(ref.get("pool_width_mm", 6.1))
+    D_ref = float(ref.get("pool_depth_mm", 1.8))
     travel = float(job.get("process", {}).get("travel_speed_mm_s", 5.0)) / 1000.0
     proc = job["process"]
     arc_w = float(proc["current_A"]) * float(proc["voltage_V"])

@@ -1,5 +1,6 @@
-# Auto-updated mesh-lock shop job — see docs/validation/UNDERSTANDING_CALIBRATION_AND_DATA.md
-# Source role: calibrate
+# Shop calibrate lock — Park et al. Appl. Sci. 2019 flat P-GMAW (DOI 10.3390/app9214626)
+# Reference fusion W/D = 6.1 × 1.8 mm (etched macro). Re-fit knobs before absolute_wd claims.
+# Catalog: docs/validation/data/published_macrograph_catalog.json
 
 simulation:
   preset: standard
@@ -34,7 +35,7 @@ simulation:
   C_darcy: 160000.0
   warn_on_force_clamp: true
 plate:
-  thickness_mm: 8.0
+  thickness_mm: 9.0
   size_mm:
   - 50
   - 20
@@ -69,13 +70,13 @@ advanced_physics:
   gas_jet_velocity_m_s: 12.0
   gas_shear_coeff: 1.0
 process:
-  current_A: 100
-  voltage_V: 15
+  current_A: 91
+  voltage_V: 22.0
   arc_efficiency: 0.72
-  travel_speed_mm_s: 6.5
-  wire_feed_m_min: 3.2
-  wire_diameter_mm: 1.2
-  droplet_length_mm: 3.0
+  travel_speed_mm_s: 10.0
+  wire_feed_m_min: 7.0
+  wire_diameter_mm: 1.0
+  droplet_length_mm: 2.5
   T_ambient_K: 293
   stickout_mm: 12.0
   ctwd_mm: 15.0
@@ -96,18 +97,28 @@ heat_loss:
   radiation: true
   h_conv: 35.0
 reference:
-  pool_width_mm: 7.0
-  pool_depth_mm: 3.0
-  source: macrograph_ER70S-6_bead_on_plate
+  awaiting_measurement: false
+  gate: macro_wd
+  pool_width_mm: 6.1
+  pool_depth_mm: 1.8
+  bead_height_mm: 2.2
+  material_match: true
+  experimental_wire: ER70S-6_1.0mm
+  source: park_appl_sci_2019_doi_10.3390/app9214626_flat
+  citation_doi: 10.3390/app9214626
+  citation_url: https://www.mdpi.com/2076-3417/9/21/4626
+  note: "Etched fusion W\xD7D\xD7H from Park et al., Appl. Sci. 2019 (flat P-GMAW). Mean I\u224891 A from\
+    \ published pulse (35/345 A); mean V estimated synergic 22 V (not tabulated). Replaces uncited 7\xD7\
+    3 YAML lock."
 model_reference:
-  pool_width_mm: 6.8
-  pool_depth_mm: 3.2
   n_steps: 8000
-  bead_height_mm_min: 1.5
+  bead_height_mm_min: 0.5
   f_recoil_active: true
+  mesh_tier: shop
+  note: Simulator W/D awaiting re-fit to Park reference on this mesh tier.
 claim:
   mesh_tier: shop
-  absolute_wd: true
+  absolute_wd: false
   trend_only: false
   tier_label: engineering_trend_predictor
   pool_metric: fusion_zone
@@ -151,4 +162,5 @@ claim:
   - oxide_film
   - keyhole_cavity_collapse
   - residual_stress_FEA
-  notes: "Shop tier dx=0.4 mm. Do not copy \u03B7/Goldak from HPC lock into this tier."
+  notes: Shop calibrate lock = Park 2019 flat (DOI 10.3390/app9214626). absolute_wd false until auto_calibrate
+    re-fit on this mesh; do not use uncited macros.

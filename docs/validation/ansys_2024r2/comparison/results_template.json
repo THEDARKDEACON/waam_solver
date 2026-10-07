@@ -25,8 +25,8 @@
     "time_above_1100C_s": null
   },
   "experiment": {
-    "pool_width_mm": 7.0,
-    "pool_depth_mm": 3.0,
+    "pool_width_mm": 6.1,
+    "pool_depth_mm": 1.8,
     "source": "optional — paste measured macrograph when available"
   },
   "checks": {

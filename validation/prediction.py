@@ -26,7 +26,11 @@ HELDOUT_FAST_JOB = "jobs/examples/bead_calibrate_heldout_fast.yaml"
 HELDOUT_HOT_JOB = "jobs/examples/bead_calibrate_heldout_hot.yaml"
 HELDOUT_MACRO2_JOB = "jobs/examples/bead_calibrate_heldout_macro2.yaml"
 HELDOUT_BRUNO_JOB = "jobs/examples/bead_bruno_gmaw.yaml"
+HELDOUT_PARK_JOB = "jobs/examples/bead_heldout_park_pgmaw.yaml"
 PIONEER_WALL_JOB = "jobs/examples/wall_pioneer_m1.yaml"
+PUBLISHED_MACROGRAPH_CATALOG = (
+    "docs/validation/data/published_macrograph_catalog.json"
+)
 
 CALIBRATE_HPC_JOB = "jobs/examples/bead_calibrate_hpc.yaml"
 HELDOUT_HPC_FAST_JOB = "jobs/examples/bead_calibrate_hpc_heldout_fast.yaml"

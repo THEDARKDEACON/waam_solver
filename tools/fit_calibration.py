@@ -26,8 +26,8 @@ _CAL_OUT = "materials/calibration/ER70S-6.bead_on_plate.yaml"
 def _macro_reference(job: dict) -> tuple[float, float]:
     ref = job.get("reference", {})
     return (
-        float(ref.get("pool_width_mm", 7.0)),
-        float(ref.get("pool_depth_mm", 2.8)),
+        float(ref.get("pool_width_mm", 6.1)),
+        float(ref.get("pool_depth_mm", 1.8)),
     )
 
 

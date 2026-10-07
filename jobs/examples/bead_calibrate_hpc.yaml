@@ -1,4 +1,5 @@
-# HPC mesh-locked calibrate — MRT+variable-τ, auto_dt_ma, fusion W/D metric
+# HPC calibrate lock — Park 2019 flat (same grounded reference as shop; mesh fingerprint HPC)
+# DOI 10.3390/app9214626 — re-fit on dx=0.2 before absolute_wd.
 
 simulation:
   preset: high
@@ -33,7 +34,7 @@ simulation:
   C_darcy: 160000.0
   warn_on_force_clamp: true
 plate:
-  thickness_mm: 8.0
+  thickness_mm: 9.0
   size_mm:
   - 50
   - 20
@@ -68,13 +69,13 @@ advanced_physics:
   gas_jet_velocity_m_s: 12.0
   gas_shear_coeff: 1.0
 process:
-  current_A: 100
-  voltage_V: 15
+  current_A: 91
+  voltage_V: 22.0
   arc_efficiency: 0.72
-  travel_speed_mm_s: 6.5
-  wire_feed_m_min: 3.2
-  wire_diameter_mm: 1.2
-  droplet_length_mm: 3.0
+  travel_speed_mm_s: 10.0
+  wire_feed_m_min: 7.0
+  wire_diameter_mm: 1.0
+  droplet_length_mm: 2.5
   T_ambient_K: 293
   stickout_mm: 12.0
   ctwd_mm: 15.0
@@ -95,16 +96,25 @@ heat_loss:
   radiation: true
   h_conv: 35.0
 reference:
-  pool_width_mm: 7.0
-  pool_depth_mm: 3.0
-  source: macrograph_ER70S-6_bead_on_plate
+  awaiting_measurement: false
+  gate: macro_wd
+  pool_width_mm: 6.1
+  pool_depth_mm: 1.8
+  bead_height_mm: 2.2
+  material_match: true
+  experimental_wire: ER70S-6_1.0mm
+  source: park_appl_sci_2019_doi_10.3390/app9214626_flat
+  citation_doi: 10.3390/app9214626
+  citation_url: https://www.mdpi.com/2076-3417/9/21/4626
+  note: "Etched fusion W\xD7D\xD7H from Park et al., Appl. Sci. 2019 (flat P-GMAW). Mean I\u224891 A from\
+    \ published pulse (35/345 A); mean V estimated synergic 22 V (not tabulated). Replaces uncited 7\xD7\
+    3 YAML lock."
 model_reference:
-  pool_width_mm: 6.8
-  pool_depth_mm: 3.2
   n_steps: 16000
-  bead_height_mm_min: 1.5
+  bead_height_mm_min: 0.5
   f_recoil_active: true
   mesh_tier: hpc
+  note: Simulator W/D awaiting re-fit to Park reference on this mesh tier.
 claim:
   mesh_tier: hpc
   absolute_wd: false
@@ -151,5 +161,5 @@ claim:
   - oxide_film
   - keyhole_cavity_collapse
   - residual_stress_FEA
-  notes: "HPC tier dx=0.2 mm, MRT+variable-\u03C4, auto_dt_ma. absolute_wd false until auto_calibrate\
-    \ re-fit on this mesh; do not copy knobs to shop."
+  notes: HPC calibrate lock = Park 2019 flat (DOI 10.3390/app9214626). absolute_wd false until auto_calibrate
+    re-fit on dx=0.2; do not copy knobs to shop.

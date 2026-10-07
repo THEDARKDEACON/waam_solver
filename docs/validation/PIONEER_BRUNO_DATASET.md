@@ -3,6 +3,11 @@
 Local root: `/mnt/shared_ntfs/PIONEER_PROJECT`  
 Extracted numbers: [data/pioneer_bruno_metrics.json](data/pioneer_bruno_metrics.json)
 
+**Published macrograph catalog (all grounded sources + twin jobs):**  
+[data/published_macrograph_catalog.json](data/published_macrograph_catalog.json) — includes Park 2019 fusion W/D, PIONEER, Bruno, Scott MIG/CMT matrix, and excluded CMT-ER100.  
+Shop held-out for Park: `jobs/examples/bead_heldout_park_pgmaw.yaml`  
+(`python3 -m waam_twin.tools.prediction_report --tier shop --with-park`)
+
 ## Material matrix (read this first)
 
 | Dataset | Wire | Plate | Process | Match to `ER70S-6.v1` lock? | Twin use |

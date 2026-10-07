@@ -1,14 +1,16 @@
-# HPC held-out fast — trend only vs Park HPC calibrate
+# DEPRECATED as held-out: Park flat IS now bead_calibrate.yaml.
+# This file aliases the shop calibrate lock for old --with-park CLI paths.
+# Prefer: jobs/examples/bead_calibrate.yaml
 
 simulation:
-  preset: high
+  preset: standard
   backend: cuda
   physics_tier: full
   domain_mm:
   - 80
   - 40
   - 25
-  dx_mm: 0.2
+  dx_mm: 0.4
   enable_vof: true
   enable_csf_tension: true
   enable_wetting: true
@@ -22,16 +24,16 @@ simulation:
   enable_enthalpy_cap: true
   enable_evaporative_cooling: true
   arc_surface_weighting: true
-  dt_scale: 0.5
+  strict_mode: true
+  dt_scale: 1.0
   use_variable_tau: true
-  use_srt: false
-  auto_dt_ma: true
+  use_srt: true
+  auto_dt_ma: false
   u_design_m_s: 0.5
-  u_mach_limit_lu: 0.2
+  u_mach_limit_lu: 0.08
   force_limit_lu: 0.05
   C_darcy: 160000.0
   warn_on_force_clamp: true
-  strict_mode: true
 plate:
   thickness_mm: 9.0
   size_mm:
@@ -71,7 +73,7 @@ process:
   current_A: 91
   voltage_V: 22.0
   arc_efficiency: 0.72
-  travel_speed_mm_s: 15.0
+  travel_speed_mm_s: 10.0
   wire_feed_m_min: 7.0
   wire_diameter_mm: 1.0
   droplet_length_mm: 2.5
@@ -94,21 +96,30 @@ heat_loss:
   convection: true
   radiation: true
   h_conv: 35.0
-prediction:
-  role: heldout_trend
-  baseline_job: jobs/examples/bead_calibrate_hpc.yaml
-  expected_trend: smaller_pool
-  vary:
-  - travel_speed_mm_s
+reference:
+  awaiting_measurement: false
+  gate: macro_wd
+  pool_width_mm: 6.1
+  pool_depth_mm: 1.8
+  bead_height_mm: 2.2
+  material_match: true
+  experimental_wire: ER70S-6_1.0mm
+  source: park_appl_sci_2019_doi_10.3390/app9214626_flat
+  citation_doi: 10.3390/app9214626
+  citation_url: https://www.mdpi.com/2076-3417/9/21/4626
+  note: "Etched fusion W\xD7D\xD7H from Park et al., Appl. Sci. 2019 (flat P-GMAW). Mean I\u224891 A from\
+    \ published pulse (35/345 A); mean V estimated synergic 22 V (not tabulated). Replaces uncited 7\xD7\
+    3 YAML lock."
 model_reference:
-  n_steps: 16000
+  n_steps: 8000
   bead_height_mm_min: 0.5
   f_recoil_active: true
-  mesh_tier: hpc
+  mesh_tier: shop
+  note: Simulator W/D awaiting re-fit to Park reference on this mesh tier.
 claim:
-  mesh_tier: hpc
+  mesh_tier: shop
   absolute_wd: false
-  trend_only: true
+  trend_only: false
   tier_label: engineering_trend_predictor
   pool_metric: fusion_zone
   characterisation: "Qualitatively predictive; quantitatively usable to roughly \xB120\u201325% pool W/D\
@@ -151,12 +162,5 @@ claim:
   - oxide_film
   - keyhole_cavity_collapse
   - residual_stress_FEA
-  notes: "HPC held-out fast travel vs Park lock \u2014 trend only."
-reference:
-  awaiting_measurement: true
-  gate: trend_only
-  pool_width_mm: null
-  pool_depth_mm: null
-  source: no_absolute_macro_trend_only_vs_park_calibrate
-  citation_doi: 10.3390/app9214626
-  note: Absolute W/D not claimed; grounded baseline is Park calibrate. Faster than 10 mm/s.
+  notes: Shop calibrate lock = Park 2019 flat (DOI 10.3390/app9214626). absolute_wd false until auto_calibrate
+    re-fit on this mesh; do not use uncited macros.

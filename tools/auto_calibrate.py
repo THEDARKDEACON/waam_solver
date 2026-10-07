@@ -134,9 +134,10 @@ def _knobs_from_job(job: dict[str, Any]) -> KnobState:
 
 def _macro_reference(job: dict[str, Any]) -> tuple[float, float]:
     ref = job.get("reference") or {}
+    # Defaults match Park 2019 flat (DOI 10.3390/app9214626) — not the retired 7×3 lock.
     return (
-        float(ref.get("pool_width_mm", 7.0)),
-        float(ref.get("pool_depth_mm", 3.0)),
+        float(ref.get("pool_width_mm", 6.1)),
+        float(ref.get("pool_depth_mm", 1.8)),
     )
 
 

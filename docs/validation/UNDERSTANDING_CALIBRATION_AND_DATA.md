@@ -17,10 +17,10 @@ Related detail docs:
   │  CALIBRATION data   │         │  VALIDATION data         │
   │  (tune the twin)    │         │  (test without retuning) │
   ├─────────────────────┤         ├──────────────────────────┤
-  │ 1× bead macrograph  │         │ Held-out macrographs     │
-  │  W≈7 mm, D≈3 mm     │         │ (different I or speed)   │
-  │  → fit η, Goldak,   │         │ Multipass remelt / HAZ   │
-  │    recoil, etc.     │         │ Thermocouples (optional) │
+  │ 1× published macro  │         │ Held-out / external      │
+  │  Park 2019 flat     │         │ (trend or cited macros)  │
+  │  W=6.1, D=1.8 mm    │         │ Multipass remelt / HAZ   │
+  │  → fit η, Goldak…   │         │ Thermocouples (optional) │
   └──────────┬──────────┘         └────────────┬─────────────┘
              │                                 │
              ▼                                 ▼
@@ -54,18 +54,22 @@ In the twin, those numbers appear in the job YAML as:
 
 ```yaml
 reference:
-  pool_width_mm: 7.0
-  pool_depth_mm: 3.0
-  source: macrograph_ER70S-6_bead_on_plate
+  pool_width_mm: 6.1
+  pool_depth_mm: 1.8
+  bead_height_mm: 2.2
+  citation_doi: "10.3390/app9214626"
+  source: park_appl_sci_2019_doi_10.3390/app9214626_flat
 ```
 
-The simulator reports its own pool **W** and **D** from the liquid/fusion zone. Gates compare:
+The shop/HPC calibrate lock uses the **Park et al. (Appl. Sci. 2019)** etched flat P-GMAW fusion macro ([DOI 10.3390/app9214626](https://doi.org/10.3390/app9214626)) — not an uncited in-house number. Full catalog: [data/published_macrograph_catalog.json](data/published_macrograph_catalog.json).
+
+Gates compare:
 
 ```text
 error ≈ |W_model − W_macro| / W_macro   (and same for D)
 ```
 
-For the locked ER70S-6 case the model is about **6.8 × 3.2 mm** vs macro **7 × 3 mm** (~**6.7%** error). That is what “calibrated to the macrograph” means.
+Re-run `auto_calibrate` after this lock change; `claim.absolute_wd` stays false until that re-fit on the mesh tier.
 
 ### Why one macrograph is not enough for “real world”
 
@@ -108,22 +112,23 @@ Examples of fitted knobs (locked in `bead_calibrate.yaml`):
 - Goldak ellipsoid sizes  
 - Recoil accommodation `C_acc`  
 - Evaporative cooling scale  
-- Process: 100 A × 15 V, 6.5 mm/s  
+- Process: Park flat window (≈91 A mean, 10 mm/s, WFR 7 m/min)  
 
-Material file: `materials/validated/ER70S-6.v1.yaml` (`status: calibrated` for **this** window).
+Material file: `materials/validated/ER70S-6.v1.yaml`.
 
 ### Validation / held-out (prediction)
 
-You **must not** retune those knobs. Change only the process (e.g. travel 11 mm/s or 120 A), run the twin, and compare to a **new** macrograph.
+You **must not** retune those knobs. Change only the process (or use another published coupon), run the twin, and compare.
 
 | Job | What changes | Purpose |
 |-----|--------------|---------|
-| `bead_calibrate.yaml` | — | Calibration lock |
-| `bead_calibrate_heldout_fast.yaml` | Faster travel | Prediction check |
-| `bead_calibrate_heldout_hot.yaml` | Higher current | Prediction check |
-| `bead_calibrate_heldout_macro2.yaml` | Slower travel (5 mm/s) | **Awaiting your measured W/D** |
+| `bead_calibrate.yaml` | Park 2019 flat 6.1×1.8 | Calibration lock (DOI) |
+| `bead_calibrate_heldout_fast.yaml` | Faster travel | **Trend only** (no absolute macro) |
+| `bead_calibrate_heldout_hot.yaml` | Higher I/WFS | **Trend only** |
+| `bead_calibrate_heldout_macro2.yaml` | Park overhead 5.7×1.9 | Soft published check (position not modeled) |
+| `bead_bruno_gmaw.yaml` / `wall_pioneer_m1.yaml` | External datasets | Soft surface / multipass |
 
-Until macro2 (and similar) are filled with real cuts, absolute “we predict new welds” claims stay weak — the suite can only check **trends** (e.g. slower travel → larger pool).
+Absolute claims require a **cited** `reference` (DOI or open dataset). Uncited numbers are not allowed as calibrate targets.
 
 ---
 

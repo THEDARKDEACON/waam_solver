@@ -166,7 +166,7 @@ This is separate from the modelling literature and it matters more for credibili
 
 | Dataset | What I took from it | Status |
 |---|---|---|
-| **ER70S-6 bead-on-plate macrograph** | Pool width **7.0 mm**, depth **3.0 mm** — my single calibration lock | Primary anchor |
+| **Park et al. Appl. Sci. 2019 (flat P-GMAW)** | Pool **6.1 × 1.8 mm** (H=2.2) — DOI 10.3390/app9214626; current twin calibrate lock | Primary anchor (replaced uncited 7×3 YAML) |
 | **Bruno GMAW dataset** (Figshare, DOI 10.6084/m9.figshare.27325698) | 110 A, 19.7 V, 6.0 mm/s; laser-scanned surface bead **4.33 × 2.14 mm** | Soft gate — wire grade uncertified, and this is external bead width, not a cut fusion zone |
 | **PIONEER M1 wall** (Zenodo 17608626) | Böhler Q G 3 (= ER70S-6), 132 A, 14.3 V; wall width **5.41 mm**, remelt depth **2.0 mm**, layer height **1.488 mm** over 32 layers | Multipass reference; M2 excluded (different wire) |
 | **CMT profile dataset** (Recherche Data Gouv / ENSAM Metz) | 140 beads, ER100 wire on S235, ~270 A | **Deliberately not wired in** — wrong wire, CMT transfer, far higher heat input |

@@ -47,7 +47,7 @@ I wrote it in the order I worked, not in the order a textbook would present it. 
 
 ## The one-paragraph result
 
-I calibrated against a single **ER70S-6 bead-on-plate macrograph** measuring **7.0 mm wide × 3.0 mm deep**. With arc efficiency $\eta = 0.72$ and Goldak semi-axes fitted, the twin predicts **6.8 × 3.2 mm**, an error of about **6.7 %**. Holding those knobs frozen, held-out process variants move in the physically correct direction: faster travel (11 mm/s) shrinks the pool to 2.40 × 0.80 mm, and higher current (120 A) grows it to 8.40 × 4.00 mm. Kernel-level benchmarks are tight — thermal diffusion within **1 %** of the analytical solution, Poiseuille within **8 %**, the Stefan front within **8 %**, VOF mass conserved to **0.5 %**.
+The calibrate lock is the published **Park et al. (Appl. Sci. 2019)** flat P-GMAW etched fusion macro (**6.1 mm wide × 1.8 mm deep**, DOI [10.3390/app9214626](https://doi.org/10.3390/app9214626)), replacing an earlier uncited 7×3 YAML target. Fitted knobs (η, Goldak, recoil) must be re-fit on each mesh tier before absolute W/D claims; held-outs stay frozen. Kernel-level benchmarks remain tight — thermal diffusion within **1 %** of the analytical solution, Poiseuille within **8 %**, the Stefan front within **8 %**, VOF mass conserved to **0.5 %**.
 
 > [!warning] The honest caveat, stated up front
 > I have **one** experimental anchor. Fitting the model until one coupon matches is, as I put it in my own notes, like tuning a recipe until dinner tastes right once. The trend tests pass; the absolute-accuracy claim is still weak until I cut more coupons. See [[12 - Limitations and Open Work]].

@@ -1,42 +1,20 @@
-# Second macrograph slot (held-out prediction)
+# Published held-out macro slot (Park overhead)
 
-The twin has **one** fitted experimental lock:
+The twin calibrate lock is the **Park et al. 2019 flat** fusion macro:
 
-| Case | Process | Macrograph |
-|------|---------|------------|
-| `bead_calibrate.yaml` | 100 A × 15 V, 6.5 mm/s | W=7.0 × D=3.0 mm |
+| Case | Process | Macrograph | Citation |
+|------|---------|------------|----------|
+| `bead_calibrate.yaml` | ≈91 A mean, 10 mm/s, WFR 7 m/min | W=6.1 × D=1.8 mm | [DOI 10.3390/app9214626](https://doi.org/10.3390/app9214626) |
 
-A second measured cut is required for absolute prediction claims. The slot is:
+**`jobs/examples/bead_calibrate_heldout_macro2.yaml`** carries the **overhead** cut from the same paper (W=5.7 × D=1.9 mm). Electrical process matches the flat lock; the experiment differed by **welding position**, which the twin does **not** model — treat as a soft absolute check.
 
-**`jobs/examples/bead_calibrate_heldout_macro2.yaml`** — same Goldak/η/recoil, travel **5.0 mm/s**.
+Trend-only process variants (no absolute macro):
 
-## How to fill
+- `bead_calibrate_heldout_fast.yaml` — faster travel  
+- `bead_calibrate_heldout_hot.yaml` — higher I/WFS  
 
-1. Weld bead-on-plate at **100 A × 15 V, 5.0 mm/s** (same wire/gas/CTWD as calibrate if possible).
-2. Measure pool width and penetration on the macrograph.
-3. Edit the job:
-
-```yaml
-reference:
-  awaiting_measurement: false
-  pool_width_mm: <measured W>
-  pool_depth_mm: <measured D>
-  source: macrograph_ER70S-6_5mms_<date>
-```
-
-4. Report (no retuning):
+Other grounded externals: Bruno (Figshare surface), PIONEER M1 (Zenodo wall). Catalog: [data/published_macrograph_catalog.json](data/published_macrograph_catalog.json).
 
 ```bash
-PYTHONPATH=. WAAM_BACKEND=cuda python3 -m waam_twin.tools.prediction_report
-# or
-WAAM_HELDOUT_VALIDATION=1 PYTHONPATH=. python3 -m waam_twin.validation.test_heldout_prediction
+PYTHONPATH=. WAAM_BACKEND=cuda python3 -m waam_twin.tools.prediction_report --tier shop --with-bruno
 ```
-
-Absolute gate: max(W,D) error **&lt; 40%** (looser than the fitted 30% calibrate gate).
-
-Until filled, the suite reports `PENDING` and only checks that the predicted pool is **larger** than calibrate (slower travel).
-
-## Related
-
-- Trend-only held-outs: `bead_calibrate_heldout_fast.yaml`, `bead_calibrate_heldout_hot.yaml`
-- Write-up: [reference_case_ER70S6.md](reference_case_ER70S6.md)

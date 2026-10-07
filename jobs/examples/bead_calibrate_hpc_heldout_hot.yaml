@@ -1,4 +1,4 @@
-# HPC held-out (hot) — locked to bead_calibrate_hpc.yaml
+# HPC held-out hot — trend only vs Park HPC calibrate
 
 simulation:
   preset: high
@@ -33,7 +33,7 @@ simulation:
   warn_on_force_clamp: true
   strict_mode: true
 plate:
-  thickness_mm: 8.0
+  thickness_mm: 9.0
   size_mm:
   - 50
   - 20
@@ -69,12 +69,12 @@ advanced_physics:
   gas_shear_coeff: 1.0
 process:
   current_A: 120
-  voltage_V: 15
+  voltage_V: 22.0
   arc_efficiency: 0.72
-  travel_speed_mm_s: 6.5
-  wire_feed_m_min: 3.8
-  wire_diameter_mm: 1.2
-  droplet_length_mm: 3.0
+  travel_speed_mm_s: 10.0
+  wire_feed_m_min: 8.5
+  wire_diameter_mm: 1.0
+  droplet_length_mm: 2.5
   T_ambient_K: 293
   stickout_mm: 12.0
   ctwd_mm: 15.0
@@ -95,7 +95,7 @@ heat_loss:
   radiation: true
   h_conv: 35.0
 prediction:
-  role: heldout
+  role: heldout_trend
   baseline_job: jobs/examples/bead_calibrate_hpc.yaml
   expected_trend: larger_pool
   vary:
@@ -152,4 +152,12 @@ claim:
   - oxide_film
   - keyhole_cavity_collapse
   - residual_stress_FEA
-  notes: HPC held-out (hot); mesh+fitted knobs locked to bead_calibrate_hpc.
+  notes: "HPC held-out hot vs Park lock \u2014 trend only."
+reference:
+  awaiting_measurement: true
+  gate: trend_only
+  pool_width_mm: null
+  pool_depth_mm: null
+  source: no_absolute_macro_trend_only_vs_park_calibrate
+  citation_doi: 10.3390/app9214626
+  note: Absolute W/D not claimed; grounded baseline is Park calibrate.

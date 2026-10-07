@@ -1,5 +1,5 @@
-# Auto-updated mesh-lock shop job — see docs/validation/UNDERSTANDING_CALIBRATION_AND_DATA.md
-# Source role: heldout
+# Shop held-out: Park 2019 overhead published fusion macro (DOI 10.3390/app9214626)
+# Soft absolute — welding position not modeled in twin.
 
 simulation:
   preset: standard
@@ -34,7 +34,7 @@ simulation:
   warn_on_force_clamp: true
   strict_mode: true
 plate:
-  thickness_mm: 8.0
+  thickness_mm: 9.0
   size_mm:
   - 50
   - 20
@@ -69,13 +69,13 @@ advanced_physics:
   gas_jet_velocity_m_s: 12.0
   gas_shear_coeff: 1.0
 process:
-  current_A: 100
-  voltage_V: 15
+  current_A: 91
+  voltage_V: 22.0
   arc_efficiency: 0.72
-  travel_speed_mm_s: 5.0
-  wire_feed_m_min: 3.2
-  wire_diameter_mm: 1.2
-  droplet_length_mm: 3.0
+  travel_speed_mm_s: 10.0
+  wire_feed_m_min: 7.0
+  wire_diameter_mm: 1.0
+  droplet_length_mm: 2.5
   T_ambient_K: 293
   stickout_mm: 12.0
   ctwd_mm: 15.0
@@ -96,29 +96,34 @@ heat_loss:
   radiation: true
   h_conv: 35.0
 prediction:
-  role: heldout_macrograph
+  role: heldout_published_macrograph
   baseline_job: jobs/examples/bead_calibrate.yaml
-  expected_trend: larger_pool
-  vary:
-  - travel_speed_mm_s
+  dataset: park_pgmaw_overhead_2019
+  catalog: docs/validation/data/published_macrograph_catalog.json
+  vary: []
 reference:
-  awaiting_measurement: true
-  pool_width_mm: null
-  pool_depth_mm: null
-  source: TBD_paste_macrograph_ER70S-6_5mms
-model_prediction:
-  pool_width_mm: null
-  pool_depth_mm: null
-  n_steps: 8000
-  note: Run prediction_report to populate
+  awaiting_measurement: false
+  gate: macro_wd
+  pool_width_mm: 5.7
+  pool_depth_mm: 1.9
+  bead_height_mm: 2.5
+  material_match: true
+  experimental_wire: ER70S-6_1.0mm
+  welding_position: overhead
+  source: park_appl_sci_2019_doi_10.3390/app9214626_overhead
+  citation_doi: 10.3390/app9214626
+  citation_url: https://www.mdpi.com/2076-3417/9/21/4626
+  note: "Published overhead fusion W/D. Process matches calibrate electrically; position effect not modeled\
+    \ in twin \u2014 soft gate."
 model_reference:
   n_steps: 8000
   bead_height_mm_min: 0.5
   f_recoil_active: true
+  mesh_tier: shop
 claim:
   mesh_tier: shop
   absolute_wd: false
-  trend_only: true
+  trend_only: false
   tier_label: engineering_trend_predictor
   pool_metric: fusion_zone
   characterisation: "Qualitatively predictive; quantitatively usable to roughly \xB120\u201325% pool W/D\
@@ -161,4 +166,4 @@ claim:
   - oxide_film
   - keyhole_cavity_collapse
   - residual_stress_FEA
-  notes: 'Shop held-out: process varies only; mesh fingerprint + fitted knobs locked to bead_calibrate.'
+  notes: "Shop Park overhead published macro (soft \u2014 position not modeled)."

@@ -1,7 +1,8 @@
 # Shared claim fragment for ER70S-6 mesh-locked calibrate / held-outs.
 # Copied into jobs (YAML has no include) — keep in sync when editing policy.
 mesh_tier: shop
-absolute_wd: true
+# absolute_wd true only after auto_calibrate re-fit to Park 2019 flat (DOI 10.3390/app9214626)
+absolute_wd: false
 trend_only: false
 tier_label: engineering_trend_predictor
 pool_metric: fusion_zone

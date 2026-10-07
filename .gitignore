@@ -26,6 +26,10 @@ htmlcov/
 *.png
 *.jpg
 *.jpeg
+# Keep published / digitised validation imagery if added under data/
+!docs/validation/data/**/*.png
+!docs/validation/data/**/*.jpg
+!docs/validation/data/**/*.jpeg
 viewer_output/
 cloud_runs/
 run_out/
@@ -45,6 +49,13 @@ sequence/
 sequence_*/
 bundle_step_*/
 .waam_sweep_tmp/
+
+# ── Auto-calibrate / matrix tool outputs (regenerate; do not commit fits) ─────
+materials/calibration/ER70S-6.auto_calibrate.yaml
+validation/baselines/auto_calibrate_latest.json
+validation/baselines/matrix_latest.json
+validation/baselines/calibration_fit_latest.json
+docs/validation/data/gate_status_latest.json
 
 # ── HPC / SLURM local artifacts ───────────────────────────────────────────────
 slurm-*.out
@@ -70,7 +81,7 @@ docs/WAAM_PARALLEL_PREDICTIVE_ARCHITECTURE.md
 docs/WAAM_PREDICTOR_SOFTWARE_ARCHITECTURE.md
 docs/validation/VALIDATION_REPORT.md
 docs/validation/thermal_v1.md
-docs/validation/reference_case_ER70S6.md
+# reference_case_ER70S6.md + published_macrograph_catalog.json are tracked operational docs
 
 # Optional local-only doc drop (never commit)
 docs/archive/
@@ -85,3 +96,4 @@ docs/research-notes/
 *~
 .DS_Store
 Thumbs.db
+/docs/manim/

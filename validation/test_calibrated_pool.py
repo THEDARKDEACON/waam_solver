@@ -25,8 +25,8 @@ def run(n_steps: int | None = None, threshold_pct: float | None = None) -> float
     job_path = "jobs/examples/bead_calibrate.yaml"
     job = load_job_config(job_path)
     macro = job.get("reference", {})
-    W_macro = float(macro.get("pool_width_mm", 7.0))
-    D_macro = float(macro.get("pool_depth_mm", 3.0))
+    W_macro = float(macro.get("pool_width_mm", 6.1))
+    D_macro = float(macro.get("pool_depth_mm", 1.8))
     travel = float(job.get("process", {}).get("travel_speed_mm_s", 5.0)) / 1000.0
     if n_steps is None:
         env = os.environ.get("WAAM_BEAD_STEPS")

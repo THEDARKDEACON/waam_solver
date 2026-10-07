@@ -70,9 +70,14 @@ waam_twin/                    ← git repository root (this folder)
 │   └── coupled_step.py       # Single-timestep physics order
 ├── validation/               # Regression tests + baselines
 ├── tools/
+│   ├── auto_calibrate.py     # Fit η/Goldak/recoil to job reference (Park lock)
+│   ├── prediction_report.py  # --tier shop|hpc held-out credibility
 │   ├── fit_calibration.py
 │   ├── run_validation_matrix.py
 │   └── benchmark_performance.py
+├── docs/validation/data/
+│   ├── published_macrograph_catalog.json
+│   └── pioneer_bruno_metrics.json
 └── .github/workflows/verify.yml
 ```
 
@@ -232,12 +237,16 @@ python -m waam_twin.validation.run_all
 
 ### Bead calibration / bead-on-plate
 
-Prefer **`jobs/examples/bead_calibrate.yaml`** for deposition + pool W/D gates
-(fixed modest domain, flow-tier forces, tuned vs macrograph ≈7×3 mm).  
-Use **`bead_on_plate.yaml`** for interactive playground (same heat schedule by default).
+Prefer **`jobs/examples/bead_calibrate.yaml`** (shop mesh) for deposition + pool W/D gates.
+The calibrate **reference** is the published Park et al. flat P-GMAW fusion macro
+(**W=6.1 × D=1.8 mm**, [DOI 10.3390/app9214626](https://doi.org/10.3390/app9214626)) —
+not an uncited in-house number. HPC twin of the same lock:
+`jobs/examples/bead_calibrate_hpc.yaml` (alias `bead_physics_accuracy.yaml`).
+Primary gate metric: `claim.pool_metric: fusion_zone` (liquidus `T_max` envelope).
+Use **`bead_on_plate.yaml`** for an interactive playground.
 
 ```bash
-export PYTHONPATH="$(cd .. && pwd)"   # or . if under FYP22-01
+export PYTHONPATH=.                   # from waam_twin/ repo root
 export WAAM_BACKEND=cuda              # cpu also fine for short smoke runs
 
 python3 -c "
@@ -249,6 +258,13 @@ t.reset()
 t.run_path('jobs/examples/bead_calibrate.yaml', n_steps=800)
 print(t.get_telemetry())
 "
+```
+
+Re-fit after lock/mesh changes (do **not** copy knobs across shop ↔ HPC):
+
+```bash
+WAAM_BACKEND=cuda python3 -m waam_twin.tools.auto_calibrate \
+  --job jobs/examples/bead_calibrate.yaml --write --write-job
 ```
 
 **Power convention:** job `current_A` × `voltage_V` → electrical `Q_w`; kernels deposit
@@ -619,15 +635,32 @@ Example [`jobs/examples/bead_calibrate.yaml`](jobs/examples/bead_calibrate.yaml)
 arc pressure; `enable_recoil: true` is explicit with soft-onset CC vapor recoil).
 Fitted knobs (η, Goldak axes, `evap_cooling_scale`, `recoil_accommodation`) vs
 predicted closures (Lin–Eagar \(p_0\), CC \(P_\mathrm{sat}\), Marangoni \(d\gamma/dT\))
-are listed in the job YAML header. Held-out process variants
-(`bead_calibrate_heldout_fast.yaml`, `bead_calibrate_heldout_hot.yaml`) must not
-retune those knobs — report with `python -m waam_twin.tools.prediction_report`.
+are listed under the job `claim:` block. Mesh fingerprint (`dx_mm`, collision path,
+`auto_dt_ma`, force/Ma caps) is locked by `assert_physics_lock` — **shop** and **HPC**
+tiers do not share fitted knobs.
+
+Held-outs must not retune those knobs:
+
+| Job | Role |
+|-----|------|
+| `bead_calibrate_heldout_fast.yaml` / `_hot.yaml` | Process trends only (no absolute macro) |
+| `bead_calibrate_heldout_macro2.yaml` | Park 2019 **overhead** published W/D (soft — position not modeled) |
+| `bead_bruno_gmaw.yaml` | Figshare surface W/H (soft material match) |
+| `wall_pioneer_m1.yaml` | Zenodo PIONEER M1 multipass |
+
+```bash
+python3 -m waam_twin.tools.prediction_report --tier shop --with-bruno
+python3 -m waam_twin.tools.prediction_report --tier hpc
+```
+
+Published macro catalog (DOIs, process, twin jobs):
+[docs/validation/data/published_macrograph_catalog.json](docs/validation/data/published_macrograph_catalog.json).  
+Reference write-up: [docs/validation/reference_case_ER70S6.md](docs/validation/reference_case_ER70S6.md).  
+Plain-language guide: [docs/validation/UNDERSTANDING_CALIBRATION_AND_DATA.md](docs/validation/UNDERSTANDING_CALIBRATION_AND_DATA.md).  
+HPC mesh-lock notes: [docs/HPC.md](docs/HPC.md).  
 Recoil evidence: `python -m waam_twin.tools.recoil_accommodation_sweep`.  
-Toggle sensitivity (non-locked YAML knobs vs W/D): `python -m waam_twin.tools.sensitivity_sweep`.  
-Ansys 2024 R2 bead-on-plate compare (Tier A Goldak + metrics): `docs/validation/ansys_2024r2/`.
-Reference write-up: [docs/validation/reference_case_ER70S6.md](docs/validation/reference_case_ER70S6.md).
-Plain-language guide (macrograph vs multipass, calibration vs held-out):
-[docs/validation/UNDERSTANDING_CALIBRATION_AND_DATA.md](docs/validation/UNDERSTANDING_CALIBRATION_AND_DATA.md).
+Toggle sensitivity: `python -m waam_twin.tools.sensitivity_sweep`.  
+Ansys compare scaffold: `docs/validation/ansys_2024r2/`.
 
 | Flag | Effect |
 |------|--------|
@@ -947,12 +980,14 @@ when you do run validation; tests own their grids.
 **Tools:**
 
 ```bash
-python3 -m waam_twin.tools.prediction_report          # fitted vs held-out W/D (+ macro2 slot)
-python3 -m waam_twin.tools.prediction_report --with-bruno  # + Bruno GMAW surface bead
+python3 -m waam_twin.tools.auto_calibrate \
+  --job jobs/examples/bead_calibrate.yaml --write   # fit η/Goldak/recoil → Park 6.1×1.8
+python3 -m waam_twin.tools.prediction_report --tier shop --with-bruno
+python3 -m waam_twin.tools.prediction_report --tier hpc
 python3 -m waam_twin.tools.multipass_report \
   --job jobs/examples/wall_pioneer_m1.yaml            # PIONEER M1 wall + remelt
 python3 -m waam_twin.tools.validation_gate_status     # closed vs open experimental gates
-python3 -m waam_twin.tools.seed_goldak_from_pool --width 7 --depth 3
+python3 -m waam_twin.tools.seed_goldak_from_pool --width 6.1 --depth 1.8
 python3 -m waam_twin.tools.multipass_report            # twolayer remelt / HAZ extents
 python3 -m waam_twin.tools.recoil_accommodation_sweep # C_acc evidence
 python3 -m waam_twin.tools.sensitivity_sweep         # job toggle W/D ranking
@@ -1079,11 +1114,15 @@ Tracked operational docs (in git):
 - [Hardware & presets](docs/HARDWARE.md) — backends, VRAM, environment variables  
 - [HPC — production bead runs](docs/HPC.md) — Docker + venv copy-paste 
 
-Validation and reference data live in code, not markdown reports:
+Validation and reference data:
 
 - `python -m waam_twin.validation.run_all` — current pass/fail truth  
-- [`jobs/examples/bead_calibrate.yaml`](jobs/examples/bead_calibrate.yaml) — ER70S-6 deposition / pool W/D reference  
-- [`jobs/examples/bead_on_plate.yaml`](jobs/examples/bead_on_plate.yaml) — interactive twin of the calibrate schedule  
+- [`jobs/examples/bead_calibrate.yaml`](jobs/examples/bead_calibrate.yaml) — Park 2019 grounded ER70S-6 calibrate lock (shop)  
+- [`jobs/examples/bead_calibrate_hpc.yaml`](jobs/examples/bead_calibrate_hpc.yaml) — same reference, HPC mesh fingerprint  
+- [`docs/validation/data/published_macrograph_catalog.json`](docs/validation/data/published_macrograph_catalog.json) — cited macros + twin jobs  
+- [`docs/validation/reference_case_ER70S6.md`](docs/validation/reference_case_ER70S6.md) — lock write-up  
+- [`docs/validation/UNDERSTANDING_CALIBRATION_AND_DATA.md`](docs/validation/UNDERSTANDING_CALIBRATION_AND_DATA.md) — calibrate vs held-out  
+- [`jobs/examples/bead_on_plate.yaml`](jobs/examples/bead_on_plate.yaml) — interactive playground  
 - [`validation/telemetry_schema.json`](validation/telemetry_schema.json) — telemetry JSON schema  
 
 Local-only planning notes (gitignored): `docs/archive/`, `docs/research-notes/`, and draft architecture/execution specs.

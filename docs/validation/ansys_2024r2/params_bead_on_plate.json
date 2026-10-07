@@ -59,9 +59,9 @@
     }
   ],
   "macro_targets_optional": {
-    "pool_width_mm": 7.0,
-    "pool_depth_mm": 3.0,
-    "source": "commented reference in bead_on_plate.yaml / calibrate lock macro"
+    "pool_width_mm": 6.1,
+    "pool_depth_mm": 1.8,
+    "source": "Park et al. Appl. Sci. 2019 DOI 10.3390/app9214626 (twin calibrate lock)"
   },
   "tiers": {
     "A_mechanical_thermal": "Goldak moving source → fusion isotherms W/D + cooling rates",

@@ -362,9 +362,10 @@ heat_loss:
 # reference:  experimental / macrograph targets (docs & reporting; not enforced)
 # -----------------------------------------------------------------------------
 reference:
-  pool_width_mm: 7.0
-  pool_depth_mm: 3.0
-  source: macrograph_ER70S-6_bead_on_plate
+  pool_width_mm: 6.1
+  pool_depth_mm: 1.8
+  citation_doi: "10.3390/app9214626"
+  source: park_appl_sci_2019_doi_10.3390/app9214626_flat
   # Optional HAZ bounds (K) used by some reports
   # haz_T_peak_min_K: 600
   # haz_T_peak_max_K: 3200

@@ -30,6 +30,7 @@ from waam_twin.validation.prediction import (
     HELDOUT_HPC_HOT_JOB,
     HELDOUT_HPC_MACRO2_JOB,
     HELDOUT_MACRO2_JOB,
+    HELDOUT_PARK_JOB,
     assert_macrograph_prediction,
     assert_physics_lock,
     assert_trend,
@@ -59,7 +60,12 @@ def _fmt(m: dict) -> str:
     )
 
 
-def _tier_cases(tier: str, *, with_bruno: bool):
+def _tier_cases(
+    tier: str,
+    *,
+    with_bruno: bool,
+    with_park: bool,
+):
     if tier == "hpc":
         cases = [
             ("calibrate (fitted)", CALIBRATE_HPC_JOB, None, "wall"),
@@ -78,6 +84,9 @@ def _tier_cases(tier: str, *, with_bruno: bool):
         baseline = CALIBRATE_JOB
         if with_bruno:
             cases.append(("heldout_bruno", HELDOUT_BRUNO_JOB, None, "distance"))
+        if with_park:
+            # Park flat is calibrate; do not duplicate. Overhead is heldout_macro2.
+            pass
     return baseline, cases
 
 
@@ -101,6 +110,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Also run Bruno GMAW surface-bead held-out (shop tier only)",
     )
+    ap.add_argument(
+        "--with-park",
+        action="store_true",
+        help="Deprecated: Park flat IS the shop calibrate lock; flag is a no-op (use heldout_macro2 for overhead)",
+    )
     args = ap.parse_args(argv)
 
     if args.quick and "WAAM_BEAD_STEPS" not in os.environ:
@@ -108,7 +122,9 @@ def main(argv: list[str] | None = None) -> int:
         args.skip_trends = True
         print("NOTE: --quick skips trend gates; use full n_steps for credibility.")
 
-    baseline_path, cases = _tier_cases(args.tier, with_bruno=args.with_bruno)
+    baseline_path, cases = _tier_cases(
+        args.tier, with_bruno=args.with_bruno, with_park=args.with_park,
+    )
     baseline_job = load_job_config(baseline_path)
     print(f"tier={args.tier}  baseline={baseline_path}")
 
@@ -133,7 +149,10 @@ def main(argv: list[str] | None = None) -> int:
             f"  material={m['material_name']} status={m['material_status']}  "
             f"steps={m['n_steps']}  dist={m.get('travel_distance_mm', 0):.2f}mm"
         )
-        if path in (HELDOUT_MACRO2_JOB, HELDOUT_HPC_MACRO2_JOB, HELDOUT_BRUNO_JOB):
+        if path in (
+            HELDOUT_MACRO2_JOB, HELDOUT_HPC_MACRO2_JOB,
+            HELDOUT_BRUNO_JOB, HELDOUT_PARK_JOB,
+        ):
             assert_macrograph_prediction(m, job, label=name)
 
     base = results["calibrate (fitted)"]
@@ -170,6 +189,13 @@ def main(argv: list[str] | None = None) -> int:
         print(
             f"Bruno surface-bead: pred W/h={br['pool_width_mm']:.2f}/{br['bead_height_mm']:.2f} mm "
             f"err={br.get('macro_err_pct', float('nan'))} — see docs/validation/PIONEER_BRUNO_DATASET.md"
+        )
+    pk = results.get("heldout_park_pgmaw")
+    if pk:
+        print(
+            f"Park 2019 flat fusion: pred W/D={pk['pool_width_mm']:.2f}×{pk['pool_depth_mm']:.2f} mm "
+            f"err={pk.get('macro_err_pct', float('nan'))} vs 6.1×1.8 — "
+            f"catalog docs/validation/data/published_macrograph_catalog.json"
         )
     print("Held-outs are predictions — do not retune Goldak/η/recoil to match them.")
     print("Do not copy fitted knobs across mesh tiers (shop ↔ hpc).")

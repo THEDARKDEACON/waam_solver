@@ -71,8 +71,8 @@ def _run_case(case: dict, n_steps: int) -> dict:
     W_mm, D_mm, n_liq = measure_pool_mm(twin)
     telem = twin.get_telemetry()
     ref = job.get("reference", {})
-    W_macro = float(ref.get("pool_width_mm", 7.0))
-    D_macro = float(ref.get("pool_depth_mm", 3.0))
+    W_macro = float(ref.get("pool_width_mm", 6.1))
+    D_macro = float(ref.get("pool_depth_mm", 1.8))
     err_macro = pool_error_pct(W_mm or telem["pool_width_mm"], D_mm or telem["pool_depth_mm"], W_macro, D_macro)
     if case.get("path") and W_mm < 0.1:
         W_mm = telem["pool_width_mm"]
