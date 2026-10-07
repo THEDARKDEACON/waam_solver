@@ -239,6 +239,13 @@ python -m waam_twin.tools.auto_calibrate \
   --gate-pct 25 --max-trials 24 --write
 
 python -m waam_twin.tools.prediction_report --tier hpc
+
+# Frozen-knob multi-dx study (Level A → toward mesh-independent B)
+# Back up the JSON off-repo with your calibrate artifacts before git clean.
+python -m waam_twin.tools.mesh_convergence_report \
+  --job jobs/examples/bead_calibrate_hpc.yaml \
+  --dx 0.30,0.25,0.20 --gate-pct 10 \
+  --json validation/baselines/mesh_convergence_latest.json
 ```
 
 Do **not** copy η/Goldak/recoil from the shop lock into these jobs (or the reverse).
@@ -247,6 +254,11 @@ Primary W/D gate uses `claim.pool_metric: fusion_zone` (liquidus `T_max` envelop
 `0.20` so fine `dx` can meet both; shop keeps `0.08` with `auto_dt_ma: false`).
 Shop report: `prediction_report --tier shop`. Details:
 [validation/UNDERSTANDING_CALIBRATION_AND_DATA.md](validation/UNDERSTANDING_CALIBRATION_AND_DATA.md) §4b.
+
+**Preserve HPC outputs before `git clean`:** copy
+`materials/calibration/ER70S-6.auto_calibrate.yaml`,
+`validation/baselines/auto_calibrate_latest.json`, and
+`validation/baselines/mesh_convergence_latest.json` to e.g. `$HOME/waam_cal_backup/`.
 
 ## Optional later
 

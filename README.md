@@ -70,8 +70,9 @@ waam_twin/                    ← git repository root (this folder)
 │   └── coupled_step.py       # Single-timestep physics order
 ├── validation/               # Regression tests + baselines
 ├── tools/
-│   ├── auto_calibrate.py     # Fit η/Goldak/recoil to job reference (Park lock)
-│   ├── prediction_report.py  # --tier shop|hpc held-out credibility
+│   ├── auto_calibrate.py          # Fit η/Goldak/recoil to job reference (Park lock)
+│   ├── prediction_report.py       # --tier shop|hpc held-out credibility
+│   ├── mesh_convergence_report.py # Frozen-knob multi-dx Level A study
 │   ├── fit_calibration.py
 │   ├── run_validation_matrix.py
 │   └── benchmark_performance.py
@@ -658,6 +659,7 @@ Published macro catalog (DOIs, process, twin jobs):
 Reference write-up: [docs/validation/reference_case_ER70S6.md](docs/validation/reference_case_ER70S6.md).  
 Plain-language guide: [docs/validation/UNDERSTANDING_CALIBRATION_AND_DATA.md](docs/validation/UNDERSTANDING_CALIBRATION_AND_DATA.md).  
 HPC mesh-lock notes: [docs/HPC.md](docs/HPC.md).  
+Frozen-knob mesh band (Level A): `python -m waam_twin.tools.mesh_convergence_report`.  
 Recoil evidence: `python -m waam_twin.tools.recoil_accommodation_sweep`.  
 Toggle sensitivity: `python -m waam_twin.tools.sensitivity_sweep`.  
 Ansys compare scaffold: `docs/validation/ansys_2024r2/`.
@@ -984,6 +986,8 @@ python3 -m waam_twin.tools.auto_calibrate \
   --job jobs/examples/bead_calibrate.yaml --write   # fit η/Goldak/recoil → Park 6.1×1.8
 python3 -m waam_twin.tools.prediction_report --tier shop --with-bruno
 python3 -m waam_twin.tools.prediction_report --tier hpc
+python3 -m waam_twin.tools.mesh_convergence_report \
+  --job jobs/examples/bead_calibrate_hpc.yaml --dx 0.30,0.25,0.20   # frozen-knob Level A
 python3 -m waam_twin.tools.multipass_report \
   --job jobs/examples/wall_pioneer_m1.yaml            # PIONEER M1 wall + remelt
 python3 -m waam_twin.tools.validation_gate_status     # closed vs open experimental gates

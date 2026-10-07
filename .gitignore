@@ -53,6 +53,7 @@ bundle_step_*/
 # ── Auto-calibrate / matrix tool outputs (regenerate; do not commit fits) ─────
 materials/calibration/ER70S-6.auto_calibrate.yaml
 validation/baselines/auto_calibrate_latest.json
+validation/baselines/mesh_convergence_latest.json
 validation/baselines/matrix_latest.json
 validation/baselines/calibration_fit_latest.json
 docs/validation/data/gate_status_latest.json

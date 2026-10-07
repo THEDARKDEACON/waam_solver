@@ -156,6 +156,28 @@ python3 -m waam_twin.tools.auto_calibrate --job jobs/examples/bead_calibrate_hpc
 python3 -m waam_twin.tools.prediction_report --tier hpc
 ```
 
+### Level A — frozen-knob mesh band (toward B)
+
+Mesh locks are the honest interim. To **measure** practical independence (Level A)
+before claiming a twin continuum limit (Level B):
+
+```bash
+# Same process + frozen η/Goldak/recoil/caps; only dx changes; equal travel distance
+WAAM_BACKEND=cuda python3 -m waam_twin.tools.mesh_convergence_report \
+  --job jobs/examples/bead_calibrate_hpc.yaml \
+  --dx 0.30,0.25,0.20 --gate-pct 10
+```
+
+| Verdict | Meaning |
+|---------|---------|
+| `PASS_BAND` | max span of W or D across the `dx` series ≤ gate; clamps inactive |
+| `FAIL_BAND` | geometry still moves with mesh under frozen knobs — keep locks |
+| `FAIL_CLAMPS` | force/Mach clamps fired — not a clean study; fix scaling first |
+| `INCONCLUSIVE` | pool under-developed (raise steps / drop `--quick`) |
+
+Report JSON (gitignored): `validation/baselines/mesh_convergence_latest.json`.  
+**B** needs Level A green on a tighter band + fewer catch-all knobs; **C** (experiment at all meshes) needs B first.
+
 New solver flags of interest: `simulation.auto_dt_ma` / `u_design_m_s` (Ma-aware dt with τ≥0.505), `use_srt: false` + `use_variable_tau: true` (variable-τ MRT on HPC), CSF solid-neighbour curvature in `kernels/vof.py`.
 
 ---
