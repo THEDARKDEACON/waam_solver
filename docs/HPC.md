@@ -252,6 +252,17 @@ Do **not** copy η/Goldak/recoil from the shop lock into these jobs (or the reve
 Primary W/D gate uses `claim.pool_metric: fusion_zone` (liquidus `T_max` envelope).
 `auto_dt_ma` raises `dt` until τ≥0.505 while respecting `u_mach_limit_lu` (HPC lock uses
 `0.20` so fine `dx` can meet both; shop keeps `0.08` with `auto_dt_ma: false`).
+HPC family also uses `force_limit_lu: 0.25` (shop stays `0.05`): at `dx=0.2` with full
+CSF/Marangoni/recoil, `0.05` trips `strict_mode` (sustained body-force clamp). Raise it
+on **all** HPC calibrate + held-out YAMLs together (mesh fingerprint). After calibrate,
+Level A must still show clamps inactive — if not, raise further or fix force scaling
+before claiming a clean convergence band.
+
+If `strict_mode` fails with `mass_balance_ratio` ≪ 1 and `overflow_count>0`, the deposit
+footprint cell-cap was too small in physical mm at fine `dx` (fixed in
+`coupled_step` / `droplet_radius_cells` to keep ~6.4 mm / ~4 mm ceilings). Pull that
+fix before re-running `auto_calibrate`. Lorentz cold-start warnings: HPC jobs use
+`lorentz_jacobi_iters: 600`.
 Shop report: `prediction_report --tier shop`. Details:
 [validation/UNDERSTANDING_CALIBRATION_AND_DATA.md](validation/UNDERSTANDING_CALIBRATION_AND_DATA.md) §4b.
 

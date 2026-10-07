@@ -29,7 +29,7 @@ simulation:
   auto_dt_ma: true
   u_design_m_s: 0.5
   u_mach_limit_lu: 0.2
-  force_limit_lu: 0.05
+  force_limit_lu: 0.25
   C_darcy: 160000.0
   warn_on_force_clamp: true
 plate:
@@ -61,7 +61,7 @@ advanced_physics:
   recoil_accommodation: 0.25
   L_vapor_J_kg: 6.0e6
   R_spec_vapor_J_kgK: 450.0
-  lorentz_jacobi_iters: 300
+  lorentz_jacobi_iters: 600
   lorentz_jacobi_tol: 0.001
   sigma_liquid_Sm: 1.0e6
   sigma_solid_Sm: 1.0e5

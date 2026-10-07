@@ -74,7 +74,11 @@ def droplet_radius_cells_from_mass_kg(twin: "WAAMTwin", m_drop: float) -> float:
     vol = m_drop / twin.mat.rho
     n_cells = vol / (g.dx ** 3)
     r = (3.0 * n_cells / (4.0 * math.pi)) ** (1.0 / 3.0)
-    return max(1.0, min(r, 10.0))
+    # Historical 10-cell cap at dx=0.4 mm ≈ 4 mm physical; keep that ceiling
+    # in mm so fine meshes are not artificially starved of deposit radius.
+    max_r_mm = 4.0
+    max_r_cells = max(10.0, max_r_mm / max(g.dx * 1000.0, 1e-9))
+    return max(1.0, min(r, max_r_cells))
 
 
 def droplet_radius_cells(twin: "WAAMTwin") -> float:

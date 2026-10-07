@@ -226,8 +226,15 @@ def coupled_step(
                 g.deposit_real_buf[None] = 0.0
                 foot_r = deposition.deposition_footprint_cells(twin, drop_r)
                 r_try = foot_r
+                # Historical cap was 16 cells at dx=0.4 mm (~6.4 mm physical).
+                # A fixed cell cap shrinks the physical footprint on fine meshes and
+                # causes deposition overflow / strict mass_balance failures (HPC dx=0.2).
+                max_foot_mm = float(
+                    getattr(twin, "deposition_max_footprint_mm", 6.4) or 6.4
+                )
+                max_r_cells = max(16.0, max_foot_mm / max(g.dx * 1000.0, 1e-9))
                 placed_real = 0.0
-                for _ in range(10):
+                for _ in range(16):
                     # Resume budget from metal already placed so retries expand
                     # the footprint instead of re-filling with thermal no-ops.
                     g.deposit_vol_buf[None] = placed_real
@@ -247,7 +254,7 @@ def coupled_step(
                     placed_real = float(g.deposit_real_buf[None])
                     if placed_real >= drop_vol * 0.98:
                         break
-                    r_try = min(r_try + 1.5, 16.0)
+                    r_try = min(r_try + 1.5, max_r_cells)
                 # Mass ledger counts only real gas→fluid conversions.
                 if placed_real < drop_vol * 0.98:
                     twin._deposition_overflow += 1
