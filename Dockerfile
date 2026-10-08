@@ -1,50 +1,47 @@
-# waam_twin — GPU environment image (Docker-capable HPC / workstations)
+# waam_twin — GPU image with the same Python + system deps as a local desktop
 #
-# The image installs Python, Quadrants, and this package. It does not start
-# a job. You get a shell and run the same commands you would on the host.
+# Includes CUDA compute *and* OpenGL/X11 client libraries so
+#   python -m waam_twin.viewer …
+# works when the host has a display (local desktop, RDP/xrdp, X11).
+# Headless batch still works the same way (no DISPLAY needed).
 #
 # The base image is Ubuntu so the container has its own Python and CUDA
-# userland. The host can be RHEL 9.8; it does not need to match.
+# userland. The host can be RHEL 9.x; it does not need to match.
 #
-# RHEL 9 ships Podman, not Docker. From this directory (pyproject.toml):
+# ---------------------------------------------------------------------------
+# Build (from this directory — pyproject.toml + Dockerfile):
 #   podman build -t waam-twin:latest .
+#   # or: docker build -t waam-twin:latest .
+#
+# Interactive shell + GPU (headless OK):
+#   ./scripts/hpc/run_desktop.sh
+#
+# Viewer on RDP / local desktop (forwards $DISPLAY):
+#   ./scripts/hpc/run_desktop.sh \
+#     python -m waam_twin.viewer --job jobs/examples/bead_calibrate.yaml
+#
+# Batch (no GUI):
+#   ./scripts/hpc/run_desktop.sh \
+#     python scripts/hpc/run_batch.py \
+#       --job jobs/examples/bead_on_plate_hires.yaml \
+#       --n-steps auto --out runs/bead_on_plate_hires
+#
+# Manual podman equivalent (RHEL sites):
 #   podman run -it --rm --device nvidia.com/gpu=all \
-#     --userns=keep-id \
-#     --group-add keep-groups \
+#     --userns=keep-id --group-add keep-groups \
 #     --security-opt label=disable \
 #     -u "$(id -u):$(id -g)" \
 #     -e NVIDIA_VISIBLE_DEVICES=all \
-#     -e NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+#     -e NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics \
 #     -e WAAM_BACKEND=cuda \
-#     -v "$PWD:/app:Z" \
-#     -w /app \
-#     waam-twin:latest \
-#     bash
+#     -e DISPLAY="$DISPLAY" \
+#     -e QT_X11_NO_MITSHM=1 \
+#     -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
+#     -v "$PWD:/app:Z" -w /app \
+#     waam-twin:latest bash
 #
-# If the site installed the podman-docker wrapper, `docker build` / `docker run`
-# call Podman. `--gpus all` is that Docker-compatible spelling; Podman itself
-# uses `--device nvidia.com/gpu=all`. Drop `:Z` on an NFS home directory if
-# the relabel fails. A site that only allows Apptainer will not run this
-# directly — build a SIF from the image instead.
-#
-# Docker on a machine that actually has the Docker daemon:
-#   docker build -t waam-twin:latest .
-#   docker run -it --rm --gpus all \
-#     -u "$(id -u):$(id -g)" \
-#     -e WAAM_BACKEND=cuda \
-#     -v "$PWD:/app" \
-#     waam-twin:latest \
-#     bash
-#
-# `bash` is the whole command. Nothing runs until you type it.
-# Inside that shell, for example:
-#   python scripts/hpc/run_batch.py \
-#     --job jobs/examples/bead_on_plate.yaml \
-#     --n-steps auto \
-#     --out runs/bead_on_plate
-#
-# Match CUDA major version to the host driver (nvidia-smi). If Quadrants
-# cannot init CUDA, try a newer/older nvidia/cuda tag or rebuild on the target node.
+# Drop `:Z` on NFS if relabel fails. Match CUDA major to host `nvidia-smi`.
+# ---------------------------------------------------------------------------
 
 FROM nvidia/cuda:12.2.0-runtime-ubuntu22.04
 
@@ -52,18 +49,57 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     WAAM_BACKEND=cuda \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    # VTK/PyVista: prefer system GL; OSMesa is a fallback for offscreen export
+    PYVISTA_OFF_SCREEN=false \
+    QT_X11_NO_MITSHM=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+        # Python toolchain
         python3 \
         python3-pip \
         python3-venv \
         python3-dev \
         build-essential \
+        # OpenGL / EGL (PyVista + VTK wheels)
         libgl1 \
-        libxrender1 \
+        libglib2.0-0 \
+        libopengl0 \
+        libegl1 \
+        libgles2 \
+        libglu1-mesa \
+        libosmesa6 \
+        mesa-utils \
+        # X11 client (viewer window on host DISPLAY / RDP)
+        libx11-6 \
         libxext6 \
+        libxrender1 \
         libsm6 \
+        libice6 \
+        libxkbcommon0 \
+        libxcb1 \
+        libxcb-xinerama0 \
+        libxcb-icccm4 \
+        libxcb-image0 \
+        libxcb-keysyms1 \
+        libxcb-randr0 \
+        libxcb-render-util0 \
+        libxcb-shape0 \
+        libxcb-cursor0 \
+        libxi6 \
+        libxrandr2 \
+        libxxf86vm1 \
+        libxcursor1 \
+        libxinerama1 \
+        libxfixes3 \
+        # Fonts / text HUD
+        libfontconfig1 \
+        libfreetype6 \
+        fonts-dejavu-core \
+        # Runtime helpers
+        libgomp1 \
+        xvfb \
+        ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/bin/python3 /usr/bin/python
 
@@ -72,8 +108,9 @@ WORKDIR /app
 # Copy the package tree (see .dockerignore for exclusions), then install.
 COPY . .
 
+# Same extras a local desktop uses for viewer + VTK export (+ sympy derive tools).
 RUN pip3 install -U pip setuptools wheel \
-    && pip3 install -e ".[export]" \
+    && pip3 install -e ".[export,derive]" \
     && useradd --create-home --uid 1000 waam \
     && chown -R waam:waam /app
 

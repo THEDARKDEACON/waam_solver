@@ -26,11 +26,12 @@ simulation:
   use_srt: true
   auto_dt_ma: false
   u_design_m_s: 0.5
-  u_mach_limit_lu: 0.08
+  u_mach_limit_lu: 0.2
   force_limit_lu: 0.05
   C_darcy: 160000.0
   C_darcy_ref_dt_s: 4.0e-05
   warn_on_force_clamp: true
+  force_limit_m_s2: 12500.0
 plate:
   thickness_mm: 9.0
   size_mm:
@@ -43,10 +44,10 @@ heat_source: goldak
 goldak:
   ff: 0.6
   fr: 1.4
-  a_front_mm: 2.2
-  a_rear_mm: 4.2
-  b_mm: 3.0
-  c_mm: 1.5
+  a_front_mm: 2.0
+  a_rear_mm: 3.8
+  b_mm: 2.8
+  c_mm: 2.6
 arc_physics:
   sigma_mm: 2.0
   penetration_mm: 2.1
@@ -71,7 +72,7 @@ advanced_physics:
 process:
   current_A: 91
   voltage_V: 22.0
-  arc_efficiency: 0.72
+  arc_efficiency: 0.82
   travel_speed_mm_s: 10.0
   wire_feed_m_min: 7.0
   wire_diameter_mm: 1.0
@@ -106,41 +107,42 @@ reference:
   source: park_appl_sci_2019_doi_10.3390/app9214626_flat
   citation_doi: 10.3390/app9214626
   citation_url: https://www.mdpi.com/2076-3417/9/21/4626
-  note: Etched fusion W×D×H from Park et al., Appl. Sci. 2019 (flat P-GMAW). Mean I≈91 A from
-    published pulse (35/345 A); mean V estimated synergic 22 V (not tabulated). Replaces uncited
-    7×3 YAML lock.
+  note: "Etched fusion W\xD7D\xD7H from Park et al., Appl. Sci. 2019 (flat P-GMAW). Mean I\u2248\
+    91 A from published pulse (35/345 A); mean V estimated synergic 22 V (not tabulated).\
+    \ Replaces uncited 7\xD73 YAML lock."
 model_reference:
   n_steps: 8000
   bead_height_mm_min: 0.5
   f_recoil_active: true
   mesh_tier: shop
-  note: Simulator W/D awaiting re-fit to Park reference on this mesh tier.
+  note: "Simulator W/D fitted to Park on shop mesh (fusion_zone err\u22484.8% at 8000 steps).\
+    \ Mesh independence not claimed (Level A FAIL_BAND locally)."
 claim:
   mesh_tier: shop
-  absolute_wd: false
+  absolute_wd: true
   trend_only: false
   tier_label: engineering_trend_predictor
   pool_metric: fusion_zone
-  characterisation: >
-    Qualitatively predictive; quantitatively usable to roughly ±20–25% pool W/D at the training
-    process point on the declared mesh tier, degrading off-calibration. Bead geometry is only
-    partly physics-emergent: deposition footprint and trailing solidify are geometric priors.
-    Primary W/D is liquidus T_max fusion envelope (f_l bbox secondary). Thermal advection
-    is minmod-limited. Shop uses SRT+variable-τ; HPC uses two-rate MRT+variable-τ (force/mass
-    unit-tested). CSF toe uses solid-aware stencils. Liquid-steel μ implies τ near 0.5 at
-    lock dx — Ma/force clamps can limit the run. C_darcy is the lock-mesh lattice value at
-    C_darcy_ref_dt_s (C_eff ∝ dt). Fitted knobs are mesh-tier locked; prefer --fit-set eta.
-    Engineering-grade process trend predictor, not continuum mesh-independent truth.
-  operating_regime: >
-    Handbook liquid-steel ν (μ/ρ from ER70S-6.v1) → τ≈0.5 at shop/HPC dx; design Ma via u_mach_limit_lu
-    / auto_dt_ma. Level A mesh studies require force and Mach clamps inactive. Do not treat
-    η/Goldak as portable across collision operators.
+  characterisation: "Qualitatively predictive; quantitatively usable to roughly \xB120\u2013\
+    25% pool W/D at the training process point on the declared mesh tier, degrading off-calibration.\
+    \ Bead geometry is only partly physics-emergent: deposition footprint and trailing solidify\
+    \ are geometric priors. Primary W/D is liquidus T_max fusion envelope (f_l bbox secondary).\
+    \ Thermal advection is minmod-limited. Shop uses SRT+variable-\u03C4; HPC uses two-rate\
+    \ MRT+variable-\u03C4 (force/mass unit-tested). CSF toe uses solid-aware stencils. Liquid-steel\
+    \ \u03BC implies \u03C4 near 0.5 at lock dx \u2014 Ma/force clamps can limit the run.\
+    \ C_darcy is the lock-mesh lattice value at C_darcy_ref_dt_s (C_eff \u221D dt). Fitted\
+    \ knobs are mesh-tier locked; prefer --fit-set eta. Engineering-grade process trend predictor,\
+    \ not continuum mesh-independent truth.\n"
+  operating_regime: "Handbook liquid-steel \u03BD (\u03BC/\u03C1 from ER70S-6.v1) \u2192 \u03C4\
+    \u22480.5 at shop/HPC dx; design Ma via u_mach_limit_lu / auto_dt_ma. Level A mesh studies\
+    \ require force and Mach clamps inactive. Do not treat \u03B7/Goldak as portable across\
+    \ collision operators.\n"
   accuracy:
-    T_peak: moderate when calibrated; Goldak/η absorb arc plasma uncertainty
-    pool_width: moderate at lock mesh with fusion metric; ±15–25% typical
+    T_peak: "moderate when calibrated; Goldak/\u03B7 absorb arc plasma uncertainty"
+    pool_width: "moderate at lock mesh with fusion metric; \xB115\u201325% typical"
     pool_depth: similar to width; sulphur/Sahoo sensitive
     bead_height: low absolute, moderate trends with WFS; deposition priors dominate
-    marangoni_velocity: order-of-magnitude / sign; better with variable-τ
+    marangoni_velocity: "order-of-magnitude / sign; better with variable-\u03C4"
     HAZ: moderate; slightly conservative spread
     porosity: qualitative tracers only
   knobs_fitted:
@@ -182,6 +184,7 @@ claim:
   - oxide_film
   - keyhole_cavity_collapse
   - residual_stress_FEA
-  notes: >
-    Park 2019 flat calibrate lock (DOI 10.3390/app9214626). absolute_wd false until re-fit
-    after fingerprint changes. Do not copy knobs across shop/HPC.
+  notes: "Park 2019 flat calibrate lock (DOI 10.3390/app9214626). Shop absolute_wd true (fusion_zone\
+    \ err\u22484.8%, \u03B7=0.82, Goldak 2.0/3.8/2.8/2.6). Local Level A: FAIL_CLAMPS at dx=0.30;\
+    \ FAIL_BAND span_W\u224845% on 0.35\u20130.40. Do not copy knobs across shop/HPC \u2014\
+    \ see runs/local_shop_validate/HPC_HANDOFF.md."

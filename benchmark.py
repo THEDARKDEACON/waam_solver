@@ -86,8 +86,9 @@ def measure_bead_metrics(twin) -> dict[str, float]:
 def measure_fusion_zone_mm(twin, T_threshold_K: float | None = None) -> dict[str, float]:
     """Fusion / remelt envelope from peak temperature (T_max).
 
-    Width = transverse extent where T_max ≥ threshold at the centroid x-slice.
-    Depth = penetration of that envelope below the substrate top (nz_solid).
+    Width = transverse extent where T_max ≥ threshold at the deepest x-slice.
+    Depth = liquidus penetration below the substrate top (``nz_solid``), with
+    linear interpolation in the deepest cell so gate % is not locked to ``dx``.
     Default threshold = material liquidus (fusion zone).
     """
     g = twin.grid
@@ -97,31 +98,70 @@ def measure_fusion_zone_mm(twin, T_threshold_K: float | None = None) -> dict[str
     metal = flags != g.FLAG_GAS
     fused = metal & (T_max >= thr)
     n = int(fused.sum())
-    if not fused.any():
-        return {
-            "fusion_width_mm": 0.0,
-            "fusion_depth_mm": 0.0,
-            "n_fusion_cells": 0.0,
-            "T_threshold_K": thr,
-        }
-    xs = np.nonzero(fused)[0]
-    i_c = int(round(float(xs.mean())))
-    sect = fused[i_c]
-    if not sect.any():
+    nz_solid = int(getattr(twin, "nz_solid", 0))
+    dx_mm = float(g.dx) * 1000.0
+    if not fused.any() or nz_solid <= 0:
         return {
             "fusion_width_mm": 0.0,
             "fusion_depth_mm": 0.0,
             "n_fusion_cells": float(n),
             "T_threshold_K": thr,
         }
+
+    # Per-x-slice max penetration (interp); pick the deepest slice for macro W/D.
+    best_D = 0.0
+    best_i = int(round(float(np.nonzero(fused)[0].mean())))
+    for i in range(g.nx):
+        sect = fused[i]
+        if not sect.any():
+            continue
+        # sect is (ny, nz) — axis0=y, axis1=z; deepest fused = smallest z.
+        z_idx = np.where(sect.any(axis=0))[0]
+        z0 = int(z_idx[0])
+        row = T_max[i, :, z0]
+        T_at = float(row[sect[:, z0]].max()) if sect[:, z0].any() else float(row.max())
+        frac = 0.0
+        if z0 > 0:
+            T_below = float(np.max(T_max[i, :, z0 - 1]))
+            if T_at > T_below + 1e-6 and T_at >= thr:
+                # Isotherm between z0-1 and z0.
+                frac = float(np.clip((T_at - thr) / (T_at - T_below), 0.0, 1.0))
+        # Cells from substrate top down to z0, plus fraction into the cell below.
+        D = max(0.0, (nz_solid - z0) + frac) * dx_mm
+        if D > best_D:
+            best_D = D
+            best_i = i
+
+    sect = fused[best_i]
+    if not sect.any():
+        return {
+            "fusion_width_mm": 0.0,
+            "fusion_depth_mm": float(best_D),
+            "n_fusion_cells": float(n),
+            "T_threshold_K": thr,
+        }
     y_idx = np.where(sect.any(axis=1))[0]
-    z_idx = np.where(sect.any(axis=0))[0]
-    W_mm = (y_idx[-1] - y_idx[0] + 1) * g.dx * 1000.0
-    nz_solid = int(getattr(twin, "nz_solid", 0))
-    D_mm = max(0, nz_solid - int(z_idx[0])) * g.dx * 1000.0
+    if y_idx.size == 0:
+        W_mm = 0.0
+    else:
+        j0 = int(y_idx[0])
+        j1 = int(y_idx[-1])
+        # Continuous edges: interpolate liquidus between fused and neighbour.
+        T_slice = np.max(T_max[best_i, :, :], axis=1)  # max over z at this x
+        frac_lo = 0.0
+        if j0 > 0 and T_slice[j0] > T_slice[j0 - 1] + 1e-6:
+            frac_lo = float(np.clip(
+                (T_slice[j0] - thr) / (T_slice[j0] - T_slice[j0 - 1]), 0.0, 1.0
+            ))
+        frac_hi = 0.0
+        if j1 + 1 < g.ny and T_slice[j1] > T_slice[j1 + 1] + 1e-6:
+            frac_hi = float(np.clip(
+                (T_slice[j1] - thr) / (T_slice[j1] - T_slice[j1 + 1]), 0.0, 1.0
+            ))
+        W_mm = (j1 - j0 + frac_lo + frac_hi) * dx_mm
     return {
         "fusion_width_mm": float(W_mm),
-        "fusion_depth_mm": float(D_mm),
+        "fusion_depth_mm": float(best_D),
         "n_fusion_cells": float(n),
         "T_threshold_K": thr,
     }

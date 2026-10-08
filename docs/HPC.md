@@ -8,7 +8,10 @@ paths:
 | **Docker** (below) | Preferred if your HPC allows Docker + NVIDIA Container Toolkit |
 | **venv + modules** | Fallback when Docker is unavailable |
 
-For local PyVista use the viewer; for Colab use `notebooks/cloud_production_workflow.ipynb`.
+The Docker image installs the same Python extras and OpenGL/X11 client libs as a
+local desktop, so **`waam_twin.viewer` works when you have a display** (RDP/xrdp
+or a local desktop). Headless batch still uses `run_batch.py`. For Colab use
+`notebooks/cloud_production_workflow.ipynb`.
 
 ## Copy-paste: Docker (preferred when available)
 
@@ -18,21 +21,29 @@ From the repo root (folder with `Dockerfile` / `pyproject.toml`):
 cd /path/to/waam_twin
 
 # One-time build (reuse the image afterward)
-docker build -t waam-twin:latest .
+docker build -t waam-twin:latest .   # or: podman build -t waam-twin:latest .
 
 # Prove the container sees the GPU
 docker run --rm --gpus all nvidia/cuda:12.2.0-base-ubuntu22.04 nvidia-smi
 
+# Interactive shell (GPU + host DISPLAY if set) — preferred wrapper
+./scripts/hpc/run_desktop.sh
+
+# Viewer on RDP / desktop (same as local)
+./scripts/hpc/run_desktop.sh \
+  python -m waam_twin.viewer --job jobs/examples/bead_calibrate.yaml
+
 mkdir -p runs
-docker run --rm --gpus all \
-  -e WAAM_BACKEND=cuda \
-  -v "$PWD/runs:/app/runs" \
-  waam-twin:latest \
+./scripts/hpc/run_desktop.sh \
   python scripts/hpc/run_batch.py \
     --job jobs/examples/bead_on_plate_hires.yaml \
     --n-steps auto \
     --out runs/bead_on_plate_hires
 ```
+
+`run_desktop.sh` picks Podman or Docker, mounts the repo at `/app`, forwards
+`$DISPLAY` + `/tmp/.X11-unix`, and sets `NVIDIA_DRIVER_CAPABILITIES` to include
+`graphics`. Batch-only (no X11): `WAAM_NO_X11=1 ./scripts/hpc/run_desktop.sh …`.
 
 Outputs land on the **host** under `./runs/...` (bind-mounted). Open in ParaView:
 
@@ -194,14 +205,20 @@ It selects the centre’s preinstalled Python/CUDA for **this shell** (`PATH`,
 library paths). It does not install `waam_twin`. The venv + `pip install -e ".[export]"`
 does. On a laptop you usually skip `module load`.
 
-## Why not the viewer command?
+## Viewer vs batch on HPC
 
 ```bash
-python3 -m waam_twin.viewer --job …
+# Desktop / RDP session with $DISPLAY — use the image like a local machine
+./scripts/hpc/run_desktop.sh \
+  python -m waam_twin.viewer --job jobs/examples/bead_calibrate.yaml
+
+# No display (batch queue, SSH without X) — headless
+./scripts/hpc/run_desktop.sh \
+  python scripts/hpc/run_batch.py --job … --out runs/…
 ```
 
-needs a GUI. HPC nodes typically have no display. Use `run_batch.py` instead;
-same job YAML, headless outputs.
+The viewer needs a working host display (RDP counts). Pure compute nodes with
+no `$DISPLAY` should use `run_batch.py`; same job YAML, headless outputs.
 
 ## If you are on a login node (no GPU)
 

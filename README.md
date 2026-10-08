@@ -46,7 +46,7 @@ waam_twin/                    ← git repository root (this folder)
 │   ├── validated/            # Calibrated alloys
 │   ├── calibration/          # η, σ fits per process
 │   └── user/                 # Local overrides (gitignored)
-├── Dockerfile                # GPU headless image (Docker-capable HPC)
+├── Dockerfile                # GPU image + OpenGL/X11 (viewer + headless HPC)
 ├── docs/                     # HARDWARE, HPC, MATERIALS, VTK, LBM, weld-pool physics
 ├── scripts/hpc/              # SLURM templates + headless run_batch.py
 ├── runs/                     # Batch outputs (gitignored contents)
@@ -298,21 +298,23 @@ twin.step(0.015, 0.010, is_welding=True)
 
 ### HPC — production bead run (copy-paste)
 
-For operators with a **GPU** terminal. Do **not** use the interactive viewer on
-HPC (no display). Full detail: [docs/HPC.md](docs/HPC.md).
+For operators with a **GPU** terminal. With RDP/desktop, the viewer works inside
+the container via `./scripts/hpc/run_desktop.sh`. Without a display, use
+`run_batch.py`. Full detail: [docs/HPC.md](docs/HPC.md).
 
 #### A) Docker (preferred when Docker + GPUs are allowed)
 
 ```bash
 cd /path/to/waam_twin          # folder with Dockerfile + pyproject.toml
 
-docker build -t waam-twin:latest .
+docker build -t waam-twin:latest .   # or: podman build -t waam-twin:latest .
+
+# Interactive viewer (RDP / local desktop — needs $DISPLAY)
+./scripts/hpc/run_desktop.sh \
+  python -m waam_twin.viewer --job jobs/examples/bead_calibrate.yaml
 
 mkdir -p runs
-docker run --rm --gpus all \
-  -e WAAM_BACKEND=cuda \
-  -v "$PWD/runs:/app/runs" \
-  waam-twin:latest \
+./scripts/hpc/run_desktop.sh \
   python scripts/hpc/run_batch.py \
     --job jobs/examples/bead_on_plate_hires.yaml \
     --n-steps auto \

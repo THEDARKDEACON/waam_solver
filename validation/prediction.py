@@ -217,13 +217,12 @@ def run_job_metrics(
 
     if equal_distance_m is not None and equal_distance_m > 0.0:
         from waam_twin.validation.bead_helpers import steps_for_travel
+        # Pose from torch path / plate footprint — not domain origin (off-plate cold starts).
+        _, x_start, y_m, dir_x = plan_linear_bead_run(twin, job, n_steps=1)
         n_steps = steps_for_travel(equal_distance_m, twin.travel_speed_m_s, twin.grid.dt)
         max_steps = os.environ.get("WAAM_MAX_BEAD_STEPS")
         if max_steps:
             n_steps = min(n_steps, int(max_steps))
-        x_start = max(0.004, 4 * twin.grid.dx)
-        y_m = (twin.grid.ny // 2) * twin.grid.dx
-        dir_x = 1.0
     else:
         if n_steps is None:
             n_steps = int(os.environ.get("WAAM_BEAD_STEPS", model.get("n_steps", 8000)))

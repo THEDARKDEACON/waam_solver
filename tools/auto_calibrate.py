@@ -347,7 +347,9 @@ def _candidate_schedule(
         out.append((label, k))
 
     # η: dominant heat lever
-    eta_grid = [0.65, 0.70, 0.75, 0.80] if quick else [0.60, 0.68, 0.72, 0.76, 0.82, 0.88]
+    eta_grid = [0.65, 0.70, 0.75, 0.80] if quick else [
+        0.60, 0.68, 0.72, 0.76, 0.82, 0.88, 0.92, 0.95,
+    ]
     for e in eta_grid:
         if abs(e - base.eta) > 1e-6:
             add(f"eta={e:.2f}", eta=e)
@@ -355,16 +357,26 @@ def _candidate_schedule(
     if fit_set == "eta":
         return out
 
-    # Goldak width / depth
-    b_grid = [2.4, 3.0, 3.6] if quick else [2.2, 2.6, 3.0, 3.4, 3.8]
+    # Goldak width / depth (deeper c needed for Park D≈1.8 mm on shop dx)
+    b_grid = [2.4, 3.0, 3.6] if quick else [2.2, 2.6, 3.0, 3.4, 3.8, 4.2]
     for b in b_grid:
         if abs(b - base.b_mm) > 1e-6:
             add(f"b={b:.1f}", b_mm=b)
 
-    c_grid = [1.2, 1.5, 1.8] if quick else [1.0, 1.3, 1.5, 1.8, 2.2]
+    c_grid = [1.2, 1.5, 1.8] if quick else [1.0, 1.3, 1.5, 1.8, 2.2, 2.6, 3.0, 3.5]
     for c in c_grid:
         if abs(c - base.c_mm) > 1e-6:
             add(f"c={c:.1f}", c_mm=c)
+
+    # Joint probes: shallow depth is the usual fail mode — pair η×c early.
+    if not quick:
+        for e, c, b in (
+            (0.82, 2.6, 2.6), (0.88, 2.6, 2.6), (0.92, 3.0, 2.4),
+            (0.88, 3.5, 2.4), (0.95, 3.5, 2.2), (0.90, 3.2, 2.4),
+            (0.85, 3.0, 2.6), (0.92, 3.5, 2.6), (0.95, 4.0, 2.2),
+            (0.88, 4.0, 2.4), (0.80, 3.5, 2.8), (0.85, 2.8, 2.8),
+        ):
+            add(f"eta={e:.2f},c={c:.1f},b={b:.1f}", eta=e, c_mm=c, b_mm=b)
 
     if fit_set == "eta_goldak":
         return out
@@ -395,9 +407,9 @@ def _refine_around(best: KnobState, *, focus: str) -> list[KnobState]:
             k.b_mm = min(5.0, max(1.5, best.b_mm + db))
             ks.append(k)
     elif focus == "c_mm":
-        for dc in (-0.25, -0.1, 0.1, 0.25):
+        for dc in (-0.4, -0.2, -0.1, 0.1, 0.2, 0.4, 0.6):
             k = best.clone()
-            k.c_mm = min(3.5, max(0.8, best.c_mm + dc))
+            k.c_mm = min(4.0, max(0.8, best.c_mm + dc))
             ks.append(k)
     return ks
 
@@ -449,9 +461,15 @@ def run_auto_calibrate(
     )
 
     schedule = _candidate_schedule(base, quick=quick, fit_set=fit_set)
+    # Prefer joint η×c×b probes first — 1-D refine must not starve them.
+    if not quick and fit_set != "eta":
+        joint = [item for item in schedule if "," in item[0]]
+        rest = [item for item in schedule if "," not in item[0]]
+        schedule = joint + rest
     seen: set[tuple] = set()
     best: TrialResult | None = None
     trial_i = 0
+    refine_inserts = 0
 
     def _key(k: KnobState) -> tuple:
         return (
@@ -501,8 +519,12 @@ def run_auto_calibrate(
         if best is None or result.error_pct < best.error_pct:
             best = result
             report.best = asdict(result)
-            # Local refine around improving points (still under budget)
-            if refine and not result.passed and trial_i < max_trials:
+            # Local refine around improving points (still under budget).
+            # Cap refine inserts so depth/width probes do not starve the schedule.
+            if (
+                refine and not result.passed and trial_i < max_trials
+                and refine_inserts < 12
+            ):
                 # Prefer refining the coordinate that most mismatches ref
                 w_err = abs(result.pool_width_mm - W_ref) / max(W_ref, 0.1)
                 d_err = abs(result.pool_depth_mm - D_ref) / max(D_ref, 0.1)
@@ -524,11 +546,13 @@ def run_auto_calibrate(
                     "marangoni_scale": result.knobs["marangoni_scale"],
                     "heat_loss_factor": result.knobs["heat_loss_factor"],
                 })
-                for k in _refine_around(k_best, focus=focus):
-                    queue.insert(0, (f"refine-{focus}", k))
-                if focus != "eta" and fit_set != "eta":
-                    for k in _refine_around(k_best, focus="eta"):
+                for k in _refine_around(k_best, focus=focus)[:3]:
+                    queue.append((f"refine-{focus}", k))
+                    refine_inserts += 1
+                if focus != "eta" and fit_set != "eta" and refine_inserts < 12:
+                    for k in _refine_around(k_best, focus="eta")[:2]:
                         queue.append(("refine-eta", k))
+                        refine_inserts += 1
 
         if result.passed:
             report.satisfied = True

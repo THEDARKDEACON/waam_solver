@@ -1,24 +1,11 @@
-# =============================================================================
-# Held-out: Bruno GMAW bead-on-plate (Figshare 27325698 / PIONEER Bruno_Dataset)
-# =============================================================================
-# MATERIAL CAUTION:
-#   data.cnf lists Material = "Carbon Steel", wire Ø1 mm — grade is NOT certified
-#   as ER70S-6. We still load ER70S-6.v1 so Goldak/η/recoil stay comparable to the
-#   calibrate lock, but treat absolute errors as provisional (soft material match).
-#   Do NOT retune the calibrate lock to fit Bruno.
-#
-# Locked Goldak/η/recoil = bead_calibrate.yaml. Process matched to Bruno logs.
-# Surface bead W/H from laser scan (scan.csv). Penetration D not yet digitized.
-#
-#   python3 -m waam_twin.tools.prediction_report --with-bruno
-#   docs/validation/PIONEER_BRUNO_DATASET.md
-# =============================================================================
-
 simulation:
   preset: standard
   backend: cuda
   physics_tier: full
-  domain_mm: [80, 40, 25]
+  domain_mm:
+  - 80
+  - 40
+  - 25
   dx_mm: 0.4
   enable_vof: true
   enable_csf_tension: true
@@ -33,24 +20,34 @@ simulation:
   enable_enthalpy_cap: true
   enable_evaporative_cooling: true
   arc_surface_weighting: true
-
+  dt_scale: 1.0
+  use_variable_tau: true
+  use_srt: true
+  auto_dt_ma: false
+  C_darcy: 160000.0
+  C_darcy_ref_dt_s: 4.0e-05
+  u_mach_limit_lu: 0.2
+  force_limit_lu: 0.05
+  force_limit_m_s2: 12500.0
+  u_design_m_s: 0.5
+  warn_on_force_clamp: true
+  strict_mode: true
 plate:
   thickness_mm: 6.0
-  size_mm: [50, 20]
-
+  size_mm:
+  - 50
+  - 20
 material: materials/validated/ER70S-6.v1.yaml
 calibration: null
 torch_path_csv: jobs/paths/bead_calibrate.csv
-
 heat_source: goldak
 goldak:
   ff: 0.6
   fr: 1.4
-  a_front_mm: 2.2
-  a_rear_mm: 4.2
-  b_mm: 3.0
-  c_mm: 1.5
-
+  a_front_mm: 2.0
+  a_rear_mm: 3.8
+  b_mm: 2.8
+  c_mm: 2.6
 arc_physics:
   sigma_mm: 2.0
   penetration_mm: 2.1
@@ -58,24 +55,24 @@ arc_physics:
   surface_weighting: true
   pressure_model: lin_eagar
   pressure_pa: 150.0
-
+  pressure_sigma_mm: 2.0
 advanced_physics:
   evap_cooling_scale: 25.0
   T_boiling_K: 3000.0
   recoil_accommodation: 0.25
   L_vapor_J_kg: 6.0e6
-  R_spec_vapor_J_kgK: 450.0
+  R_spec_vapor_J_kgK: 149.0
   lorentz_jacobi_iters: 300
-  lorentz_jacobi_tol: 1.0e-3
+  lorentz_jacobi_tol: 0.001
   sigma_liquid_Sm: 1.0e6
   sigma_solid_Sm: 1.0e5
   gas_jet_velocity_m_s: 12.0
   gas_shear_coeff: 1.0
-
+  marangoni_scale: 1.0
 process:
   current_A: 110
   voltage_V: 19.7
-  arc_efficiency: 0.72
+  arc_efficiency: 0.82
   travel_speed_mm_s: 6.0
   wire_feed_m_min: 3.5
   wire_diameter_mm: 1.0
@@ -86,29 +83,28 @@ process:
   transfer_mode: auto
   droplet_size_jitter: 0.05
   impact_lead_angle_deg: 5.0
-
 deposition:
   superheat_K: 400.0
   footprint_sigma_scale: 1.0
   trailing_solidify_lookback_mm: 6.0
   trailing_solidify_temp_margin_K: 10.0
-
 surface_wetting:
   contact_angle_deg: 80.0
-
 heat_loss:
   convection: true
   radiation: true
   h_conv: 35.0
-
 prediction:
   role: heldout_external_dataset
   baseline_job: jobs/examples/bead_calibrate.yaml
   dataset: Bruno_Dataset/27325698
-  vary: [current_A, voltage_V, travel_speed_mm_s, wire_feed_m_min, wire_diameter_mm]
-
+  vary:
+  - current_A
+  - voltage_V
+  - travel_speed_mm_s
+  - wire_feed_m_min
+  - wire_diameter_mm
 reference:
-  # Surface geometry from laser profilometer (not a polished fusion macro).
   gate: surface_bead
   awaiting_measurement: false
   pool_width_mm: 4.33
@@ -118,11 +114,84 @@ reference:
   material_match: soft
   experimental_wire: carbon_steel_uncertified_1mm
   source: bruno_figshare_27325698_scan_csv_mid_bead
-  note: >
-    Width/height are external bead dimensions. Wire grade not certified ER70S-6.
-    Penetration depth left null until met-data.dat is digitized.
+  note: 'Width/height are external bead dimensions. Wire grade not certified ER70S-6. Penetration
+    depth left null until met-data.dat is digitized.
 
+    '
 model_reference:
   n_steps: 8000
   bead_height_mm_min: 0.5
   f_recoil_active: true
+  mesh_tier: shop
+  note: "Simulator W/D fitted to Park reference on this mesh tier (fusion_zone err\u22484.84%\
+    \ at 8000 steps)."
+claim:
+  mesh_tier: shop
+  absolute_wd: true
+  trend_only: false
+  tier_label: engineering_trend_predictor
+  pool_metric: fusion_zone
+  characterisation: "Qualitatively predictive; quantitatively usable to roughly \xB120\u2013\
+    25% pool W/D at the training process point on the declared mesh tier, degrading off-calibration.\
+    \ Bead geometry is only partly physics-emergent: deposition footprint and trailing solidify\
+    \ are geometric priors. Primary W/D is liquidus T_max fusion envelope (f_l bbox secondary).\
+    \ Thermal advection is minmod-limited. Shop uses SRT+variable-\u03C4; HPC uses two-rate\
+    \ MRT+variable-\u03C4 (force/mass unit-tested). CSF toe uses solid-aware stencils. Liquid-steel\
+    \ \u03BC implies \u03C4 near 0.5 at lock dx \u2014 Ma/force clamps can limit the run.\
+    \ C_darcy is the lock-mesh lattice value at C_darcy_ref_dt_s (C_eff \u221D dt). Fitted\
+    \ knobs are mesh-tier locked; prefer --fit-set eta. Engineering-grade process trend predictor,\
+    \ not continuum mesh-independent truth.\n"
+  operating_regime: "Handbook liquid-steel \u03BD (\u03BC/\u03C1 from ER70S-6.v1) \u2192 \u03C4\
+    \u22480.5 at shop/HPC dx; design Ma via u_mach_limit_lu / auto_dt_ma. Level A mesh studies\
+    \ require force and Mach clamps inactive. Do not treat \u03B7/Goldak as portable across\
+    \ collision operators.\n"
+  accuracy:
+    T_peak: "moderate when calibrated; Goldak/\u03B7 absorb arc plasma uncertainty"
+    pool_width: "moderate at lock mesh with fusion metric; \xB115\u201325% typical"
+    pool_depth: similar to width; sulphur/Sahoo sensitive
+    bead_height: low absolute, moderate trends with WFS; deposition priors dominate
+    marangoni_velocity: "order-of-magnitude / sign; better with variable-\u03C4"
+    HAZ: moderate; slightly conservative spread
+    porosity: qualitative tracers only
+  knobs_fitted:
+  - eta
+  - goldak_axes
+  - evap_cooling_scale
+  - recoil_accommodation
+  knobs_predicted:
+  - lin_eagar_p0
+  - cc_Psat_shape
+  - sahoo_dgamma
+  - lorentz_JxB
+  - carman_kozeny_form
+  knobs_locked:
+  - marangoni_scale
+  - C_darcy
+  - C_darcy_ref_dt_s
+  - superheat_K
+  - footprint_sigma_scale
+  - contact_angle_deg
+  - pressure_sigma_mm
+  - trailing_solidify_lookback_mm
+  - trailing_solidify_temp_margin_K
+  - R_spec_vapor_J_kgK
+  known_defects: []
+  limitations:
+  - fl_bbox_overestimate_secondary
+  - mesh_dependent_fitted_knobs
+  - operator_splitting_lag
+  - lorentz_per_step_skip_possible
+  - force_ablation_sensitivity_uncertain
+  - residual_phi_fl_one_way_sync
+  - deposition_footprint_and_trailing_solidify_priors
+  - clamp_limited_regime_possible
+  out_of_scope:
+  - mushy_turbulence
+  - pinch_droplet_detachment
+  - arc_plasma_shielding
+  - oxide_film
+  - keyhole_cavity_collapse
+  - residual_stress_FEA
+  notes: "Park 2019 flat calibrate lock (DOI 10.3390/app9214626). Shop absolute_wd true after\
+    \ local fusion_zone fit (err\u22484.84%, \u03B7=0.82, Goldak a_f/a_r/b/c=2.0/3.8/2.8/2.6).\
+    \ Do not copy knobs across shop/HPC."
