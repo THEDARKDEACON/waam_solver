@@ -301,7 +301,8 @@
         "superheat_K": { "type": "number" },
         "footprint_sigma_scale": { "type": "number" },
         "trailing_solidify_lookback_mm": { "type": "number" },
-        "trailing_solidify_temp_margin_K": { "type": "number" }
+        "trailing_solidify_temp_margin_K": { "type": "number" },
+        "max_footprint_mm": { "type": "number", "minimum": 0 }
       }
     },
     "surface_wetting": {

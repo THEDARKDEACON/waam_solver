@@ -222,6 +222,9 @@ class WAAMTwin:
         self.theta_rad = math.radians(self.contact_angle_deg)
         self.deposition_superheat_K = deposition_superheat_K
         self.deposition_footprint_sigma_scale = deposition_footprint_sigma_scale
+        # Physical ceiling for expand-on-overflow retries (coupled_step). Shop 6.4 mm
+        # matches the old 16-cell cap at dx=0.4; HPC fine dx needs the same mm (or more).
+        self.deposition_max_footprint_mm = 6.4
         self.stickout_m = stickout_mm * 1e-3
         self.ctwd_nominal_m = ctwd_mm * 1e-3
         self.ctwd_m = ctwd_mm * 1e-3

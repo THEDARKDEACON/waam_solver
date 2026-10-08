@@ -90,6 +90,7 @@ deposition:
   footprint_sigma_scale: 1.0
   trailing_solidify_lookback_mm: 6.0
   trailing_solidify_temp_margin_K: 10.0
+  max_footprint_mm: 10.0
 surface_wetting:
   contact_angle_deg: 80.0
 heat_loss:
@@ -115,26 +116,26 @@ claim:
   trend_only: false
   tier_label: engineering_trend_predictor
   pool_metric: fusion_zone
-  characterisation: >
-    Qualitatively predictive; quantitatively usable to roughly ±20–25% pool W/D at the training
-    process point on the declared mesh tier, degrading off-calibration. Bead geometry is only
-    partly physics-emergent: deposition footprint and trailing solidify are geometric priors.
-    Primary W/D is liquidus T_max fusion envelope (f_l bbox secondary). Thermal advection
-    is minmod-limited. Shop uses SRT+variable-τ; HPC uses two-rate MRT+variable-τ (force/mass
-    unit-tested). CSF toe uses solid-aware stencils. Liquid-steel μ implies τ near 0.5 at
-    lock dx — Ma/force clamps can limit the run. C_darcy is the lock-mesh lattice value at
-    C_darcy_ref_dt_s (C_eff ∝ dt). Fitted knobs are mesh-tier locked; prefer --fit-set eta.
-    Engineering-grade process trend predictor, not continuum mesh-independent truth.
-  operating_regime: >
-    Handbook liquid-steel ν (μ/ρ from ER70S-6.v1) → τ≈0.5 at shop/HPC dx; design Ma via u_mach_limit_lu
-    / auto_dt_ma. Level A mesh studies require force and Mach clamps inactive. Do not treat
-    η/Goldak as portable across collision operators.
+  characterisation: "Qualitatively predictive; quantitatively usable to roughly \xB120\u2013\
+    25% pool W/D at the training process point on the declared mesh tier, degrading off-calibration.\
+    \ Bead geometry is only partly physics-emergent: deposition footprint and trailing solidify\
+    \ are geometric priors. Primary W/D is liquidus T_max fusion envelope (f_l bbox secondary).\
+    \ Thermal advection is minmod-limited. Shop uses SRT+variable-\u03C4; HPC uses two-rate\
+    \ MRT+variable-\u03C4 (force/mass unit-tested). CSF toe uses solid-aware stencils. Liquid-steel\
+    \ \u03BC implies \u03C4 near 0.5 at lock dx \u2014 Ma/force clamps can limit the run.\
+    \ C_darcy is the lock-mesh lattice value at C_darcy_ref_dt_s (C_eff \u221D dt). Fitted\
+    \ knobs are mesh-tier locked; prefer --fit-set eta. Engineering-grade process trend predictor,\
+    \ not continuum mesh-independent truth.\n"
+  operating_regime: "Handbook liquid-steel \u03BD (\u03BC/\u03C1 from ER70S-6.v1) \u2192 \u03C4\
+    \u22480.5 at shop/HPC dx; design Ma via u_mach_limit_lu / auto_dt_ma. Level A mesh studies\
+    \ require force and Mach clamps inactive. Do not treat \u03B7/Goldak as portable across\
+    \ collision operators.\n"
   accuracy:
-    T_peak: moderate when calibrated; Goldak/η absorb arc plasma uncertainty
-    pool_width: moderate at lock mesh with fusion metric; ±15–25% typical
+    T_peak: "moderate when calibrated; Goldak/\u03B7 absorb arc plasma uncertainty"
+    pool_width: "moderate at lock mesh with fusion metric; \xB115\u201325% typical"
     pool_depth: similar to width; sulphur/Sahoo sensitive
     bead_height: low absolute, moderate trends with WFS; deposition priors dominate
-    marangoni_velocity: order-of-magnitude / sign; better with variable-τ
+    marangoni_velocity: "order-of-magnitude / sign; better with variable-\u03C4"
     HAZ: moderate; slightly conservative spread
     porosity: qualitative tracers only
   knobs_fitted:
@@ -176,9 +177,11 @@ claim:
   - oxide_film
   - keyhole_cavity_collapse
   - residual_stress_FEA
-  notes: >
-    Park 2019 flat calibrate lock (DOI 10.3390/app9214626). absolute_wd false until re-fit
-    after fingerprint changes. Do not copy knobs across shop/HPC. HPC uses two-rate MRT+variable-tau.
+  notes: 'Park 2019 flat calibrate lock (DOI 10.3390/app9214626). absolute_wd false until
+    re-fit after fingerprint changes. Do not copy knobs across shop/HPC. HPC uses two-rate
+    MRT+variable-tau.
+
+    '
 reference:
   awaiting_measurement: true
   gate: trend_only

@@ -409,6 +409,8 @@ _KNOWN_ADVANCED_PHYSICS_KEYS = frozenset({
 _KNOWN_DEPOSITION_KEYS = frozenset({
     "superheat_K", "footprint_sigma_scale",
     "trailing_solidify_lookback_mm", "trailing_solidify_temp_margin_K",
+    # Numerical place-budget ceiling (mm); not a Park W/D fit knob.
+    "max_footprint_mm",
 })
 
 _KNOWN_WETTING_KEYS = frozenset({"contact_angle_deg"})
@@ -716,6 +718,8 @@ def apply_job_to_twin(twin, job: dict[str, Any] | JobConfig) -> None:
         twin.trailing_solidify_lookback_mm = float(dep["trailing_solidify_lookback_mm"])
     if "trailing_solidify_temp_margin_K" in dep:
         twin.trailing_solidify_temp_margin_K = float(dep["trailing_solidify_temp_margin_K"])
+    if "max_footprint_mm" in dep:
+        twin.deposition_max_footprint_mm = float(dep["max_footprint_mm"])
 
     if "layer_height_mm" in job:
         twin.layer_height_m = float(job["layer_height_mm"]) / 1000.0
