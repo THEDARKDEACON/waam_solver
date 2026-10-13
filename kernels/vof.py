@@ -381,53 +381,24 @@ def apply_contact_angle_phi_bc(
     nz: ti.i32,
 ):
     """
-    Ghost-fluid φ BC enforcing static contact angle θ at solid walls (Ding & Spelt style).
+    Contact-angle BC without volume injection (C4 fix).
 
-    Sets gas-cell φ adjacent to the triple line so ∇φ is consistent with θ before CSF.
+    Previously this kernel wrote a precursor film into bare-plate gas cells,
+    spread φ laterally, and pinned φ=0.65 at contact — inventing ~grams of
+    phantom metal. Wetting is now enforced only through the CSF normal
+    correction in ``compute_csf_tension`` (Young / Brackbill wall BC). This
+    kernel is intentionally a no-op so existing call sites stay valid.
     """
-    cos_t = ti.cos(theta_rad)
-    sin_t = ti.sin(theta_rad)
-    film = 0.5 * (1.0 - cos_t)
+    # Silence unused-arg warnings in Taichi; no φ writes.
+    _ = theta_rad
+    _ = FLAG_SOLID
+    _ = FLAG_GAS
+    _ = nx
+    _ = ny
+    _ = nz
     for i, j, k in phi:
-        if flags[i, j, k] == FLAG_SOLID:
-            continue
-        # Gas above bare substrate — precursor film thickness ∝ (1 - cos θ)
-        if k > 0 and flags[i, j, k - 1] == FLAG_SOLID and flags[i, j, k] == FLAG_GAS:
-            if phi[i, j, k] < film:
-                phi[i, j, k] = film
-        # Fluid on substrate: ghost gas above enforces interface slope at θ
-        if k > 0 and flags[i, j, k - 1] == FLAG_SOLID and phi[i, j, k] > 0.55:
-            if k + 1 < nz and flags[i, j, k + 1] == FLAG_GAS:
-                phi_ghost = phi[i, j, k] - sin_t
-                phi_ghost = ti.max(film, ti.min(phi_ghost, 0.98))
-                if phi[i, j, k + 1] < phi_ghost:
-                    phi[i, j, k + 1] = phi_ghost
-        # Gas directly above pool fluid (vertical interface segment)
-        if k > 0 and phi[i, j, k - 1] > 0.55 and flags[i, j, k] == FLAG_GAS:
-            phi_target = phi[i, j, k - 1] - sin_t
-            phi_target = ti.max(film, ti.min(phi_target, 0.95))
-            if phi[i, j, k] < phi_target:
-                phi[i, j, k] = phi_target
-        # Horizontal spread from pool at same k (lateral wetting toe)
-        if phi[i, j, k] < 0.45:
-            for dj in ti.static([-1, 1]):
-                jj = j + dj
-                if jj >= 0 and jj < ny:
-                    if phi[i, jj, k] > 0.55:
-                        spread = film * (0.85 + 0.15 * sin_t)
-                        if phi[i, j, k] < spread:
-                            phi[i, j, k] = spread
-            for di in ti.static([-1, 1]):
-                ii = i + di
-                if ii >= 0 and ii < nx:
-                    if phi[ii, j, k] > 0.55:
-                        spread = film * (0.85 + 0.15 * sin_t)
-                        if phi[i, j, k] < spread:
-                            phi[i, j, k] = spread
-        # Fluid on solid: pin full liquid at contact
-        if k > 0 and flags[i, j, k - 1] == FLAG_SOLID and phi[i, j, k] > 0.2:
-            if phi[i, j, k] < 0.65:
-                phi[i, j, k] = 0.65
+        _ = phi[i, j, k]
+        _ = flags[i, j, k]
 
 # ──────────────────────────────────────────────────────────────────────────────
 #  KERNEL 5 — Marangoni CSF Force Assembly
@@ -564,19 +535,19 @@ def _vof_face_flux(
 
     Face velocity is the average of the two adjacent cells, with SOLID and
     GAS cell velocities treated as zero (their stored u is stale/meaningless).
-    No flux crosses a solid face. x wraps periodically (matching the LBM
-    stream kernel) — clamping instead piled volume onto the outflow column
-    where the [0,1] clamp deleted it (~5% loss over 80 steps at u=0.02).
+    No flux crosses a solid face. All axes are clamped (no-flux) to match
+    production LBM BCs (M5). Periodic-x VOF is not used in production.
     """
     flux = 0.0
-    # Periodic in x, clamped (no-flux) in y/z — same BCs as `stream`.
-    ii0 = (i0 + nx) % nx
-    ii1 = (i1 + nx) % nx
-    in0 = j0 >= 0 and k0 >= 0 and j0 < ny and k0 < nz
-    in1 = j1 >= 0 and k1 >= 0 and j1 < ny and k1 < nz
+    in0 = (
+        i0 >= 0 and j0 >= 0 and k0 >= 0
+        and i0 < nx and j0 < ny and k0 < nz
+    )
+    in1 = (
+        i1 >= 0 and j1 >= 0 and k1 >= 0
+        and i1 < nx and j1 < ny and k1 < nz
+    )
     if in0 and in1:
-        i0 = ii0
-        i1 = ii1
         fl0 = flags[i0, j0, k0]
         fl1 = flags[i1, j1, k1]
         if fl0 != FLAG_SOLID and fl1 != FLAG_SOLID:
@@ -707,17 +678,24 @@ def update_flags_from_phi(
 ):
     """Derive FLUID / GAS / IFACE from φ and liquid fraction.
 
-    Substrate band (k < nz_solid): keep existing metal as SOLID, but never
-    convert GAS → SOLID. A previous blanket assignment filled the whole
-    domain footprint with invented plate metal beside partial coupons.
+    Substrate band (k < nz_solid): melted plate metal MUST remain FLUID so
+    Marangoni / Lorentz / buoyancy can act on the fusion zone (C1 fix).
+    Never invent plate metal from GAS. Never force-freeze liquid substrate.
     """
     for i, j, k in phi:
-        if k < nz_solid:
-            if flags[i, j, k] != FLAG_GAS:
-                flags[i, j, k] = FLAG_SOLID
-            continue
         p = phi[i, j, k]
         fl = f_l[i, j, k]
+        if k < nz_solid:
+            # Never invent plate metal from empty gas beside a partial coupon.
+            if flags[i, j, k] == FLAG_GAS:
+                continue
+            # Melted / mushy substrate → FLUID (flow enabled).
+            if fl > 0.1:
+                flags[i, j, k] = FLAG_FLUID
+            elif fl < 0.05:
+                flags[i, j, k] = FLAG_SOLID
+            # else: keep previous flag (mushy transition band)
+            continue
         if p > 0.85 and fl < 0.05:
             flags[i, j, k] = FLAG_SOLID
         elif p > 0.55 and fl > 0.1:

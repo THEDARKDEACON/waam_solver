@@ -361,7 +361,9 @@ def clone_job_with_process(
 _KNOWN_SIM_KEYS = frozenset({
     "preset", "backend", "physics_tier", "domain_mm", "dx_mm", "auto_grid", "strict_mode",
     "enable_vof", "enable_csf_tension", "enable_wetting", "enable_hydrostatic_gravity",
-    "enable_bead_freeze", "enable_droplet_impact_pressure", "enable_recoil",
+    "enable_bead_freeze", "enable_trailing_solidify", "periodic_x",
+    "use_free_surface_lbm", "C_darcy_phys", "dt_mode", "ma_max",
+    "enable_droplet_impact_pressure", "enable_recoil",
     "use_recoil_clausius_clapeyron", "enable_lorentz", "enable_gas_shear",
     "enable_enthalpy_cap", "enable_evaporative_cooling", "arc_surface_weighting",
     "enable_substrate_growth", "enable_moving_window", "enable_alloy_mixing",
@@ -675,8 +677,22 @@ def apply_job_to_twin(twin, job: dict[str, Any] | JobConfig) -> None:
         twin.enable_hydrostatic_gravity = bool(sim["enable_hydrostatic_gravity"])
     if "enable_bead_freeze" in sim:
         twin.enable_bead_freeze = bool(sim["enable_bead_freeze"])
+    if "enable_trailing_solidify" in sim:
+        twin.enable_trailing_solidify = bool(sim["enable_trailing_solidify"])
+    if "periodic_x" in sim:
+        twin.periodic_x = bool(sim["periodic_x"])
     if "enable_ctwd" in sim:
         twin.enable_ctwd = bool(sim["enable_ctwd"])
+    # Attach typed config view (Phase 2)
+    try:
+        from .config_types import load_twin_config
+        twin.cfg = load_twin_config(job)
+        twin.enable_trailing_solidify = twin.cfg.enable_trailing_solidify
+        twin.periodic_x = twin.cfg.flow.periodic_x
+        twin.evap_cooling_scale = twin.cfg.thermal.evap_cooling_scale
+    except Exception as exc:  # noqa: BLE001 — keep legacy jobs loadable
+        import logging
+        logging.getLogger(__name__).debug("typed config attach skipped: %s", exc)
     if "use_torch_z" in sim:
         twin.use_torch_z = bool(sim["use_torch_z"])
     elif "enable_torch_z" in sim:

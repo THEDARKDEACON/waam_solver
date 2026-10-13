@@ -1,0 +1,20 @@
+card:
+  arc_radius_law:
+    sigma0_mm: 2.2104703496141336
+    a_I: 5.334827590649508e-06
+    a_V: 1.3254496246398588e-05
+    a_ctwd: -0.2107906433341448
+  tier_c:
+    enhanced_k_factor: 1.2829189012434485
+  discrepancy_mm:
+    pool_width: 0.3
+    pool_depth: 0.2
+fixed_physical:
+  dgamma_dT: -0.00035
+  gamma: 1.2
+  C_darcy_phys: 10000000.0
+  C_acc: 0.54
+  evap_cooling_scale: 1.0
+  eta: 0.82
+protocol: held_out; never retune physical knobs to pass gates
+n_mcmc: 200

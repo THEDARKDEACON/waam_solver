@@ -40,7 +40,7 @@ def run(n_steps: int = 150, min_u: float = 1e-6) -> float:
         g.Fx, g.Fy, g.Fz, twin.T_amb,
         g.porosity_active, g.tracer_head, g.max_tracers,
     )
-    kernels.stream(g.f_a, g.f_b, g.flags, g.FLAG_SOLID, g.FLAG_GAS, g.nx, g.ny, g.nz)
+    kernels.stream(g.f_a, g.f_b, g.flags, g.FLAG_SOLID, g.FLAG_GAS, g.nx, g.ny, g.nz, 0)
 
     for _ in range(n_steps):
         kernels.set_uniform_Fx(g.Fx, g.Fy, g.Fz, fx_lu, g.flags, g.FLAG_FLUID)
@@ -58,7 +58,7 @@ def run(n_steps: int = 150, min_u: float = 1e-6) -> float:
             g.f_dst, g.f_src,
             g.flags, g.FLAG_SOLID, g.FLAG_GAS,
             g.nx, g.ny, g.nz,
-        )
+        , 0)
         g.swap_buffers()
 
     ux_np = g.ux.to_numpy()

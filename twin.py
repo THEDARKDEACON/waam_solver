@@ -66,7 +66,8 @@ class WAAMTwin:
         high_sulphur: bool = False,
         T_ambient: float = 300.0,
         use_srt: bool = True,
-        C_darcy: float = 1.6e5,
+        C_darcy: float = 1.6e5,  # legacy lattice; prefer C_darcy_phys when >0
+        C_darcy_phys: float = 0.0,  # SI kg/(m³·s); 0 → use legacy lattice C_darcy
         arc_pressure_pa: float = 500.0,
         droplet_freq_hz: float = 50.0,
         max_tracers: int | None = None,
@@ -155,8 +156,17 @@ class WAAMTwin:
         self.T_amb = T_ambient
         self.use_srt = use_srt
         self.C_darcy = C_darcy
+        self.C_darcy_phys = C_darcy_phys
         # Job-facing lattice Darcy at reference dt; kernels use effective_C_darcy().
         self._C_darcy_ref_dt_s = 0.0
+        self.use_free_surface_lbm = False
+        # Phase 4: only enable once droplet enthalpy is booked via real
+        # gas→fluid conversion (see physics/arc._arc_power_W). Default off so
+        # theoretical wire enthalpy is not subtracted from the arc.
+        self.energy_split = False
+        self._droplet_enthalpy_booked_J_step = 0.0
+        self.lorentz_solve_every_s = 5.0e-5
+        self.lorentz_multigrid = False
         self.arc_pressure = arc_pressure_pa
         self.arc_pressure_model = "constant"  # or lin_eagar
         self.pressure_sigma_m: float | None = None  # None → use arc_sigma_m
@@ -204,6 +214,8 @@ class WAAMTwin:
             auto_dt_ma=self.auto_dt_ma,
             u_mach_limit_lu=self.u_mach_limit_lu,
             u_design_m_s=self.u_design_m_s,
+            # SRT needs a higher floor; MRT is the production path near 0.5005.
+            tau_min=0.505 if use_srt else 0.5005,
         )
         self.warn_on_force_clamp = bool(warn_on_force_clamp)
         self.enable_droplet_impact_pressure = enable_droplet_impact_pressure
@@ -253,7 +265,9 @@ class WAAMTwin:
         self.use_variable_tau = use_variable_tau
         self.enable_enthalpy_cap = enable_enthalpy_cap
         self.enable_evaporative_cooling = enable_evaporative_cooling
-        self.evap_cooling_scale = 25.0
+        self.evap_cooling_scale = 1.0  # M3: physical Hertz–Knudsen (was 25× fudge)
+        self.periodic_x = False  # M5: production BCs are closed; tests may enable
+        self.enable_trailing_solidify = False  # H3: geometric prior off by default
         self._evap_energy_J_step = 0.0
         self._evap_energy_J_cum = 0.0
         self._enthalpy_cap_energy_J_step = 0.0
@@ -342,8 +356,10 @@ class WAAMTwin:
         self.gpu_tables = MaterialGPUTables(mat)
         self.use_material_tables = self.gpu_tables.enabled
         cp_sol = mat.cp_at(mat.T_solidus)
+        cp_liq = mat.cp_at(mat.T_liquidus)
+        # M9: H_liq includes mushy sensible heat cp·(T_liq − T_sol)
         self.H_sol = mat.rho * cp_sol * mat.T_solidus
-        self.H_liq = self.H_sol + self.L_rho
+        self.H_liq = mat.rho * cp_liq * mat.T_liquidus + self.L_rho
         self.arc_source = create_heat_source(heat_source)
         self._configure_dual_alloy(plate_material)
 
@@ -358,7 +374,9 @@ class WAAMTwin:
         log.info(f"[WAAMTwin] Heat source: {heat_source}")
         log.info(f"[WAAMTwin] VRAM estimate: {g.estimated_vram_mb():.1f} MB")
         log.info(f"[WAAMTwin] α_lu={self.alpha_lu:.6f}  τ_T={g.tau_T:.4f}")
-        log.info(f"[WAAMTwin] Collision: {'SRT' if use_srt else 'MRT (two-rate)'}")
+        log.info(
+            f"[WAAMTwin] Collision: {'SRT' if use_srt else 'TRT (two-rate, Λ=1/4)'}"
+        )
 
     def _configure_dual_alloy(self, plate_material: str | MaterialProps | None) -> None:
         """Optional substrate alloy. Opt-in: same-alloy jobs keep the wire-only path."""
@@ -393,8 +411,9 @@ class WAAMTwin:
         self.plate_L_rho = pmat.rho * pmat.L_fusion
         self.plate_alpha_lu = pmat.alpha * g.dt / (g.dx ** 2)
         cp_sol = pmat.cp_at(pmat.T_solidus)
+        cp_liq = pmat.cp_at(pmat.T_liquidus)
         self.plate_H_sol = pmat.rho * cp_sol * pmat.T_solidus
-        self.plate_H_liq = self.plate_H_sol + self.plate_L_rho
+        self.plate_H_liq = pmat.rho * cp_liq * pmat.T_liquidus + self.plate_L_rho
         nu_phys = pmat.mu / pmat.rho
         nu_lu = nu_phys * g.dt / (g.dx ** 2)
         self.plate_tau = 3.0 * nu_lu + 0.5
@@ -729,6 +748,7 @@ class WAAMTwin:
             g.f_a, g.f_b, g.flags,
             g.FLAG_SOLID, g.FLAG_GAS,
             g.nx, g.ny, g.nz,
+            1 if getattr(self, "periodic_x", False) else 0,
         )
         self._step_n = 0
         self._last_droplet_time = 0.0
@@ -762,6 +782,13 @@ class WAAMTwin:
         self._clamp_regime_warned = False
         g.deposit_vol_buf[None] = 0.0
         g.deposit_real_buf[None] = 0.0
+        # H6: initialise per-cell thermal property fields so the first
+        # enthalpy-ceiling clamp does not see zero cp_rho_field.
+        from .solvers.coupled_step import _refresh_thermal
+        _refresh_thermal(self, g)
+        g.H_tmp.copy_from(g.H)
+        from .physics.ledger import ensure_ledger
+        ensure_ledger(self)
         log.info(f"[WAAMTwin] Grid reset. T_ambient={T0:.1f}K  test_fluid={test_fluid_domain}")
 
     def step(
@@ -862,12 +889,21 @@ class WAAMTwin:
             )
 
     def effective_C_darcy(self) -> float:
-        """Lattice Carman–Kozeny coefficient scaled to the current ``dt``.
+        """Lattice Carman–Kozeny coefficient for the current ``dt``.
 
-        Job ``C_darcy`` is the lock-mesh lattice value at ``C_darcy_ref_dt_s``.
-        ``C_eff = C_darcy · (dt / dt_ref)`` so mush drag per physical second
-        stays approximately mesh-invariant under ``auto_dt_ma`` / dx changes.
+        Prefer SI ``C_darcy_phys`` [kg m⁻³ s⁻¹] via ``units.LatticeScale``
+        (Phase 2/3). Legacy lattice ``C_darcy`` at ``C_darcy_ref_dt_s`` is
+        retained for lock-file compatibility: ``C_eff = C · (dt/dt_ref)``.
         """
+        C_phys = float(getattr(self, "C_darcy_phys", 0.0) or 0.0)
+        if C_phys > 0.0:
+            from .units import LatticeScale
+            scale = LatticeScale(
+                dx=float(self.grid.dx),
+                dt=float(self.grid.dt),
+                rho=float(self.mat.rho),
+            )
+            return scale.C_darcy_lu(C_phys)
         C = float(getattr(self, "C_darcy", 0.0) or 0.0)
         dt_ref = float(getattr(self, "_C_darcy_ref_dt_s", 0.0) or 0.0)
         dt = float(self.grid.dt)
@@ -1185,9 +1221,22 @@ class WAAMTwin:
         toe_deg = estimate_toe_angle_deg(self, g) if self.enable_wetting else 0.0
 
         from .benchmark import measure_fusion_zone_mm
+        from .measure.geometry import measure_all as _measure_all
         fusion = measure_fusion_zone_mm(self)
         W_fus = float(fusion.get("fusion_width_mm", 0.0))
         D_fus = float(fusion.get("fusion_depth_mm", 0.0))
+        try:
+            geo_sub = _measure_all(self)
+            W_fus = float(geo_sub.get("fusion_width_mm", W_fus))
+            D_fus = float(geo_sub.get("fusion_depth_mm", D_fus))
+            toe_deg = float(geo_sub.get("toe_angle_deg", toe_deg))
+            if geo_sub.get("bead_height_mm", 0) > 0:
+                bead_h = float(geo_sub["bead_height_mm"])
+            if geo_sub.get("bead_width_mm", 0) > 0:
+                bead_w = float(geo_sub["bead_width_mm"])
+        except Exception:
+            if self.strict_mode:
+                raise
         pool_metric = str(getattr(self, "pool_metric", "fusion_zone"))
         W_bbox_mm = pool_width_m * 1000
         D_bbox_mm = pool_depth_m * 1000
@@ -1267,7 +1316,7 @@ class WAAMTwin:
             "droplet_transfer_mode": infer_transfer_mode(self),
             "droplet_impact_velocity_ms": round(droplet_impact_velocity_m_s(self), 4),
             "mass_balance_ratio": round(mass_ratio, 3),
-            "evap_cooling_scale": float(getattr(self, "evap_cooling_scale", 25.0)),
+            "evap_cooling_scale": float(getattr(self, "evap_cooling_scale", 1.0)),
             "recoil_accommodation": float(getattr(self, "recoil_accommodation", 0.54)),
             "wire_mass_flux_g_s": round(wire_mass_flux_kg_s(self) * 1000, 4),
             "arc_surface_weighting": self.arc_surface_weighting,
@@ -1306,7 +1355,25 @@ class WAAMTwin:
             "force_limit_m_s2": float(getattr(self, "force_limit_m_s2", 0.0) or 0.0),
             "force_limit_lu_effective": float(self.effective_force_limit_lu()),
             "force_diagnostics": force_diag,
+            "enable_trailing_solidify": bool(
+                getattr(self, "enable_trailing_solidify", False)
+            ),
+            "use_free_surface_lbm": bool(
+                getattr(self, "use_free_surface_lbm", False)
+            ),
+            "C_darcy_phys": float(getattr(self, "C_darcy_phys", 0.0) or 0.0),
+            "C_darcy_effective": float(self.effective_C_darcy()),
+            "energy_ledger": self._ledger_telemetry(),
         }
+
+    def _ledger_telemetry(self) -> dict:
+        try:
+            from .physics.ledger import ensure_ledger
+            return ensure_ledger(self).snapshot(self).to_dict()
+        except Exception as exc:
+            if self.strict_mode:
+                raise
+            return {"error": str(exc)}
 
     def export_vtk(self, path: str = "weld_pool.vti"):
         """Convenience wrapper: core + derived tiers (see export_vtk_full)."""

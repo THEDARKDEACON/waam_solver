@@ -81,6 +81,10 @@ def core_tests() -> list[tuple[str, str]]:
         ("dual_alloy", "waam_twin.validation.test_dual_alloy"),
         ("alloy_mixing", "waam_twin.validation.test_alloy_mixing"),
         ("job_parity", "waam_twin.validation.test_job_parity"),
+        # Phase-1 critical-bug regressions
+        ("substrate_flow", "waam_twin.validation.test_substrate_flow"),
+        ("wetting_no_volume", "waam_twin.validation.test_wetting_no_volume"),
+        ("enthalpy_cap_init", "waam_twin.validation.test_enthalpy_cap_init"),
     ]
 
 

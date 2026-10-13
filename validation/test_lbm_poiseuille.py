@@ -40,7 +40,7 @@ def run(n_steps: int = 100, threshold: float = 8.0) -> float:
         g.Fx, g.Fy, g.Fz, twin.T_amb,
         g.porosity_active, g.tracer_head, g.max_tracers,
     )
-    kernels.stream(g.f_a, g.f_b, g.flags, g.FLAG_SOLID, g.FLAG_GAS, g.nx, g.ny, g.nz)
+    kernels.stream(g.f_a, g.f_b, g.flags, g.FLAG_SOLID, g.FLAG_GAS, g.nx, g.ny, g.nz, 1)
 
     h_cells = ny - 2
     js = np.arange(1, ny - 1, dtype=np.float64)
@@ -63,7 +63,7 @@ def run(n_steps: int = 100, threshold: float = 8.0) -> float:
             g.f_dst, g.f_src,
             g.flags, g.FLAG_SOLID, g.FLAG_GAS,
             g.nx, g.ny, g.nz,
-        )
+        , 1)
         g.swap_buffers()
 
     ux_np = g.ux.to_numpy()

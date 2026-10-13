@@ -33,8 +33,17 @@ packages = [
   "waam_twin.solvers",
   "waam_twin.validation",
   "waam_twin.tools",
+  "waam_twin.tools.diagnostics",
   "waam_twin.kernels",
+  "waam_twin.measure",
+  "waam_twin.config_types",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["validation"]
+python_files = ["test_*.py"]
+addopts = "-q --tb=short"
+filterwarnings = ["ignore::DeprecationWarning"]
 
 [tool.setuptools.package-data]
 waam_twin = [

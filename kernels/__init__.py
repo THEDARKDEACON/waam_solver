@@ -130,6 +130,12 @@ from .lbm import (
     extract_fl_yz_slice,
     sync_phi_liquid_fraction,
 )
+from .fslbm import (
+    reconstruct_interface_populations,
+    update_fill_fraction,
+    area_weighted_marangoni,
+)
+from .thermal_fv import advect_diffuse_conservative
 
 # Re-export table helper used by thermal kernels and tests.
 from ._common import lookup_table_1d, _alloy_pick, _cell_rho

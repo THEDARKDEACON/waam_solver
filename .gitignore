@@ -50,13 +50,29 @@ sequence_*/
 bundle_step_*/
 .waam_sweep_tmp/
 
-# ── Auto-calibrate / matrix tool outputs (regenerate; do not commit fits) ─────
+# ── Auto-calibrate / matrix / clamp / GCI tool outputs (regenerate; do not commit) ─
 materials/calibration/ER70S-6.auto_calibrate.yaml
 validation/baselines/auto_calibrate_latest.json
 validation/baselines/mesh_convergence_latest.json
+validation/baselines/mesh_convergence_postfix_latest.json
+validation/baselines/mesh_convergence_clamp_tierf.json
+validation/baselines/mesh_convergence_hpc_tierf.json
+validation/baselines/mesh_convergence_shop_latest.json
+validation/baselines/clamp_clearance_latest.json
+validation/baselines/sensitivity_postfix_latest.json
 validation/baselines/matrix_latest.json
 validation/baselines/calibration_fit_latest.json
 docs/validation/data/gate_status_latest.json
+# Local clamp / GCI run logs under runs/ (also covered by *.log)
+runs/clamp_check_*.log
+runs/mesh_gci_*.log
+runs/sensitivity_*.log
+
+# ── Compiler / GPU scratch ────────────────────────────────────────────────────
+.quadrants_cache/
+__quadrants_cache__/
+*.ptx
+*.cubin
 
 # ── HPC / SLURM local artifacts ───────────────────────────────────────────────
 slurm-*.out
@@ -94,7 +110,16 @@ docs/research-notes/
 .cursor/
 .ipynb_checkpoints/
 *.swp
+*.swo
 *~
 .DS_Store
 Thumbs.db
 /docs/manim/
+docs/manim/.venv/
+# LaTeX build artefacts (keep .tex / .pdf)
+*.aux
+*.out
+*.toc
+*.fls
+*.fdb_latexmk
+*.synctex.gz

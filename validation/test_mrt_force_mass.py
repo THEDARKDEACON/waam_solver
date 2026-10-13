@@ -1,9 +1,9 @@
 """
-test_mrt_force_mass.py — Two-rate MRT regenerate-and-rediff mass + Guo force.
+test_mrt_force_mass.py — TRT (two-rate) mass + Guo force.
 
 Checks collide_mrt_variable_tau:
-  1. Σf is conserved to machine tolerance (mass correction + rest stress term)
-  2. First-moment impulse ≈ F (not ~(3-ω_s)/2 · F) vs SRT reference at same τ
+  1. Σf conserved to machine tolerance (TRT conserves mass by construction)
+  2. First-moment impulse ≈ F (not ~(3-ω_s)/2 · F) at τ→0.5
 """
 
 from __future__ import annotations

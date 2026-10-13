@@ -51,8 +51,21 @@ def apply_vapor_recoil(
 # ── Advanced weld forces (recoil CC, gas shear, Lorentz, droplet) ────────────
 @ti.func
 def _wf_pressure_to_Fz_lu(pressure_pa, dt, dx, rho_ref):
+    """Legacy: assign P/(ρ·dx) to one interface cell (mesh-dependent)."""
     F_peak_phys = pressure_pa / (rho_ref * dx)
     return F_peak_phys * dt * dt / dx
+
+
+@ti.func
+def _wf_pressure_to_Fz_lu_grad(
+    pressure_pa, grad_phi_mag, dt, dx, rho_ref
+):
+    """
+    H4: mesh-independent surface load.  F = P · |∇φ| · (dt²/(ρ dx²)).
+
+    Integrates to ≈ P over the interface band regardless of smearing width.
+    """
+    return pressure_pa * grad_phi_mag * (dt * dt) / (rho_ref * dx * dx)
 
 
 @ti.func
@@ -99,8 +112,21 @@ def apply_vapor_recoil_clausius_clapeyron(
     for i, j, k in Fz:
         if flags[i, j, k] == FLAG_SOLID or flags[i, j, k] == FLAG_GAS:
             continue
-        dphi_z = phi[i, j, ti.min(k + 1, Fz.shape[2] - 1)] - phi[i, j, ti.max(k - 1, 0)]
-        if ti.abs(dphi_z) < 0.05:
+        # Full |∇φ| for mesh-independent area weighting (H4)
+        dpx = 0.5 * (
+            phi[ti.min(i + 1, Fz.shape[0] - 1), j, k]
+            - phi[ti.max(i - 1, 0), j, k]
+        )
+        dpy = 0.5 * (
+            phi[i, ti.min(j + 1, Fz.shape[1] - 1), k]
+            - phi[i, ti.max(j - 1, 0), k]
+        )
+        dpz = 0.5 * (
+            phi[i, j, ti.min(k + 1, Fz.shape[2] - 1)]
+            - phi[i, j, ti.max(k - 1, 0)]
+        )
+        gmag = ti.sqrt(dpx * dpx + dpy * dpy + dpz * dpz)
+        if gmag < 0.05:
             continue
         Tc = T[i, j, k]
         if Tc <= T_onset_K:
@@ -114,11 +140,13 @@ def apply_vapor_recoil_clausius_clapeyron(
         exponent = ti.max(ti.min(exponent, 12.0), -8.0)
         P_vap = C_acc * P_ref_Pa * ti.math.exp(exponent) * ramp
         rho_ref = _cell_rho(alloy_id, i, j, k, rho_wire, rho_plate)
-        F_peak_lu = _wf_pressure_to_Fz_lu(P_vap, dt, dx, rho_ref)
+        F_peak_lu = _wf_pressure_to_Fz_lu_grad(P_vap, gmag, dt, dx, rho_ref)
         di = ti.f32(i) - arc_i
         dj = ti.f32(j) - arc_j
         r2 = di * di + dj * dj
-        Fz[i, j, k] += -F_peak_lu * ti.math.exp(-r2 * inv2s2)
+        # Direction along −∇φ (into the metal) with magnitude from |∇φ| weight
+        nz_n = dpz / (gmag + eps)
+        Fz[i, j, k] += -F_peak_lu * ti.abs(nz_n) * ti.math.exp(-r2 * inv2s2)
 
 
 @ti.kernel

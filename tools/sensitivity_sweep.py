@@ -255,30 +255,59 @@ def _run_job_dict(job: dict[str, Any], n_steps: int) -> dict[str, Any]:
     init_taichi(backend=os.environ.get("WAAM_BACKEND", "cuda"))
     tmp_path = _sweep_tmp_path()
     try:
+        # Post-fix sweeps must not abort mid-case on Lorentz strict_mode
+        # (residual gate); clamps are still recorded in telemetry.
+        sim = job.setdefault("simulation", {})
+        sim["strict_mode"] = False
+        adv = job.setdefault("advanced_physics", {})
+        adv.setdefault("lorentz_jacobi_iters", 600)
+        adv.setdefault("lorentz_jacobi_tol", 1e-3)
         with open(tmp_path, "w", encoding="utf-8") as fh:
             yaml.safe_dump(job, fh, sort_keys=False)
         twin = WAAMTwin.from_job(tmp_path)
+        twin.strict_mode = False
         twin.reset()
+        # Prefer equal physical travel when WAAM_TRAVEL_MM is set (post-fix).
+        travel_mm = os.environ.get("WAAM_TRAVEL_MM")
+        if travel_mm:
+            from waam_twin.validation.bead_helpers import steps_for_travel
+            n_steps = steps_for_travel(
+                float(travel_mm) * 1e-3, twin.travel_speed_m_s, twin.grid.dt
+            )
+            max_steps = os.environ.get("WAAM_MAX_BEAD_STEPS")
+            if max_steps:
+                n_steps = min(n_steps, int(max_steps))
         n_steps, x_start, y_m, dir_x = plan_linear_bead_run(twin, job, n_steps=n_steps)
         run_bead_travel(twin, n_steps, x_start_m=x_start, y_m=y_m, direction_x=dir_x)
         W_mm, D_mm, n_liq = measure_pool_mm(twin)
+        from waam_twin.benchmark import measure_fusion_zone_mm
+        fusion = measure_fusion_zone_mm(twin)
         bead = measure_bead_metrics(twin)
         telem = twin.get_telemetry()
         ref = job.get("reference") or {}
         W_ref = ref.get("pool_width_mm")
         D_ref = ref.get("pool_depth_mm")
+        # Report fusion W/D as primary (matches claim.pool_metric)
+        W_rep = float(fusion.get("fusion_width_mm", W_mm) or W_mm)
+        D_rep = float(fusion.get("fusion_depth_mm", D_mm) or D_mm)
         out: dict[str, Any] = {
-            "pool_width_mm": float(W_mm),
-            "pool_depth_mm": float(D_mm),
+            "pool_width_mm": W_rep,
+            "pool_depth_mm": D_rep,
+            "pool_width_fl_bbox_mm": float(W_mm),
+            "pool_depth_fl_bbox_mm": float(D_mm),
             "n_liquid": int(n_liq),
             "bead_height_mm": float(bead.get("bead_height_mm", telem.get("bead_height_mm", 0))),
             "peak_temp_C": float(telem.get("peak_temp_C", 0)),
             "n_steps": int(n_steps),
+            "travel_mm": float(n_steps) * float(twin.grid.dt) * float(twin.travel_speed_m_s) * 1000.0,
             "dx_mm": float(twin.grid.dx * 1000.0),
             "grid": f"{twin.grid.nx}×{twin.grid.ny}×{twin.grid.nz}",
+            "force_clamp_steps": int(telem.get("force_clamp_steps", 0) or 0),
+            "mach_clamp_steps": int(telem.get("mach_clamp_steps", 0) or 0),
+            "max_u_ms": float(telem.get("marangoni_vel_ms", 0) or 0),
         }
         if W_ref is not None and D_ref is not None:
-            out["macro_err_pct"] = pool_error_pct(W_mm, D_mm, float(W_ref), float(D_ref))
+            out["macro_err_pct"] = pool_error_pct(W_rep, D_rep, float(W_ref), float(D_ref))
         return out
     finally:
         tmp_path.unlink(missing_ok=True)

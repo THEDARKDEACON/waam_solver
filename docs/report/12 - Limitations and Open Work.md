@@ -51,16 +51,35 @@ Several things that look like validation are not:
 
 ---
 
-## The sensitivity result I cannot yet explain
+## Pre-fix results are INVALID (rebuild notice)
 
-Discussed in [[10 - Validation, Calibration and Results]], repeated here because it is the most scientifically interesting open question in the project.
+A full audit found critical defects that make **all** prior calibration, mesh-convergence,
+and force-sensitivity results scientifically invalid:
 
-Sixteen toggles — Lorentz, gas shear, vapour recoil, evaporative cooling, hydrostatic gravity, droplet impact pressure, arc surface weighting, radiation, and every convection and gas-jet variation — moved predicted pool width and depth by **exactly zero** on my calibrated case. Meanwhile bead freeze, contact angle, wire feed and cell size dominated completely.
+| ID | Defect | Effect |
+|----|--------|--------|
+| **C1** | Substrate melt forced to `SOLID` every step | Fusion-zone velocity exactly 0; all body forces disconnected |
+| **C4** | Wetting BC invented precursor-film metal | Phantom φ mass ≫ wire feed |
+| **C3** | Equal *step* counts across meshes | Mesh study confounded with physical time |
+| **H6** | Enthalpy cap before `cp` init | Step-1 discarded ~plate enthalpy |
+| **H2** | Deposition pass 3 reset pool T/u | Droplet heat double-counted; flow wiped |
+| **H3** | Trailing freeze | Geometric prior setting pool length; energy unlogged |
 
-I offered three candidate explanations (genuine subdominance, a resolution artefact of the short sweep, or a wiring problem) and I cannot currently distinguish them. Resolving this is worth more than implementing another force.
+**Resolution (rebuild Phases 0–1):** C1/C4/H2/H6 fixed; trailing freeze off by default;
+mesh studies use equal travel; sensitivity zero-response is explained by C1, not by
+force subdominance. See `docs/VERIFICATION.md`, `docs/CALIBRATION.md`,
+`docs/ENERGY_LEDGER.md`.
 
-> [!todo] What I would do about it
-> Rerun the sweep at the full 8000 steps on the production mesh, so the baseline is the calibrated pool rather than a 2.0 mm stub, and add a numeric force-magnitude ranking table to the ablation output rather than only asserting presence and ordering. And I should write the conclusion into the prose documentation — at present it exists only in raw sweep output, which is not the same as having reported it.
+Re-run the sensitivity sweep and mesh GCI after the fixes before quoting any
+width/depth number. Historical `auto_calibrate` / mesh JSON baselines are superseded.
+
+## The sensitivity result — explained
+
+Sixteen toggles moved predicted pool width and depth by **exactly zero** on the
+calibrated case. That is now understood as **C1**: substrate liquid was forced
+`SOLID` every step, so Marangoni / Lorentz / buoyancy never acted on the fusion
+zone. The geometric priors (bead freeze, contact angle, wire feed, cell size)
+dominated because they were the only operators still connected to the QoI.
 
 ---
 
@@ -76,7 +95,12 @@ I offered three candidate explanations (genuine subdominance, a resolution artef
 
 ## Numerical caveats I have documented rather than fixed
 
-**The collision operator is not what its filename suggests.** `cumulant_kernel.py` implements a two-relaxation-rate central-moment MRT, with higher moments projected onto equilibrium. Worse, earlier releases relaxed everything at a single rate while calling it MRT — that is central-moment SRT, and any result produced before the fix must be described that way. This is a retroactive correction to my own earlier reporting and it is in the README.
+**The collision operator is not what its filename suggested.** Operators now live in
+`collision.py` (with `cumulant_kernel.py` as a re-export shim). The kernel is a
+two-relaxation-rate central-moment MRT, with higher moments projected onto
+equilibrium — not a Geier-style cumulant operator. Earlier releases relaxed
+everything at a single rate while calling it MRT; that is central-moment SRT,
+and any result produced before the fix must be described that way.
 
 **Variable-viscosity MRT is unimplemented.** The two-rate collision uses a uniform relaxation rate; per-cell temperature-dependent viscosity works only on the single-relaxation path.
 

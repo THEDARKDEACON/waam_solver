@@ -16,7 +16,7 @@ W = (
 OPP = (0, 2, 1, 4, 3, 6, 5, 8, 7, 10, 9, 12, 11, 14, 13, 16, 15, 18, 17)
 
 # Core SoA volume fields always allocated by WAAMGrid (see grid.py).
-N_CORE_VOLUME = 27
+N_CORE_VOLUME = 28  # includes H_tmp (M1 advection ping-pong)
 # flags counted separately in estimated_vram_mb
 N_FLAGS = 1
 N_VOF_OPTIONAL = 1

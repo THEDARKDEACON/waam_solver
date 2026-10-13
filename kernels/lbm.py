@@ -281,6 +281,7 @@ def stream(
     nx: ti.i32,
     ny: ti.i32,
     nz: ti.i32,
+    periodic_x: ti.i32,
 ):
     """
     Pull-scheme streaming: each cell pulls its incoming populations from
@@ -288,8 +289,8 @@ def stream(
 
     Solid boundaries: bounce-back rule (no-slip condition).
     Gas cells: free-slip (zero-gradient) — Neumann BC.
-    x-axis is periodic (required by the Poiseuille validation channel);
-    y/z clamp (zero-gradient).
+    Default: clamped (no-flux) on all axes for production beads (M5).
+    Set periodic_x=1 for the Poiseuille validation channel only.
     """
     for i, j, k in flags:
         flag = flags[i, j, k]
@@ -301,13 +302,24 @@ def stream(
             nj = j - EY[q]
             nk = k - EZ[q]
 
-            ni_p = (ni + nx) % nx
+            # ti.select avoids if/else variable-scope issues in Taichi.
+            ni_p = ti.select(
+                periodic_x != 0,
+                (ni + nx) % nx,
+                ti.max(0, ti.min(ni, nx - 1)),
+            )
             nj_p = ti.max(0, ti.min(nj, ny - 1))
             nk_p = ti.max(0, ti.min(nk, nz - 1))
 
+            # Out-of-domain under non-periodic → bounce-back (closed walls)
+            oob = (
+                (periodic_x == 0 and (ni < 0 or ni >= nx))
+                or nj < 0 or nj >= ny
+                or nk < 0 or nk >= nz
+            )
             if flag == FLAG_GAS:
                 f_dst[q, i, j, k] = f_src[q, ni_p, nj_p, nk_p]
-            elif flags[ni_p, nj_p, nk_p] == FLAG_SOLID:
+            elif oob or flags[ni_p, nj_p, nk_p] == FLAG_SOLID:
                 f_dst[q, i, j, k] = f_src[OPP[q], i, j, k]
             else:
                 f_dst[q, i, j, k] = f_src[q, ni_p, nj_p, nk_p]

@@ -121,7 +121,7 @@ def run(n_steps: int = 800, threshold: float = 8.0) -> float:
             nz_solid, T_amb, twin.cp_rho, g.FLAG_SOLID,
         )
         kernels.advect_diffuse_temperature(
-            g.H, g.T, g.ux, g.uy, g.uz, g.flags,
+            g.H, g.H, g.T, g.ux, g.uy, g.uz, g.flags,
             twin.alpha_lu, 1.0,
             g.FLAG_SOLID, g.FLAG_GAS,
             twin.cp_rho, g.nx, g.ny, g.nz,

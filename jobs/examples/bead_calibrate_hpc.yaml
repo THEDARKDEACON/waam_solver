@@ -12,6 +12,7 @@ simulation:
   enable_wetting: true
   enable_hydrostatic_gravity: true
   enable_bead_freeze: true
+  enable_trailing_solidify: false
   enable_droplet_impact_pressure: true
   enable_recoil: true
   use_recoil_clausius_clapeyron: true
@@ -57,7 +58,7 @@ arc_physics:
   pressure_pa: 150.0
   pressure_sigma_mm: 2.0
 advanced_physics:
-  evap_cooling_scale: 25.0
+  evap_cooling_scale: 1.0
   T_boiling_K: 3000.0
   recoil_accommodation: 0.25
   L_vapor_J_kg: 6.0e6

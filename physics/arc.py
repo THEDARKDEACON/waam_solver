@@ -56,17 +56,45 @@ def normalize_goldak_fractions(ff: float, fr: float) -> tuple[float, float]:
     return 2.0 * float(ff) / s, 2.0 * float(fr) / s
 
 
+def _arc_power_W(twin: "WAAMTwin") -> tuple[float, float]:
+    """
+    Phase 4 energy split: return (Q_inject, eta_inject) for the arc surface
+    source.
+
+    When ``twin.energy_split`` is True, Q_arc = η·Q − Q_droplet_booked, where
+    Q_droplet_booked is the enthalpy *actually* deposited by gas→fluid
+    conversion on the previous step (not the theoretical wire power). Subtracting
+    the theoretical droplet power after removing deposition pass-3 starved the
+    pool (~600 W arc vs ~1600 W ηQ).
+    """
+    if not getattr(twin, "energy_split", False):
+        return float(twin.Q_w), float(twin.eta)
+    from .heat_source import energy_split_W
+    split = energy_split_W(twin)
+    twin._last_energy_split = split
+    dt = max(float(twin.grid.dt), 1e-30)
+    # Prefer previous-step booking (inject runs before this step's deposition).
+    booked_J = float(
+        getattr(twin, "_droplet_enthalpy_booked_J_prev", 0.0)
+        or getattr(twin, "_droplet_enthalpy_booked_J_step", 0.0)
+    )
+    booked_W = booked_J / dt
+    q_arc = max(0.0, float(split["Q_total_W"]) - booked_W)
+    return q_arc, 1.0
+
+
 @dataclass
 class Gaussian2D:
     """Default surface Gaussian — production path."""
 
     def inject(self, twin: "WAAMTwin", g: "WAAMGrid", arc_i: float, arc_j: float, arc_k: float) -> None:
         pen_cells, enable = _arc_weight_args(twin)
+        Q, eta = _arc_power_W(twin)
         kernels.inject_arc_heat(
             g.H, g.flags, g.phi, g.f_l, g.arc_norm_buf,
             arc_i, arc_j, arc_k,
-            twin.Q_w, twin.sigma_cells,
-            g.dt, g.dx ** 3, twin.eta,
+            Q, twin.sigma_cells,
+            g.dt, g.dx ** 3, eta,
             pen_cells, enable,
             g.FLAG_SOLID, g.FLAG_GAS,
         )
@@ -116,11 +144,12 @@ class Goldak3D:
             dir_y = float(dir_y) / horiz
         pen_cells, enable = _arc_weight_args(twin)
         a_f, a_r, b, c = self._resolved_axes(twin)
+        Q, eta = _arc_power_W(twin)
         kernels.inject_goldak_heat(
             g.H, g.flags, g.phi, g.f_l, g.arc_norm_buf,
             arc_i, arc_j, arc_k,
-            twin.Q_w,
-            g.dt, g.dx ** 3, twin.eta,
+            Q,
+            g.dt, g.dx ** 3, eta,
             dir_x, dir_y, self.ff, self.fr,
             a_f, a_r, b, c,
             pen_cells, enable,

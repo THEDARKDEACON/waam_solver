@@ -225,8 +225,11 @@ def update_phase(
     Solid:  H ≤ H_sol  →  f_l = 0,  T = H / (ρ·cp)
     Liquid: H ≥ H_liq  →  f_l = 1,  T = T_liq + (H - H_liq) / (ρ·cp)
     """
+    # M9: include mushy-range sensible heat so H_liq = cp·T_liq + L
+    # (previously H_liq = cp·T_sol + L dropped ~cp·ΔT_mush ≈ 3 % of L).
     H_sol = cp_rho * T_solidus
-    H_liq = H_sol + L_rho
+    H_liq = cp_rho * T_liquidus + L_rho
+    dH_mush = H_liq - H_sol + 1e-9
 
     for i, j, k in H:
         h = H[i, j, k]
@@ -237,7 +240,7 @@ def update_phase(
             f_l[i, j, k] = 1.0
             T[i, j, k]   = T_liquidus + (h - H_liq) / cp_rho
         else:
-            fl = (h - H_sol) / L_rho
+            fl = (h - H_sol) / dH_mush
             f_l[i, j, k] = fl
             T[i, j, k]   = T_solidus + fl * (T_liquidus - T_solidus)
 
@@ -296,7 +299,8 @@ def _limited_upwind_grad(
 
 @ti.kernel
 def advect_diffuse_temperature(
-    H:    ti.template(),    # Updated in-place
+    H:    ti.template(),    # Updated in-place (destination)
+    H_src: ti.template(),   # M1: neighbour reads (pre-step snapshot)
     T:    ti.template(),
     ux:   ti.template(),
     uy:   ti.template(),
@@ -329,7 +333,7 @@ def advect_diffuse_temperature(
             continue
 
         T_c = T[i, j, k]
-        H_c = H[i, j, k]
+        H_c = H_src[i, j, k]
 
         # --- Diffusion: central differences on T, gas faces adiabatic ---
         T_im = _masked_at(T, flags, i - 1, j, k, T_c, FLAG_GAS, nx, ny, nz)
@@ -347,18 +351,18 @@ def advect_diffuse_temperature(
             v = uy[i, j, k]
             w = uz[i, j, k]
 
-            H_im = _masked_at(H, flags, i - 1, j, k, H_c, FLAG_GAS, nx, ny, nz)
-            H_ip = _masked_at(H, flags, i + 1, j, k, H_c, FLAG_GAS, nx, ny, nz)
-            H_imm = _masked_at(H, flags, i - 2, j, k, H_im, FLAG_GAS, nx, ny, nz)
-            H_ipp = _masked_at(H, flags, i + 2, j, k, H_ip, FLAG_GAS, nx, ny, nz)
-            H_jm = _masked_at(H, flags, i, j - 1, k, H_c, FLAG_GAS, nx, ny, nz)
-            H_jp = _masked_at(H, flags, i, j + 1, k, H_c, FLAG_GAS, nx, ny, nz)
-            H_jmm = _masked_at(H, flags, i, j - 2, k, H_jm, FLAG_GAS, nx, ny, nz)
-            H_jpp = _masked_at(H, flags, i, j + 2, k, H_jp, FLAG_GAS, nx, ny, nz)
-            H_km = _masked_at(H, flags, i, j, k - 1, H_c, FLAG_GAS, nx, ny, nz)
-            H_kp = _masked_at(H, flags, i, j, k + 1, H_c, FLAG_GAS, nx, ny, nz)
-            H_kmm = _masked_at(H, flags, i, j, k - 2, H_km, FLAG_GAS, nx, ny, nz)
-            H_kpp = _masked_at(H, flags, i, j, k + 2, H_kp, FLAG_GAS, nx, ny, nz)
+            H_im = _masked_at(H_src, flags, i - 1, j, k, H_c, FLAG_GAS, nx, ny, nz)
+            H_ip = _masked_at(H_src, flags, i + 1, j, k, H_c, FLAG_GAS, nx, ny, nz)
+            H_imm = _masked_at(H_src, flags, i - 2, j, k, H_im, FLAG_GAS, nx, ny, nz)
+            H_ipp = _masked_at(H_src, flags, i + 2, j, k, H_ip, FLAG_GAS, nx, ny, nz)
+            H_jm = _masked_at(H_src, flags, i, j - 1, k, H_c, FLAG_GAS, nx, ny, nz)
+            H_jp = _masked_at(H_src, flags, i, j + 1, k, H_c, FLAG_GAS, nx, ny, nz)
+            H_jmm = _masked_at(H_src, flags, i, j - 2, k, H_jm, FLAG_GAS, nx, ny, nz)
+            H_jpp = _masked_at(H_src, flags, i, j + 2, k, H_jp, FLAG_GAS, nx, ny, nz)
+            H_km = _masked_at(H_src, flags, i, j, k - 1, H_c, FLAG_GAS, nx, ny, nz)
+            H_kp = _masked_at(H_src, flags, i, j, k + 1, H_c, FLAG_GAS, nx, ny, nz)
+            H_kmm = _masked_at(H_src, flags, i, j, k - 2, H_km, FLAG_GAS, nx, ny, nz)
+            H_kpp = _masked_at(H_src, flags, i, j, k + 2, H_kp, FLAG_GAS, nx, ny, nz)
 
             gx = _limited_upwind_grad(u, H_imm, H_im, H_c, H_ip, H_ipp)
             gy = _limited_upwind_grad(v, H_jmm, H_jm, H_c, H_jp, H_jpp)
@@ -540,6 +544,7 @@ def refresh_thermal_properties_dual(
 @ti.kernel
 def advect_diffuse_temperature_variable(
     H: ti.template(),
+    H_src: ti.template(),
     T: ti.template(),
     ux: ti.template(),
     uy: ti.template(),
@@ -561,7 +566,7 @@ def advect_diffuse_temperature_variable(
             continue
 
         T_c = T[i, j, k]
-        H_c = H[i, j, k]
+        H_c = H_src[i, j, k]
         alpha_lu = alpha_lu_field[i, j, k]
         cp_rho = cp_rho_field[i, j, k]
 
@@ -580,18 +585,18 @@ def advect_diffuse_temperature_variable(
             v = uy[i, j, k]
             w = uz[i, j, k]
 
-            H_im = _masked_at(H, flags, i - 1, j, k, H_c, FLAG_GAS, nx, ny, nz)
-            H_ip = _masked_at(H, flags, i + 1, j, k, H_c, FLAG_GAS, nx, ny, nz)
-            H_imm = _masked_at(H, flags, i - 2, j, k, H_im, FLAG_GAS, nx, ny, nz)
-            H_ipp = _masked_at(H, flags, i + 2, j, k, H_ip, FLAG_GAS, nx, ny, nz)
-            H_jm = _masked_at(H, flags, i, j - 1, k, H_c, FLAG_GAS, nx, ny, nz)
-            H_jp = _masked_at(H, flags, i, j + 1, k, H_c, FLAG_GAS, nx, ny, nz)
-            H_jmm = _masked_at(H, flags, i, j - 2, k, H_jm, FLAG_GAS, nx, ny, nz)
-            H_jpp = _masked_at(H, flags, i, j + 2, k, H_jp, FLAG_GAS, nx, ny, nz)
-            H_km = _masked_at(H, flags, i, j, k - 1, H_c, FLAG_GAS, nx, ny, nz)
-            H_kp = _masked_at(H, flags, i, j, k + 1, H_c, FLAG_GAS, nx, ny, nz)
-            H_kmm = _masked_at(H, flags, i, j, k - 2, H_km, FLAG_GAS, nx, ny, nz)
-            H_kpp = _masked_at(H, flags, i, j, k + 2, H_kp, FLAG_GAS, nx, ny, nz)
+            H_im = _masked_at(H_src, flags, i - 1, j, k, H_c, FLAG_GAS, nx, ny, nz)
+            H_ip = _masked_at(H_src, flags, i + 1, j, k, H_c, FLAG_GAS, nx, ny, nz)
+            H_imm = _masked_at(H_src, flags, i - 2, j, k, H_im, FLAG_GAS, nx, ny, nz)
+            H_ipp = _masked_at(H_src, flags, i + 2, j, k, H_ip, FLAG_GAS, nx, ny, nz)
+            H_jm = _masked_at(H_src, flags, i, j - 1, k, H_c, FLAG_GAS, nx, ny, nz)
+            H_jp = _masked_at(H_src, flags, i, j + 1, k, H_c, FLAG_GAS, nx, ny, nz)
+            H_jmm = _masked_at(H_src, flags, i, j - 2, k, H_jm, FLAG_GAS, nx, ny, nz)
+            H_jpp = _masked_at(H_src, flags, i, j + 2, k, H_jp, FLAG_GAS, nx, ny, nz)
+            H_km = _masked_at(H_src, flags, i, j, k - 1, H_c, FLAG_GAS, nx, ny, nz)
+            H_kp = _masked_at(H_src, flags, i, j, k + 1, H_c, FLAG_GAS, nx, ny, nz)
+            H_kmm = _masked_at(H_src, flags, i, j, k - 2, H_km, FLAG_GAS, nx, ny, nz)
+            H_kpp = _masked_at(H_src, flags, i, j, k + 2, H_kp, FLAG_GAS, nx, ny, nz)
 
             gx = _limited_upwind_grad(u, H_imm, H_im, H_c, H_ip, H_ipp)
             gy = _limited_upwind_grad(v, H_jmm, H_jm, H_c, H_jp, H_jpp)
@@ -613,6 +618,8 @@ def update_phase_variable_cp(
     H_sol: ti.f32,
     H_liq: ti.f32,
 ):
+    dH_mush = H_liq - H_sol + 1e-9  # M9: includes mushy sensible heat
+    _ = L_rho
     for i, j, k in H:
         h = H[i, j, k]
         cp_rho = cp_rho_field[i, j, k]
@@ -623,7 +630,7 @@ def update_phase_variable_cp(
             f_l[i, j, k] = 1.0
             T[i, j, k] = T_liquidus + (h - H_liq) / (cp_rho + 1e-9)
         else:
-            fl = (h - H_sol) / L_rho
+            fl = (h - H_sol) / dH_mush
             f_l[i, j, k] = fl
             T[i, j, k] = T_solidus + fl * (T_liquidus - T_solidus)
 
@@ -662,7 +669,9 @@ def update_phase_dual(
             f_l[i, j, k] = 1.0
             T[i, j, k] = T_liq + (h - H_liq) / (cp_rho + 1e-9)
         else:
-            fl = (h - H_sol) / L_rho
+            dH_mush = H_liq - H_sol + 1e-9  # M9
+            _ = L_rho
+            fl = (h - H_sol) / dH_mush
             f_l[i, j, k] = fl
             T[i, j, k] = T_sol + fl * (T_liq - T_sol)
 
@@ -824,10 +833,11 @@ def apply_evaporative_enthalpy_sink(
         dphi = 0.0
         if k > 0 and k < nz - 1:
             dphi = ti.abs(phi[i, j, k + 1] - phi[i, j, k - 1])
+        # M3: evaporative sink on free-surface cells only (not bulk hot liquid).
         is_surface = (has_gas == 1) or (dphi >= 0.05) or (phi[i, j, k] < 0.9)
-        is_hot_liquid = f_l[i, j, k] > 0.5
-        if (not is_surface) and (not is_hot_liquid):
+        if not is_surface:
             continue
+        _ = f_l[i, j, k]  # kept for API / future surface-liquid gating
 
         ramp = 1.0
         if Tc < T_boil_K:
@@ -878,7 +888,7 @@ def clamp_enthalpy_ceiling_scalar(
     Discarded energy is accumulated in ``energy_J_buf`` [J] via ΔH·Δx³.
     """
     H_sol = cp_rho * T_solidus
-    H_liq = H_sol + L_rho
+    H_liq = cp_rho * T_liquidus + L_rho  # M9-consistent
     h_cap_liquid = H_liq + cp_rho * (T_vapor_cap - T_liquidus)
     h_cap_solid = cp_rho * T_vapor_cap
     dx3 = dx * dx * dx

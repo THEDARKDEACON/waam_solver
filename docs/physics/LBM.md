@@ -3,7 +3,8 @@
 ## Scheme
 
 - **Lattice:** D3Q19. Collision is chosen by job `use_srt` (not by preset alone): SRT or two-rate central-moment MRT. Presets supply a default `use_srt` that jobs override and lock.
-- **Forcing:** Guo et al. (2002) body-force scheme for Marangoni, buoyancy, arc pressure, CSF. Variable-τ MRT uses regenerate-and-rediff \(S=0.5\,F_i\) plus an \(f_0\) mass correction (see `cumulant_kernel.py`, `test_mrt_force_mass`).
+- **Collision (use_srt=false):** D3Q19 TRT / two-rate (Ginzburg) with shear rate \(\omega_e=1/\tau_s\) and odd rate from magic \(\Lambda=(\tau_s-\tfrac12)(\tau_o-\tfrac12)=\tfrac14\). Mass-conserving by construction. Not a full multi-rate MRT or Geier cumulant. See `collision.py`, `test_mrt_force_mass`.
+- **Forcing:** Guo et al. (2002) body-force scheme for Marangoni, buoyancy, arc pressure, CSF, with semi-implicit Guo–Darcy in the mushy zone.
 - **Mushy zone:** Semi-implicit Carman–Kozeny drag inside collide. Job `C_darcy` is defined at `C_darcy_ref_dt_s`; kernels use \(C_{\mathrm{eff}}=C\cdot(\Delta t/\Delta t_{\mathrm{ref}})\).
 - **Streaming:** Pull scheme with bounce-back on solid; gas cells use pulled populations.
 

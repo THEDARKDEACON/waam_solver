@@ -1,0 +1,100 @@
+# HPC clamp-clearance — TRT + Ma≤0.08 at Marangoni u~2.5 m/s.
+# Needs ≥16 GB VRAM. See docs/HPC_CLAMP_CLEARANCE.md.
+# Goal: force_clamp_steps=mach_clamp_steps=0. Not a Park lock.
+simulation:
+  preset: high
+  backend: cuda
+  physics_tier: full
+  domain_mm: [60, 30, 20]
+  dx_mm: 0.10
+  enable_vof: true
+  enable_csf_tension: true
+  enable_wetting: true
+  enable_hydrostatic_gravity: true
+  enable_bead_freeze: true
+  enable_trailing_solidify: false
+  enable_droplet_impact_pressure: true
+  enable_recoil: true
+  use_recoil_clausius_clapeyron: true
+  enable_lorentz: true
+  enable_gas_shear: true
+  enable_enthalpy_cap: true
+  enable_evaporative_cooling: true
+  arc_surface_weighting: true
+  strict_mode: false
+  use_variable_tau: true
+  use_srt: false
+  auto_dt_ma: true
+  u_design_m_s: 2.5
+  u_mach_limit_lu: 0.08
+  force_limit_lu: 0.05
+  force_limit_m_s2: 12500.0
+  C_darcy: 160000.0
+  C_darcy_ref_dt_s: 3.2e-06
+  warn_on_force_clamp: false
+plate:
+  thickness_mm: 9.0
+  size_mm: [40, 18]
+material: materials/validated/ER70S-6.v1.yaml
+calibration: null
+torch_path_csv: jobs/paths/bead_clamp_hpc.csv
+heat_source: goldak
+goldak:
+  ff: 0.6
+  fr: 1.4
+  a_front_mm: 2.0
+  a_rear_mm: 3.8
+  b_mm: 2.8
+  c_mm: 2.6
+arc_physics:
+  sigma_mm: 2.0
+  penetration_mm: 2.1
+  T_vapor_cap_K: 3200.0
+  surface_weighting: true
+  pressure_model: lin_eagar
+  pressure_pa: 150.0
+  pressure_sigma_mm: 2.0
+advanced_physics:
+  evap_cooling_scale: 1.0
+  T_boiling_K: 3000.0
+  recoil_accommodation: 0.25
+  L_vapor_J_kg: 6.0e6
+  R_spec_vapor_J_kgK: 149.0
+  lorentz_jacobi_iters: 600
+  lorentz_jacobi_tol: 0.001
+  sigma_liquid_Sm: 1.0e6
+  sigma_solid_Sm: 1.0e5
+  gas_jet_velocity_m_s: 12.0
+  gas_shear_coeff: 1.0
+  marangoni_scale: 1.0
+process:
+  current_A: 91
+  voltage_V: 22.0
+  arc_efficiency: 0.82
+  travel_speed_mm_s: 10.0
+  wire_feed_m_min: 7.0
+  wire_diameter_mm: 1.0
+  droplet_length_mm: 2.5
+  T_ambient_K: 293
+  stickout_mm: 12.0
+  ctwd_mm: 15.0
+  transfer_mode: auto
+  droplet_size_jitter: 0.05
+  impact_lead_angle_deg: 5.0
+  power_factor: 1.0
+  duty_cycle: 1.0
+deposition:
+  superheat_K: 400.0
+  footprint_sigma_scale: 1.0
+  trailing_solidify_lookback_mm: 6.0
+  trailing_solidify_temp_margin_K: 10.0
+surface_wetting:
+  contact_angle_deg: 80.0
+heat_loss:
+  convection: true
+  radiation: true
+  h_conv: 35.0
+claim:
+  mesh_tier: hpc
+  pool_metric: fusion_zone
+  notes: "HPC clamp clearance probe — not a Park lock."

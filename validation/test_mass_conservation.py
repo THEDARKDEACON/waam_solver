@@ -37,7 +37,7 @@ def run(n_steps: int = 500, threshold_pct: float = 2.0) -> float:
             g.f_dst, g.f_src,
             g.flags, g.FLAG_SOLID, g.FLAG_GAS,
             g.nx, g.ny, g.nz,
-        )
+        , 0)
         g.swap_buffers()
 
     rho1 = float(g.rho.to_numpy().mean())

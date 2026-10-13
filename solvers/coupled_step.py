@@ -201,9 +201,19 @@ def coupled_step(
 
     forces.clear_forces(g.Fx, g.Fy, g.Fz)
     twin._enthalpy_cap_energy_J_step = 0.0
+    # Droplet booking from *previous* step is consumed by _arc_power_W when
+    # energy_split is on; clear after inject so a no-droplet step restores full ηQ.
+    twin._droplet_enthalpy_booked_J_prev = float(
+        getattr(twin, "_droplet_enthalpy_booked_J_step", 0.0)
+    )
+    twin._droplet_enthalpy_booked_J_step = 0.0
 
     if twin.enable_ctwd:
         update_ctwd(twin, g)
+
+    # H6: fill cp/α/dγ/τ fields BEFORE any enthalpy ceiling so the cap uses
+    # real ρ·cp (previously cp_rho_field was 0 → step-1 wiped the plate).
+    use_fields = _refresh_thermal(twin, g)
 
     # Peak arc pressure: Lin–Eagar I²/σ² or constant Pa (see weld_forces).
     current_pressure = weld_forces.arc_pressure_peak_pa(twin)
@@ -211,7 +221,15 @@ def coupled_step(
 
     if is_welding:
         twin.arc_source.inject(twin, g, arc_i, arc_j, arc_k)
+        # Ledger arc energy actually injected (Phase 4 split-aware)
+        from ..physics.ledger import ensure_ledger
+        from ..physics.arc import _arc_power_W
+        Q_arc, eta_arc = _arc_power_W(twin)
+        ensure_ledger(twin).record_arc(float(eta_arc) * float(Q_arc) * float(g.dt))
         _clamp_enthalpy_ceiling(twin, g)
+        ensure_ledger(twin).record_cap(
+            float(getattr(twin, "_enthalpy_cap_energy_J_step", 0.0))
+        )
 
         sim_time = twin._step_n * g.dt
         if twin.droplet_freq > 0:
@@ -241,6 +259,10 @@ def coupled_step(
                 )
                 max_r_cells = max(16.0, max_foot_mm / max(g.dx * 1000.0, 1e-9))
                 placed_real = 0.0
+                # M7: H = cp·T_sol + L + cp·(T_drop − T_liq). The kernel uses
+                # H = cp·T_drop + L_eff, so L_eff = L − cp·(T_liq − T_sol).
+                dT_mush = float(twin.mat.T_liquidus - twin.mat.T_solidus)
+                L_eff = float(twin.L_rho) - float(twin.cp_rho) * dT_mush
                 for _ in range(16):
                     # Resume budget from metal already placed so retries expand
                     # the footprint instead of re-filling with thermal no-ops.
@@ -252,7 +274,7 @@ def coupled_step(
                         r_try, drop_r,
                         drop_vol,
                         T_drop,
-                        twin.cp_rho, twin.L_rho,
+                        twin.cp_rho, L_eff,
                         1.0,  # lattice density (rho_lu ≈ 1 convention)
                         g.deposit_vol_buf, g.deposit_real_buf, g.dx ** 3,
                         g.FLAG_GAS, g.FLAG_FLUID, g.FLAG_SOLID,
@@ -276,19 +298,33 @@ def coupled_step(
                         )
                 twin._deposited_volume_m3 += placed_real
                 twin._n_droplets_fired += 1
+                # Ledger droplet enthalpy for converted volume
+                from ..physics.ledger import ensure_ledger
+                H_drop = (
+                    float(twin.cp_rho) * float(twin.mat.T_solidus)
+                    + float(twin.L_rho)
+                    + float(twin.cp_rho) * (float(T_drop) - float(twin.mat.T_liquidus))
+                )
+                drop_H_J = H_drop * placed_real
+                twin._droplet_enthalpy_booked_J_step = float(drop_H_J)
+                ensure_ledger(twin).record_droplet_enthalpy(drop_H_J)
                 weld_forces.apply_droplet_impact(twin, g, arc_i, arc_j, arc_k, drop_r, drop_mass)
 
+    # Properties already refreshed at step start (H6); refresh again after
+    # deposition so newly created metal cells get correct tables.
     use_fields = _refresh_thermal(twin, g)
+    # M1: snapshot H before advection so neighbour reads are race-free.
+    g.H_tmp.copy_from(g.H)
     if use_fields:
         thermal.advect_diffuse_variable(
-            g.H, g.T, g.ux, g.uy, g.uz, g.flags,
+            g.H, g.H_tmp, g.T, g.ux, g.uy, g.uz, g.flags,
             g.alpha_lu_field, g.cp_rho_field, 1.0,
             g.FLAG_SOLID, g.FLAG_GAS,
             g.nx, g.ny, g.nz,
         )
     else:
         thermal.advect_diffuse_temperature(
-            g.H, g.T, g.ux, g.uy, g.uz, g.flags,
+            g.H, g.H_tmp, g.T, g.ux, g.uy, g.uz, g.flags,
             twin.alpha_lu, 1.0,
             g.FLAG_SOLID, g.FLAG_GAS,
             twin.cp_rho, g.nx, g.ny, g.nz,
@@ -344,7 +380,7 @@ def coupled_step(
             float(twin.R_spec_vapor_J_kgK),
             float(twin.P_vapor_ref_Pa),
             float(getattr(twin, "recoil_accommodation", 0.54)),
-            float(getattr(twin, "evap_cooling_scale", 25.0)),
+            float(getattr(twin, "evap_cooling_scale", 1.0)),
             g.dt, g.dx,
             g.evap_energy_J_buf,
             g.FLAG_GAS,
@@ -353,6 +389,8 @@ def coupled_step(
         e_step = float(g.evap_energy_J_buf[None])
         twin._evap_energy_J_step = e_step
         twin._evap_energy_J_cum = float(getattr(twin, "_evap_energy_J_cum", 0.0)) + e_step
+        from ..physics.ledger import ensure_ledger
+        ensure_ledger(twin).record_evap(e_step)
         _update_phase(twin, g)
     else:
         twin._evap_energy_J_step = 0.0
@@ -471,7 +509,13 @@ def coupled_step(
         )
 
     if is_welding and twin.enable_lorentz:
-        weld_forces.solve_lorentz(twin, g, arc_i, arc_j, arc_k)
+        from ..physics.efficiency import lorentz_due
+        if lorentz_due(twin):
+            if getattr(twin, "lorentz_multigrid", False):
+                from ..physics.lorentz_mg import solve_lorentz_multigrid
+                solve_lorentz_multigrid(twin, g, arc_i, arc_j, arc_k)
+            else:
+                weld_forces.solve_lorentz(twin, g, arc_i, arc_j, arc_k)
 
     # Stability: full-tier surface/body forces on coarse grids can drive Ma≫1.
     # Prefer physical force_limit_m_s2 (mesh-scaled LU) when set — Phase 3 / Level A.
@@ -504,7 +548,7 @@ def coupled_step(
 
     C_darcy_eff = float(twin.effective_C_darcy())
     if twin.use_material_tables and twin.use_variable_tau and (not twin.use_srt):
-        # Two-rate central-moment MRT with per-cell μ(T) → τ.
+        # TRT (two-rate) with per-cell μ(T) → τ; magic Λ=1/4 for odd modes.
         lbm.collide_mrt_variable_tau(
             g.f_src, g.f_dst,
             g.rho, g.ux, g.uy, g.uz,
@@ -566,6 +610,7 @@ def coupled_step(
         g.flags,
         g.FLAG_SOLID, g.FLAG_GAS,
         g.nx, g.ny, g.nz,
+        1 if getattr(twin, "periodic_x", False) else 0,
     )
 
     kernels.advect_tracers(
@@ -615,7 +660,13 @@ def coupled_step(
                 twin.L_rho, twin.H_sol, twin.H_liq,
                 g.FLAG_SOLID, g.FLAG_FLUID,
             )
-        if is_welding and twin.enable_bead_freeze:
+        # H3: trailing solidify is a geometric prior that destroys energy.
+        # Disabled by default; enable only for Tier-C heuristic legacy runs.
+        if (
+            is_welding
+            and twin.enable_bead_freeze
+            and getattr(twin, "enable_trailing_solidify", False)
+        ):
             dir_x, dir_y, dir_z = getattr(twin, "_torch_dir_xyz", (1.0, 0.0, 0.0))
             lookback_cells = max(2.0, twin.trailing_solidify_lookback_mm / (g.dx * 1000.0))
             T_freeze = twin.mat.T_liquidus + twin.trailing_solidify_temp_margin_K

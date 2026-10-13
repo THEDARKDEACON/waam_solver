@@ -288,10 +288,9 @@ def feed_wire_surface(
     r_drop2 = droplet_radius * droplet_radius
     foot2 = search_r * search_r
 
-    # Pass 1: gas cells adjacent to pool, near drop centre (preferred surface entry)
+    # M2: mark-then-convert so neighbour tests never see in-flight flags.
+    # Pass 1a — mark eligible (preferred surface entry) into f_l = -1 sentinel
     for i, j, k in ti.ndrange((i_min, i_max), (j_min, j_max), (k_lo, k_hi)):
-        if vol_acc[None] >= target_vol:
-            continue
         if flags[i, j, k] != FLAG_GAS:
             continue
         if _has_metal_neighbor(phi, flags, f_l, i, j, k, FLAG_FLUID, FLAG_SOLID, nx, ny, nz) == 0:
@@ -303,9 +302,17 @@ def feed_wire_surface(
         r_ij2 = di * di + dj * dj
         if r_ij2 > foot2 and r2 > r_drop2:
             continue
+        f_l[i, j, k] = -1.0
+    # Pass 1b — convert marked cells under atomic volume budget
+    for i, j, k in ti.ndrange((i_min, i_max), (j_min, j_max), (k_lo, k_hi)):
+        if vol_acc[None] >= target_vol:
+            continue
+        if flags[i, j, k] != FLAG_GAS or f_l[i, j, k] > -0.5:
+            continue
         reserved = ti.atomic_add(vol_acc[None], cell_vol)
         if reserved >= target_vol:
             ti.atomic_sub(vol_acc[None], cell_vol)
+            f_l[i, j, k] = 0.0
         else:
             flags[i, j, k] = FLAG_FLUID
             f_l[i, j, k] = 1.0
@@ -317,10 +324,8 @@ def feed_wire_surface(
             for q in ti.static(range(19)):
                 f_src[q, i, j, k] = W[q] * rho0
 
-    # Pass 2: widen footprint if volume short (still no vertical column)
+    # Pass 2a — widen footprint (mark only; still no vertical column)
     for i, j, k in ti.ndrange((i_min, i_max), (j_min, j_max), (k_lo, k_hi)):
-        if vol_acc[None] >= target_vol:
-            continue
         if flags[i, j, k] != FLAG_GAS:
             continue
         if _has_metal_neighbor(phi, flags, f_l, i, j, k, FLAG_FLUID, FLAG_SOLID, nx, ny, nz) == 0:
@@ -330,9 +335,17 @@ def feed_wire_surface(
         r_ij2 = di * di + dj * dj
         if r_ij2 > foot2 * 1.44:
             continue
+        f_l[i, j, k] = -1.0
+    # Pass 2b — convert
+    for i, j, k in ti.ndrange((i_min, i_max), (j_min, j_max), (k_lo, k_hi)):
+        if vol_acc[None] >= target_vol:
+            continue
+        if flags[i, j, k] != FLAG_GAS or f_l[i, j, k] > -0.5:
+            continue
         reserved = ti.atomic_add(vol_acc[None], cell_vol)
         if reserved >= target_vol:
             ti.atomic_sub(vol_acc[None], cell_vol)
+            f_l[i, j, k] = 0.0
         else:
             flags[i, j, k] = FLAG_FLUID
             f_l[i, j, k] = 1.0
@@ -344,22 +357,15 @@ def feed_wire_surface(
             for q in ti.static(range(19)):
                 f_src[q, i, j, k] = W[q] * rho0
 
-    # Pass 3: thermal top-up of already-liquid footprint cells. Does NOT consume
-    # the deposit budget — previously it filled vol_acc and starved gas→fluid
-    # conversion / outer radius retries, driving mass_balance ≪ 1.
+    # Clear any leftover M2 eligibility sentinels on gas cells.
     for i, j, k in ti.ndrange((i_min, i_max), (j_min, j_max), (k_lo, k_hi)):
-        if flags[i, j, k] != FLAG_FLUID or f_l[i, j, k] < 0.45:
-            continue
-        di = ti.f32(i) - arc_i
-        dj = ti.f32(j) - arc_j
-        r_ij2 = di * di + dj * dj
-        if r_ij2 > foot2 * 1.44:
-            continue
-        T[i, j, k] = T_drop
-        H[i, j, k] = cp_rho * T_drop + L_rho
-        rho[i, j, k] = rho0
-        for q in ti.static(range(19)):
-            f_src[q, i, j, k] = W[q] * rho0
+        if flags[i, j, k] == FLAG_GAS and f_l[i, j, k] < 0.0:
+            f_l[i, j, k] = 0.0
+
+    # Pass 3 REMOVED (H2 fix): previously reset T/H and populations to rest
+    # on every droplet (~47 Hz), double-counting droplet heat on top of η·V·I
+    # and wiping Marangoni flow under the arc. Droplet enthalpy is booked only
+    # for genuinely converted gas→fluid cells in passes 1–2.
 
 
 # ──────────────────────────────────────────────────────────────────────────────

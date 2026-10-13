@@ -117,9 +117,17 @@ def _run_dx(
     tmp_path = _tmp_job_path()
     t0 = time.perf_counter()
     try:
+        # Mesh studies record clamps as FAIL_CLAMPS — do not abort mid-run on
+        # Lorentz strict_mode (residual gate).
+        sim = job.setdefault("simulation", {})
+        sim["strict_mode"] = False
+        adv = job.setdefault("advanced_physics", {})
+        adv.setdefault("lorentz_jacobi_iters", 600)
+        adv.setdefault("lorentz_jacobi_tol", 1e-3)
         with open(tmp_path, "w", encoding="utf-8") as fh:
             yaml.safe_dump(job, fh, sort_keys=False)
         twin = WAAMTwin.from_job(tmp_path)
+        twin.strict_mode = False
         twin.reset()
 
         if travel_distance_m is not None and travel_distance_m > 0.0:
@@ -315,7 +323,18 @@ def run_mesh_convergence(
         print(f"  {k}: {v}", flush=True)
 
     rows: list[dict[str, Any]] = []
-    travel_m: float | None = None
+    # C3 fix: always compare at equal physical travel — never fixed step counts.
+    # Prefer explicit WAAM_TRAVEL_MM, else model_reference travel, else 8 mm.
+    travel_mm_env = os.environ.get("WAAM_TRAVEL_MM")
+    if travel_mm_env:
+        travel_m: float | None = float(travel_mm_env) * 1e-3
+    else:
+        travel_m = float(model.get("travel_distance_mm", 8.0)) * 1e-3
+    print(
+        f"  equal_travel_distance_mm={travel_m * 1000.0:.3f}  "
+        f"(C3: equal physical time / travel, not equal steps)\n",
+        flush=True,
+    )
 
     for i, dx in enumerate(dx_sorted):
         print(f"\n=== dx_mm={dx:g} ({i + 1}/{len(dx_sorted)}) ===", flush=True)
@@ -326,8 +345,6 @@ def run_mesh_convergence(
             n_steps_override=n_steps,
             backend=backend,
         )
-        if travel_m is None:
-            travel_m = float(row["travel_distance_mm"]) / 1000.0
         rows.append(row)
         clamp_s = (
             f"  clamps: force_steps={row['force_clamp_steps']} "
@@ -346,6 +363,47 @@ def run_mesh_convergence(
         )
 
     verdict = _verdict(rows, gate_pct)
+    # Phase 6: Roache GCI + clamp-invalidates-study
+    from waam_twin.physics.gci import richardson_gci, study_invalid_if_clamps
+
+    clamp_reasons = study_invalid_if_clamps(rows)
+    gci_block: dict[str, Any] = {"valid": False}
+    if len(rows) >= 3 and not clamp_reasons:
+        try:
+            hs = [float(r["dx_mm"]) for r in rows]
+            gci_w = richardson_gci(hs, [float(r["pool_width_mm"]) for r in rows])
+            gci_d = richardson_gci(hs, [float(r["pool_depth_mm"]) for r in rows])
+            gci_block = {
+                "valid": True,
+                "W": {
+                    "p": gci_w.p,
+                    "gci_fine": gci_w.gci_fine,
+                    "f_exact": gci_w.f_exact,
+                    "asymptotic": gci_w.asymptotic,
+                },
+                "D": {
+                    "p": gci_d.p,
+                    "gci_fine": gci_d.gci_fine,
+                    "f_exact": gci_d.f_exact,
+                    "asymptotic": gci_d.asymptotic,
+                },
+                "pass_gci_5pct": (
+                    gci_w.gci_fine <= 0.05 and gci_d.gci_fine <= 0.05
+                ),
+            }
+            if gci_block["pass_gci_5pct"]:
+                verdict["status"] = "PASS_GCI"
+                verdict["reason"] = (
+                    f"GCI_W={100*gci_w.gci_fine:.1f}% GCI_D={100*gci_d.gci_fine:.1f}% "
+                    f"(≤5%); asymptotic W={gci_w.asymptotic} D={gci_d.asymptotic}"
+                )
+        except Exception as exc:  # noqa: BLE001
+            gci_block = {"valid": False, "error": str(exc)}
+    elif clamp_reasons:
+        verdict["status"] = "FAIL_CLAMPS"
+        verdict["reason"] = "; ".join(clamp_reasons[:3])
+        gci_block = {"valid": False, "reasons": clamp_reasons}
+
     report: dict[str, Any] = {
         "tool": "mesh_convergence_report",
         "level": "A_practical_band",
@@ -358,12 +416,13 @@ def run_mesh_convergence(
         ),
         "runs": rows,
         "verdict": verdict,
+        "gci": gci_block,
         "interpretation": (
+            "PASS_GCI = Roache GCI ≤5% on W and D at equal travel (Level B). "
             "PASS_BAND = practical independence in this dx band (Level A). "
             "FAIL_BAND = mesh-locked knobs still absorb grid error — keep locks, "
             "invest in interface/LBM scaling before claiming B. "
-            "FAIL_CLAMPS = raise force/Ma limits or refine dt scaling until clamps "
-            "are inactive, then re-run. "
+            "FAIL_CLAMPS = any force/Ma clamp → study invalid (Phase 6). "
             "C (match experiment at all meshes) requires B first."
         ),
     }

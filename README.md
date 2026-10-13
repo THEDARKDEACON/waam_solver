@@ -1,15 +1,38 @@
 # waam_twin v2
 
-GPU-accelerated WAAM melt-pool digital twin: **Quadrants LBM** + **enthalpy–porosity** solidification + **VOF** free surface.  
+GPU-accelerated WAAM melt-pool digital twin: **Quadrants LBM** + **enthalpy–porosity** solidification + **VOF / free-surface LBM** free surface.  
 Version **2.0.0** — portable presets, YAML materials, validated regression suite.
 
 The compiler is [Quadrants](https://github.com/Genesis-Embodied-AI/quadrants) (independent Taichi fork). Kernel source still uses the `ti` spelling via `waam_twin.compiler`.
+
+> **Rebuild status.** Critical defects C1 (substrate never flows), C4 (wetting
+> invents metal), H6 (step-1 enthalpy wipe), H2 (deposition pass-3) and C3
+> (equal-step mesh studies) have been fixed. **All pre-fix calibration,
+> mesh-convergence and force-sensitivity numbers are invalid.** See
+> [`docs/VERIFICATION.md`](docs/VERIFICATION.md),
+> [`docs/CALIBRATION.md`](docs/CALIBRATION.md),
+> [`docs/ENERGY_LEDGER.md`](docs/ENERGY_LEDGER.md).
+>
+> **Clamp / collision (current).** Shop `dx≈0.4 mm` still hits Mach clamps under
+> Ma≤0.08 — treat as trend/characterisation, not a Level-B GCI lock.
+> `use_srt: false` now selects **TRT** (two-rate, magic Λ=¼) in
+> [`collision.py`](collision.py); the old Hermite-rebuild “MRT” was mass-unstable
+> at τ→0.5005. Clear clamps on HPC at **dx≲0.11 mm**:
+> [`docs/HPC_CLAMP_CLEARANCE.md`](docs/HPC_CLAMP_CLEARANCE.md),
+> [`jobs/examples/bead_clamp_hpc.yaml`](jobs/examples/bead_clamp_hpc.yaml).
 
 ---
 
 ## What this project does
 
-Predicts melt-pool **temperature**, **liquid fraction**, and **Marangoni-driven flow** for wire-arc additive manufacturing. With `physics_tier: full` (VOF on), bead width/depth are partly physics-emergent and partly geometric priors (deposition footprint, trailing solidify). Calibration overlays (arc efficiency η, heat-loss factor, σ scale) tune process terms against reference runs. A `physics_tier: flow` quick-start twin is thermal + LBM flow without a full free-surface bead claim.
+Predicts melt-pool **temperature**, **liquid fraction**, **fusion-zone geometry**
+and **Marangoni-driven flow** for wire-arc additive manufacturing.
+
+* **Tier C (conduction):** thermal + enhanced \(k\) only — shop-speed screening.
+* **Tier F (CFD):** LBM flow + free surface; geometric priors
+  (`enable_trailing_solidify`, deposition footprint fudge) are **off** by default.
+* Global calibration fits only the arc-radius law \(\sigma(I,V,\mathrm{CTWD})\)
+  (+ Tier-C \(\lambda\)); physical force/material knobs are frozen.
 
 **Explicit non-goals:** grain structure, residual-stress FEA, powder DEM, laser ray-tracing, full G-code CAM.
 
@@ -69,13 +92,25 @@ waam_twin/                    ← git repository root (this folder)
 ├── solvers/
 │   └── coupled_step.py       # Single-timestep physics order
 ├── validation/               # Regression tests + baselines
+├── units.py                  # SI ↔ lattice (sole conversion site)
+├── collision.py              # TRT two-rate collide (Λ=1/4); shim: cumulant_kernel.py
+├── measure/                  # Sub-cell geometry + steady-state detector
+├── config_types/             # Typed TwinConfig subsystems
 ├── tools/
-│   ├── auto_calibrate.py          # Fit η/Goldak/recoil to job reference (Park lock)
+│   ├── diagnostics/          # profile_step, pool_state, energy_ledger, clamp_check
+│   ├── auto_calibrate.py          # legacy; prefer bayesian_calibrate
+│   ├── bayesian_calibrate.py      # Global σ(I,V,CTWD) card (Phase 7)
 │   ├── prediction_report.py       # --tier shop|hpc held-out credibility
-│   ├── mesh_convergence_report.py # Frozen-knob multi-dx Level A study
+│   ├── mesh_convergence_report.py # Equal-travel GCI (clamps=fail)
+│   ├── sensitivity_sweep.py       # Force / flag W/D ranking
 │   ├── fit_calibration.py
 │   ├── run_validation_matrix.py
 │   └── benchmark_performance.py
+├── docs/
+│   ├── VERIFICATION.md
+│   ├── CALIBRATION.md
+│   ├── ENERGY_LEDGER.md
+│   └── HPC_CLAMP_CLEARANCE.md     # HPC dx≲0.11 Ma/force clearance
 ├── docs/validation/data/
 │   ├── published_macrograph_catalog.json
 │   └── pioneer_bruno_metrics.json
@@ -150,7 +185,7 @@ Each `WAAMTwin.step(x, y, is_welding)` runs, in order:
 6. VOF φ advection, reinit, **contact-angle wetting BC**, flag update (optional)  
 7. CSF tension, Marangoni, **hydrostatic gravity**, thermal buoyancy  
 8. Lorentz MHD, gas shear, arc pressure, recoil (optional flags)  
-9. LBM collide (SRT or MRT) + stream; tracer advection  
+9. LBM collide (SRT or TRT two-rate) + stream; tracer advection  
 10. **Remelt hot solid + solidify cooled metal** (bead freeze / substrate growth)  
 11. Buffer swap  
 
@@ -664,7 +699,9 @@ Published macro catalog (DOIs, process, twin jobs):
 Reference write-up: [docs/validation/reference_case_ER70S6.md](docs/validation/reference_case_ER70S6.md).  
 Plain-language guide: [docs/validation/UNDERSTANDING_CALIBRATION_AND_DATA.md](docs/validation/UNDERSTANDING_CALIBRATION_AND_DATA.md).  
 HPC mesh-lock notes: [docs/HPC.md](docs/HPC.md).  
-Frozen-knob mesh band (Level A): `python -m waam_twin.tools.mesh_convergence_report`.  
+Frozen-knob mesh band (equal travel; clamps=fail): `python -m waam_twin.tools.mesh_convergence_report`.  
+Clamp probe (equal travel): `python -m waam_twin.tools.diagnostics.clamp_check --job … --travel-mm 2.0`.  
+HPC clamp clearance: [`docs/HPC_CLAMP_CLEARANCE.md`](docs/HPC_CLAMP_CLEARANCE.md).  
 Recoil evidence: `python -m waam_twin.tools.recoil_accommodation_sweep`.  
 Toggle sensitivity: `python -m waam_twin.tools.sensitivity_sweep`.  
 Ansys compare scaffold: `docs/validation/ansys_2024r2/`.
@@ -994,14 +1031,17 @@ python3 -m waam_twin.tools.auto_calibrate \
 python3 -m waam_twin.tools.prediction_report --tier shop --with-bruno
 python3 -m waam_twin.tools.prediction_report --tier hpc
 python3 -m waam_twin.tools.mesh_convergence_report \
-  --job jobs/examples/bead_calibrate_hpc.yaml --dx 0.30,0.25,0.20   # frozen-knob Level A
+  --job jobs/examples/bead_calibrate_hpc.yaml --dx 0.30,0.25,0.20   # equal-travel GCI
+WAAM_TRAVEL_MM=2.0 python3 -m waam_twin.tools.diagnostics.clamp_check \
+  --job jobs/examples/bead_calibrate.yaml --travel-mm 2.0           # shop clamp probe
+# HPC clearance (dx≲0.11, ≥16 GB VRAM): see docs/HPC_CLAMP_CLEARANCE.md
 python3 -m waam_twin.tools.multipass_report \
   --job jobs/examples/wall_pioneer_m1.yaml            # PIONEER M1 wall + remelt
 python3 -m waam_twin.tools.validation_gate_status     # closed vs open experimental gates
 python3 -m waam_twin.tools.seed_goldak_from_pool --width 6.1 --depth 1.8
-python3 -m waam_twin.tools.multipass_report            # twolayer remelt / HAZ extents
 python3 -m waam_twin.tools.recoil_accommodation_sweep # C_acc evidence
 python3 -m waam_twin.tools.sensitivity_sweep         # job toggle W/D ranking
+python3 -m waam_twin.tools.bayesian_calibrate --help # global σ(I,V,CTWD) card
 python3 -m waam_twin.tools.fit_calibration --write
 python3 -m waam_twin.tools.run_validation_matrix --quick
 python3 -m waam_twin.tools.benchmark_performance
@@ -1030,6 +1070,7 @@ Legacy entry: `python3 -m waam_twin.verify` (delegates to `run_all`).
 | `WAAM_STANDARD_VALIDATION` | `1` = standard-dx pool test | off |
 | `WAAM_BACKEND_MATRIX` | `1` = probe vulkan/cuda in smoke test | off |
 | `WAAM_STRICT` | `1` = abort on mass/Lorentz/NaN faults | off |
+| `WAAM_TRAVEL_MM` | equal-travel distance for `mesh_convergence_report` | model_reference / 8 mm |
 
 ---
 
@@ -1070,27 +1111,31 @@ No robot logic lives inside this package — only frame mapping, CSV paths, and 
 
 Values match [`config/presets.yaml`](config/presets.yaml):
 
-| Profile | Typical dx start | `max_cells` / `vram_budget_mb` | Collision |
-|---------|------------------|-------------------------------|-----------|
+| Profile | Typical dx start | `max_cells` / `vram_budget_mb` | Default collision |
+|---------|------------------|-------------------------------|-------------------|
 | `minimal` | 0.5 mm | 4e6 / 1024 | SRT |
 | `standard` | 0.3 mm | 2.5e7 / 2048 | SRT |
-| `high` | 0.2 mm | 1.2e8 / 8192 | MRT (two-rate) |
-| `ultra` | 0.15 mm | 4e8 / 16384 | MRT (two-rate) |
+| `high` | 0.2 mm | 1.2e8 / 8192 | TRT (two-rate) |
+| `ultra` | 0.15 mm | 4e8 / 16384 | TRT (two-rate) |
+
+Job `simulation.use_srt` overrides the preset. `use_srt: false` → TRT with
+`tau_min≈0.5005` when `auto_dt_ma` is on.
 
 `dx` is allocated as written. Cell count scales as `1/dx³`. The preset does not
 coarsen `dx`. A mesh that does not fit fails at device allocation. See
 [docs/HARDWARE.md](docs/HARDWARE.md) and [docs/HPC.md](docs/HPC.md).
 
-**Timestep:** `dt = 0.1 · dx` (seconds). Not exposed as a job knob; change
-accuracy via domain / `dx` / `physics_tier`, and duration via step count.
+**Timestep:** with `auto_dt_ma: true`, `dt` is chosen for Ma ≤ `u_mach_limit_lu`
+at `u_design_m_s` and τ ≥ `tau_min` (SRT 0.505 / TRT 0.5005). Without auto Ma,
+legacy acoustic scaling applies. Prefer equal **travel** (not equal steps) for
+mesh studies — `WAAM_TRAVEL_MM` / `mesh_convergence_report`.
 
-**Collision honesty note:** "MRT" here is a **two-relaxation-rate central-moment
-collision** — the deviatoric second moments relax at ω_s (sets viscosity) and
-the bulk/trace part at an independent ω_b (`bulk_tau` constructor parameter,
-defaults to ω_s). Higher-order moments relax with the stress modes; it is not
-a full per-moment-matrix MRT. Earlier releases relaxed *everything* at ω_s
-(SRT in central-moment coordinates) while calling it MRT — results produced
-before this fix should describe the collision as central-moment SRT.
+**Collision honesty note:** `use_srt: false` is **TRT / two-rate** (Ginzburg):
+even modes at ω_e = 1/τ_s (viscosity), odd modes at ω_o from magic
+Λ = (τ_s−½)(τ_o−½) = ¼. It is **not** a full multi-rate MRT or Geier cumulant.
+An earlier Hermite-rebuild “central-moment MRT” was mass-unstable at τ→0.5005
+and must not be cited. Results that still say “MRT” from before the TRT swap
+should be re-run or labelled carefully.
 
 ---
 
@@ -1120,16 +1165,19 @@ Tracked operational docs (in git):
 
 - [Weld pool forces](docs/weld_pool_physics.md) — Marangoni, Lorentz, buoyancy, recoil, droplets  
 - [VTK export reference](docs/VTK_EXPORT.md) — field names, tiers, ParaView workflow  
-- [LBM numerics](docs/physics/LBM.md) — lattice units, collision, forcing  
+- [LBM numerics](docs/physics/LBM.md) — lattice units, TRT/SRT, forcing  
 - [Materials](docs/MATERIALS.md) — YAML schema, placeholder vs calibrated  
 - [Hardware & presets](docs/HARDWARE.md) — backends, VRAM, environment variables  
-- [HPC — production bead runs](docs/HPC.md) — Docker + venv copy-paste 
+- [HPC — production bead runs](docs/HPC.md) — Docker + venv copy-paste  
+- [HPC clamp clearance](docs/HPC_CLAMP_CLEARANCE.md) — Ma/force clear at dx≲0.11 mm  
+- [VERIFICATION](docs/VERIFICATION.md) · [CALIBRATION](docs/CALIBRATION.md) · [ENERGY_LEDGER](docs/ENERGY_LEDGER.md)
 
 Validation and reference data:
 
 - `python -m waam_twin.validation.run_all` — current pass/fail truth  
 - [`jobs/examples/bead_calibrate.yaml`](jobs/examples/bead_calibrate.yaml) — Park 2019 grounded ER70S-6 calibrate lock (shop)  
 - [`jobs/examples/bead_calibrate_hpc.yaml`](jobs/examples/bead_calibrate_hpc.yaml) — same reference, HPC mesh fingerprint  
+- [`jobs/examples/bead_clamp_hpc.yaml`](jobs/examples/bead_clamp_hpc.yaml) — HPC clamp-clearance probe (not a Park lock)  
 - [`docs/validation/data/published_macrograph_catalog.json`](docs/validation/data/published_macrograph_catalog.json) — cited macros + twin jobs  
 - [`docs/validation/reference_case_ER70S6.md`](docs/validation/reference_case_ER70S6.md) — lock write-up  
 - [`docs/validation/UNDERSTANDING_CALIBRATION_AND_DATA.md`](docs/validation/UNDERSTANDING_CALIBRATION_AND_DATA.md) — calibrate vs held-out  

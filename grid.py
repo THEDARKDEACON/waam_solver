@@ -71,6 +71,7 @@ class WAAMGrid:
         auto_dt_ma: bool = False,
         u_mach_limit_lu: float = 0.08,
         u_design_m_s: float = 0.5,
+        tau_min: float = 0.5005,
     ):
         self.nx, self.ny, self.nz = nx, ny, nz
         self.dx = dx
@@ -87,6 +88,8 @@ class WAAMGrid:
         self.auto_dt_ma = bool(auto_dt_ma)
         self.u_mach_limit_lu = float(u_mach_limit_lu)
         self.u_design_m_s = float(u_design_m_s)
+        # SRT needs τ≳0.505; two-rate MRT is usable near 0.5005 (C2 / Phase 3).
+        self.tau_min = float(tau_min)
 
         # ── LBM non-dimensionalisation ────────────────────────────────────
         # We target Ma ≈ 0.05 for stability with molten steel velocities.
@@ -117,21 +120,20 @@ class WAAMGrid:
         nu_lu   = nu_phys * self.dt / (dx ** 2)
         self.tau = 3.0 * nu_lu + 0.5  # SRT relaxation time (will use MRT/Cumulant)
 
-        if self.auto_dt_ma and self.tau < 0.505:
-            # Smaller dt raises τ (= 3 ν dt/dx² + 1/2). Grow dt toward τ=0.505
-            # only if Ma cap still holds; otherwise shrink is already done — raise.
+        tau_floor = float(getattr(self, "tau_min", 0.5005))
+        if self.auto_dt_ma and self.tau < tau_floor:
+            # Grow dt toward τ≥tau_min only if Ma cap still holds.
             # τ = 3 ν dt/dx² + 0.5 → dt = (τ - 0.5) * dx² / (3 ν)
             nu_safe = max(nu_phys, 1e-20)
-            dt_tau = (0.505 - 0.5) * (dx ** 2) / (3.0 * nu_safe)
+            dt_tau = (tau_floor - 0.5) * (dx ** 2) / (3.0 * nu_safe)
             u_des = max(self.u_design_m_s, 1e-6)
             u_cap = max(self.u_mach_limit_lu, 1e-6)
             dt_ma = u_cap * dx / u_des
-            # Need larger dt for τ, but Ma forbids dt > dt_ma. Impossible → error.
             if dt_tau > dt_ma + 1e-30:
                 raise ValueError(
-                    f"auto_dt_ma cannot satisfy τ≥0.505 and Ma cap together "
+                    f"auto_dt_ma cannot satisfy τ≥{tau_floor} and Ma cap together "
                     f"(need dt≥{dt_tau:.3e}s for τ, dt≤{dt_ma:.3e}s for Ma). "
-                    f"Increase dx or viscosity, or raise u_mach_limit_lu."
+                    f"Refine dx, lower u_design_m_s, or use MRT (tau_min≈0.5005)."
                 )
             if self.dt < dt_tau:
                 self.dt = dt_tau
@@ -140,7 +142,7 @@ class WAAMGrid:
                 self.tau = 3.0 * nu_lu + 0.5
                 log.info(
                     f"[WAAMGrid] auto_dt_ma: raise dt → {self.dt*1e6:.3f}µs "
-                    f"for τ={self.tau:.4f} ≥ 0.505"
+                    f"for τ={self.tau:.4f} ≥ {tau_floor}"
                 )
 
         # Thermal diffusivity in lattice units
@@ -188,6 +190,7 @@ class WAAMGrid:
         self.T     = ti.field(dtype=ti.f32, shape=shape3)   # Temperature [K]
         self.T_max = ti.field(dtype=ti.f32, shape=shape3)   # Peak Temperature [K] (HAZ)
         self.H     = ti.field(dtype=ti.f32, shape=shape3)   # Enthalpy [J/m³]
+        self.H_tmp = ti.field(dtype=ti.f32, shape=shape3)  # M1: advection ping-pong
         self.f_l   = ti.field(dtype=ti.f32, shape=shape3)   # Liquid fraction
         self.phi   = ti.field(dtype=ti.f32, shape=shape3)   # VOF phase field
         self.cp_rho_field = ti.field(dtype=ti.f32, shape=shape3)   # ρ·cp(T) [J/(m³·K)]

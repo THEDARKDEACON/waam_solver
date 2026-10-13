@@ -12,6 +12,7 @@ simulation:
   enable_wetting: true
   enable_hydrostatic_gravity: true
   enable_bead_freeze: true
+  enable_trailing_solidify: false
   enable_droplet_impact_pressure: true
   enable_recoil: true
   use_recoil_clausius_clapeyron: true
@@ -23,10 +24,15 @@ simulation:
   strict_mode: true
   dt_scale: 1.0
   use_variable_tau: true
-  use_srt: true
-  auto_dt_ma: false
+  # Post-fix: MRT + real Ma gate (shop dx still cannot clear clamps for
+  # u~1–2 m/s — see bead_clamp_clear.yaml at dx=0.2 for Tier-F probe).
+  use_srt: false
+  auto_dt_ma: true
+  # u_design=0.5 is the max legal at dx=0.4 mm for τ≥0.5005 & Ma≤0.08.
+  # Real Marangoni ~1–2 m/s still clamps — Tier-F clearance needs dx≤0.2
+  # (jobs/examples/bead_clamp_clear.yaml).
   u_design_m_s: 0.5
-  u_mach_limit_lu: 0.2
+  u_mach_limit_lu: 0.08
   force_limit_lu: 0.05
   C_darcy: 160000.0
   C_darcy_ref_dt_s: 4.0e-05
@@ -57,7 +63,7 @@ arc_physics:
   pressure_pa: 150.0
   pressure_sigma_mm: 2.0
 advanced_physics:
-  evap_cooling_scale: 25.0
+  evap_cooling_scale: 1.0
   T_boiling_K: 3000.0
   recoil_accommodation: 0.25
   L_vapor_J_kg: 6.0e6
