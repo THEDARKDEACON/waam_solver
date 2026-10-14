@@ -15,7 +15,7 @@
 ! Torch motion: X fixed at X0, Y = Y0 + VTRAV * t, depth from ZTOP downward.
 ! Travel direction +Y: front hemisphere is YI >= 0, rear YI < 0.
 
-*GET,TNOW,ACTIVE,,TIME,ACT
+*GET,TNOW,ACTIVE,0,SET,TIME
 *IF,TNOW,GT,TWELD,THEN
   BFE,ALL,HGEN,,0
   *RETURN
