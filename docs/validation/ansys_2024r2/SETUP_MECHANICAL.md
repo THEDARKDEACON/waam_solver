@@ -237,10 +237,10 @@ After a short test solve, if the plate barely heats or melts the whole coupon:
 
 | Symptom | Likely cause |
 |---------|----------------|
-| Almost no heating | HGEN expected in **W/m³** but macro wrote **W/mm³** (or path wrong / Commands not in step) |
-| Entire plate molten | Opposite units, or η applied twice, or mesh huge + wrong Q |
+| Almost no heating (~1 °C) | Unit system is mm but `QV` was left in W/mm³. This system expects **mW/mm³** (factor **1000**). Or the arc is off the plate (metre units). |
+| Entire plate molten | `QV` scaled by 1e9, or η applied twice |
 
-If HGEN must be W/m³ in your unit system, multiply `QV` by `1e9` in `goldak_heat_source.mac` (comment in that file).  
+`goldak_heat_source.mac` multiplies `QV` by **1000** for **Metric (mm, kg, N, s)**. Keep that unit system. Do not also multiply by 1e9.  
 Verify with a **fixed hot spot** once before trusting W/D.
 
 ---
@@ -370,7 +370,7 @@ Then use [`comparison/decision_rubric.md`](comparison/decision_rubric.md).
 | Commands ignored | Object under Transient Thermal? Correct step? Solve Information for APDL errors |
 | `/INPUT` fails | Path wrong; use `/INPUT,'full/path/without_ext','mac'` |
 | No melt pool | Mesh too coarse; HGEN units; QNET; T displayed in wrong unit |
-| Pool huge | HGEN ×1e9 too large; ambient/radiation off by accident; latent heat missing so effective heat capacity low |
+| Pool huge | `QV` multiplied by 1e9 on top of the mW factor; latent heat missing so the enthalpy curve is too easy to climb |
 | Torch in wrong place | Geometry origin ≠ (0,0,0); edit `X0`,`Y0`,`ZTOP` in `goldak_load_params.mac` |
 | Compare to twin bead height | Don’t — Tier A has no crown |
 
