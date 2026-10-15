@@ -9,8 +9,9 @@
 ! Assumes:
 !   - Geometry lengths in mm (Workbench metric mm)
 !   - Time in seconds
-!   - BFE HGEN in W/mm^3  (typical Workbench mm thermal)
-! If your unit system expects W/m^3, scale QV by 1e9.
+!   - BFE HGEN in mW/mm^3
+!     Metric (mm, kg, N, s): derived power is mW (N*mm/s), so QV [W/mm^3] * 1000.
+!     Metric (m, kg, N, s): do not use this file as-is; coordinates are millimetres.
 !
 ! Torch motion: X fixed at X0, Y = Y0 + VTRAV * t, depth from ZTOP downward.
 ! Travel direction +Y: front hemisphere is YI >= 0, rear YI < 0.
@@ -49,7 +50,7 @@ ESEL,ALL
   *ENDIF
   ARG = 3.0*((XI*XI)/(BB*BB) + (YI*YI)/(AA*AA) + (ZI*ZI)/(CC*CC))
   *IF,ARG,LT,9.0,THEN
-    QV = CF * FFAC / (AA*BB*CC) * EXP(-ARG)
+    QV = 1000.0 * CF * FFAC / (AA*BB*CC) * EXP(-ARG)
   *ELSE
     QV = 0
   *ENDIF
