@@ -1,0 +1,83 @@
+# Mild Steel — Ansys Mechanical 2024 R2 plate card (v1)
+#
+# Source, copied, not refitted:
+#   Deposit_Study Engineering Data material "Mild Steel"
+#   Deposit_Study_files/dp0/SYS/MECH/MatML.xml
+#   and the properties actually sent to MAPDL in ds.dat (matid 1, body Plate):
+#     MP,DENS  7.85e-09 tonne/mm^3  = 7850 kg/m^3
+#     MPDATA,KXX   25 temperatures, W/m·°C
+#     MPDATA,ENTH  25 temperatures, mJ/mm^3  (the curve the thermal solve integrates)
+#     MPDATA,C     25 temperatures, specific heat
+#     MP,VISC  6.7e-09 MPa·s = 0.0067 Pa·s
+#   Solidus 1480 °C and liquidus 1520 °C are the temperatures where that
+#   enthalpy slope leaves 650 J/kg·K and returns to it. Latent heat is
+#     (H_1520 − H_1480)/ρ − 650·40 = 260000 J/kg exactly.
+#
+# MAPDL was given both enthalpy and specific heat. The specific-heat column
+# spikes to 5000 J/kg·K at 735 °C. The enthalpy slope through that point
+# peaks near 2400 J/kg·K, and the latent heat of melting is only in the
+# enthalpy curve. This file follows the enthalpy curve. A 5000 knot, joined
+# by straight lines, would add heat the Ansys solve did not absorb.
+#
+# The GPU table holds 8 knots (gpu_tables.MAX_KNOTS). strict_mode refuses a
+# longer list, and a longer list would be cut from the hot end. Eight knots
+# are the enthalpy secants below; the piecewise-linear cp stays within about
+# 21 kJ/kg of the Ansys enthalpy up to the solidus (about 2 % of the heat
+# required to reach 1480 °C). Conductivity from 20 °C to 800 °C is linear to
+# about 0.1 W/m·K, then flat at 27.3, so eight k knots reproduce the 25.
+#
+# Not in the Ansys thermal card, and unused while Marangoni and buoyancy are
+# off: gamma_0 and dγ/dT are the pure-Fe slope in Sahoo, DebRoy and McNallan,
+# Metall. Trans. B 19 (1988) 483–491 (γ_m = 1.943 N/m, A = 4.3e-4 N/m·K).
+# beta_T is the twin default 1.2e-4 1/K. Do not treat those three as Mild Steel
+# library data.
+#
+# This is not SS316L and it is not a measured SS400 card. Park's coupon is
+# SS400; the Ansys body that produced the 3.4 × 1.6 mm fusion contour is this
+# Mild Steel table.
+name: Mild Steel
+status: calibrated
+source: "Ansys Mechanical 2024 R2 Engineering Data, Mild Steel, Deposit_Study MatML / ds.dat matid 1"
+
+constants:
+  k: 53.33                 # W/m·K at 20 °C (first KXX knot)
+  rho: 7850.0              # kg/m^3, constant in the Ansys card
+  cp: 650.0                # J/kg·K plateau from 900 °C through 2000 °C; tables.cp carries the cold end
+  alpha: 1.461e-5          # m^2/s at 20 °C using k=53.33 and the 20 °C enthalpy secant cp=465.1
+  T_solidus: 1753.15       # 1480 °C
+  T_liquidus: 1793.15      # 1520 °C
+  L_fusion: 260000.0       # J/kg, enthalpy jump 1480→1520 °C with the 650 J/kg·K slope removed
+  gamma_0: 1.943           # N/m, Sahoo 1988 pure Fe; not in the Ansys card
+  dgamma_dT: -4.3e-4       # N/m·K, Sahoo 1988 pure-Fe slope; not in the Ansys card
+  T_ref_gamma: 1793.15
+  mu: 0.0067               # Pa·s, Ansys MP,VISC, constant
+  beta_T: 1.2e-4           # 1/K, twin default; buoyancy is off in the thermal job
+
+tables:
+  # [T_K, value]. cp knots are enthalpy secants (ΔH/ΔT)/ρ, not the 5000 J/kg·K column.
+  cp:
+    - [293.15, 465.1]      # 20 °C, secant 20→100
+    - [673.15, 584.2]      # 400 °C, secant 300→400
+    - [773.15, 634.0]      # 500 °C, secant 400→500
+    - [993.15, 1151.8]     # 720 °C, secant 700→720
+    - [1073.15, 1004.6]    # 800 °C, secant 750→800
+    - [1173.15, 704.6]     # 900 °C, secant 800→900
+    - [1753.15, 650.0]     # 1480 °C solidus
+    - [2273.15, 650.0]     # 2000 °C, Ansys table end; held above 2000 °C
+  k:
+    - [293.15, 53.33]      # 20 °C
+    - [373.15, 50.67]      # 100
+    - [573.15, 44.01]      # 300
+    - [773.15, 37.35]      # 500
+    - [973.15, 30.69]      # 700
+    - [1073.15, 27.3]      # 800, flat from here
+    - [1793.15, 27.3]      # 1520 liquidus
+    - [2273.15, 27.3]      # 2000, held above 2000 °C
+
+surface:
+  contact_angle_deg: 90.0
+
+notes: >
+  Plate card for the conduction comparison. Wire stays ER70S-6; with wire
+  feed 0 the only metal is this plate. Do not point the plate at SS316L.v1
+  (that card is austenitic, k about 16 W/m·K, and it is still a placeholder).

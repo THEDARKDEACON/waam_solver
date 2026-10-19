@@ -1,0 +1,11 @@
+# Do not commit Mechanical result binaries (can be tens of GB).
+Deposit_Study_files/
+.Deposit_Study_files.backup/
+*.rth
+*.rst
+*.DSP
+solve.out
+file.gst
+file.mntr
+file.nlh
+file.err

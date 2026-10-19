@@ -1,7 +1,7 @@
 {
   "code": "ansys_mechanical_2024r2",
   "tier": "A_thermal_goldak",
-  "source_job": "jobs/examples/bead_on_plate.yaml",
+  "source_job": "jobs/examples/bead_calibrate.yaml",
   "ansys_version": "2024 R2",
   "time_s": 2.0,
   "mesh": {
@@ -27,10 +27,12 @@
   "experiment": {
     "pool_width_mm": 6.1,
     "pool_depth_mm": 1.8,
-    "source": "optional — paste measured macrograph when available"
+    "bead_height_mm": 2.2,
+    "source": "Park et al. Appl. Sci. 2019 DOI 10.3390/app9214626 (flat P-GMAW)",
+    "process_window": "91 A × 22 V × η=0.82, 10 mm/s, ER70S-6 Ø1.0 mm, WFS 7 m/min"
   },
   "checks": {
-    "Q_net_W_verified": null,
+    "Q_net_W_verified": 1641.64,
     "latent_heat_enabled": false,
     "radiation_enabled": true,
     "h_conv": 35.0

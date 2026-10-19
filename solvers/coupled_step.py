@@ -77,8 +77,10 @@ def _resolve_arc_k(
         else:
             z_bead_m = float(torch_z_m)
         z_bead_m = max(float(getattr(twin, "substrate_z_m", 0.0)), z_bead_m)
-        k_robot = twin.nz_solid + (z_bead_m - twin.substrate_z_m) / g.dx - 1.0
-        k_robot = max(float(twin.nz_solid) + 0.5, min(k_robot, float(g.nz) - 2.0))
+        # z = 0 is the plate-top face (index nz_solid), not the last metal cell.
+        # A positive layer height lifts the arc by that many cells above the face.
+        k_robot = twin.nz_solid + (z_bead_m - twin.substrate_z_m) / g.dx
+        k_robot = max(float(twin.nz_solid), min(k_robot, float(g.nz) - 2.0))
         return max(k_surface, k_robot)
 
     return k_surface

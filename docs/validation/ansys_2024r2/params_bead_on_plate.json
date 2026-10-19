@@ -1,36 +1,49 @@
 {
-  "source_job": "jobs/examples/bead_on_plate.yaml",
+  "source_job": "jobs/examples/bead_calibrate.yaml",
   "ansys_version": "2024 R2",
-  "case_name": "waam_bead_on_plate_compare",
+  "case_name": "park_pgmaw_flat_2019_tierA",
+  "macrograph_lock": {
+    "id": "park_pgmaw_flat_2019",
+    "doi": "10.3390/app9214626",
+    "url": "https://www.mdpi.com/2076-3417/9/21/4626",
+    "label": "Park et al., Appl. Sci. 2019 — flat P-GMAW etched fusion",
+    "pool_width_mm": 6.1,
+    "pool_depth_mm": 1.8,
+    "bead_height_mm": 2.2,
+    "note": "Single experiment target for Ansys Tier A + twin calibrate. Bead height is twin/experiment only — Tier A geometry is flat plate (no crown)."
+  },
   "geometry_mm": {
     "plate_L": 60.0,
     "plate_W": 60.0,
-    "plate_thickness": 10.0,
+    "plate_thickness": 9.0,
     "torch_path_start_xy": [30.0, 20.0],
     "torch_path_end_xy": [30.0, 40.0],
     "travel_length": 20.0,
-    "note": "Path from jobs/paths/bead_line.csv; torch travels +Y at x=30 mm"
+    "note": "Flat plate only (Tier A). Park coupon is 9 mm SS400; top face Z=9. No pre-built bead crown. Path from jobs/paths/bead_calibrate.csv spirit: +Y at x=30 mm."
   },
   "process": {
-    "current_A": 131.0,
-    "voltage_V": 10.4,
-    "arc_efficiency": 0.72,
-    "Q_net_W": 981.1008,
+    "current_A": 91.0,
+    "voltage_V": 22.0,
+    "arc_efficiency": 0.82,
+    "Q_net_W": 1641.64,
+    "Q_net_note": "eta*I*V = 0.82*91*22 — locked to jobs/examples/bead_calibrate.yaml",
     "travel_speed_mm_s": 10.0,
     "weld_time_s": 2.0,
-    "wire_feed_m_min": 4.0,
-    "wire_diameter_mm": 1.2,
+    "wire_feed_m_min": 7.0,
+    "wire_diameter_mm": 1.0,
+    "ctwd_mm": 15.0,
+    "transfer": "P-GMAW (twin uses constant-I Goldak; pulse not resolved)",
     "T_ambient_K": 293.0,
     "T_ambient_C": 19.85
   },
   "goldak": {
     "ff": 0.6,
     "fr": 1.4,
-    "a_front_mm": 2.2,
-    "a_rear_mm": 4.2,
-    "b_mm": 3.0,
-    "c_mm": 1.5,
-    "note": "Same double-ellipsoid as waam_twin job; Mechanical injects Q_net into volume"
+    "a_front_mm": 2.0,
+    "a_rear_mm": 3.8,
+    "b_mm": 2.8,
+    "c_mm": 2.6,
+    "note": "Same double-ellipsoid as jobs/examples/bead_calibrate.yaml"
   },
   "material_ER70S6_constants": {
     "rho_kg_m3": 7000.0,
@@ -58,13 +71,8 @@
       "note": "From plate bottom z=0; twin probe z is in domain coords — map carefully"
     }
   ],
-  "macro_targets_optional": {
-    "pool_width_mm": 6.1,
-    "pool_depth_mm": 1.8,
-    "source": "Park et al. Appl. Sci. 2019 DOI 10.3390/app9214626 (twin calibrate lock)"
-  },
   "tiers": {
-    "A_mechanical_thermal": "Goldak moving source → fusion isotherms W/D + cooling rates",
+    "A_mechanical_thermal": "Goldak moving source → fusion isotherms W/D + cooling rates vs Park 6.1×1.8",
     "B_fluent_melt_pool": "Optional CFD melting/solidification; not required for go/no-go on twin"
   }
 }

@@ -51,6 +51,11 @@ def test_torch_z_raises_arc_k() -> None:
     twin.reset()
     g = twin.grid
     k_flat = _resolve_arc_k(twin, g, 12.0, 8.0, None)
+    # Path z = 0 is the plate-top face (index nz_solid), not the metal cell under it.
+    k_zero = _resolve_arc_k(twin, g, 12.0, 8.0, 0.0)
+    assert abs(k_zero - float(twin.nz_solid)) < 1e-6, (
+        f"z=0 should sit on the plate face: {k_zero} vs nz_solid {twin.nz_solid}"
+    )
     # Robot TCP convention: Z ≥ CTWD
     k_tcp = _resolve_arc_k(twin, g, 12.0, 8.0, 0.020)
     assert k_tcp >= k_flat, f"TCP torch Z should not lower arc_k: {k_tcp} vs {k_flat}"

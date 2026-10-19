@@ -1,17 +1,18 @@
 # Ansys 2024 R2 setup guide — bead-on-plate (Transient Thermal + Goldak)
 
 This is the **hands-on setup** for a simple weld that mirrors
-`jobs/examples/bead_on_plate.yaml`. Follow it in order in **Ansys Workbench 2024 R2**.
+`jobs/examples/bead_calibrate.yaml` (Park 2019 flat P-GMAW lock). Follow it in order in **Ansys Workbench 2024 R2**.
 
 You will build:
 
-- A **60 × 60 × 10 mm** steel plate  
+- A **60 × 60 × 9 mm** steel plate (Park coupon thickness)  
 - A **moving Goldak** heat source along Y = 20 → 40 mm at X = 30 mm  
-- **2 seconds** of welding at **10 mm/s**, net power **≈ 981 W**  
-- Results: **fusion width & depth** (macro) and a **temperature probe** (micro)
+- **2 seconds** of welding at **10 mm/s**, net power **≈ 1642 W** (91 A × 22 V × η=0.82)  
+- Results: **fusion width & depth** vs Park macrograph **6.1 × 1.8 mm**
 
-You will **not** model wire deposition or bead crown. That is intentional for a fair
-thermal compare to `waam_twin` pool W/D.
+You will **not** model wire deposition or bead crown (Park H=2.2 mm is
+experiment/twin only). Flat-plate Tier A is intentional for a fair thermal
+compare to `waam_twin` pool W/D.
 
 Numbers: [`params_bead_on_plate.json`](params_bead_on_plate.json)  
 APDL files: [`scripts/`](scripts/)
@@ -34,7 +35,7 @@ APDL files: [`scripts/`](scripts/)
 2. In the Toolbox (left), expand **Analysis Systems**.
 3. Drag **Transient Thermal** onto the white Project Schematic.
 4. **File → Save As…**  
-   Suggested name: `waam_bead_on_plate_tierA.wbpj`  
+   Suggested name: `waam_park_calibrate_tierA.wbpj` (or keep `Deposit_Study.wbpj`)  
    Suggested folder: this package’s `workbook/` directory (results stay local).
 
 You should see a system block with cells: Engineering Data, Geometry, Model, Setup, Solution, Results.
@@ -72,10 +73,11 @@ You should see a system block with cells: Engineering Data, Geometry, Model, Set
 3. Create the plate:
    - **Design → Sketch** on the XY plane (or Front — whatever gives X–Y as the plate face).
    - Draw a **rectangle** from (0, 0) to (60, 60).
-   - **Pull** (extrude) **10 mm** in +Z.  
-     Result: solid from Z = 0 (bottom) to Z = 10 (top / weld face).
+   - **Pull** (extrude) **9 mm** in +Z.  
+     Result: solid from Z = 0 (bottom) to Z = 9 (top / weld face).
+   - **Remove any pre-built bead crown** from older studies — Tier A is plate only.
 4. Optional named selections (helps later):
-   - Select the **top** face (Z = 10) → right-click → **Named Selection** → `TopFace`
+   - Select the **top** face (Z = 9) → right-click → **Named Selection** → `TopFace`
    - Bottom face → `BottomFace`
    - Four sides → `SideFaces`
 5. **File → Save** / close SpaceClaim and return to Workbench. Geometry cell should show a green check / up-to-date.
@@ -84,10 +86,11 @@ You should see a system block with cells: Engineering Data, Geometry, Model, Set
 
 | | X (mm) | Y (mm) | Z (mm) |
 |--|-------:|-------:|-------:|
-| Start (t = 0) | 30 | 20 | 10 |
-| End (t = 2 s) | 30 | 40 | 10 |
+| Start (t = 0) | 30 | 20 | 9 |
+| End (t = 2 s) | 30 | 40 | 9 |
 
-Travel direction is **+Y**. Width is measured in **X**; depth in **−Z** from the top.
+Travel direction is **+Y**. Width is measured in **X**; depth in **−Z** from the top (Z = 9).
+Score against Park flat fusion **W×D = 6.1 × 1.8 mm** (DOI 10.3390/app9214626).
 
 ---
 
@@ -115,10 +118,10 @@ Travel direction is **+Y**. Width is measured in **X**; depth in **−Z** from t
    - Element Size: **0.5 mm** for a first run on the whole plate if the machine can take it.  
      If too heavy, use a **Body of Influence**:
      - Create a second solid in SpaceClaim: box roughly  
-       X = 22–38 mm, Y = 12–48 mm, Z = 0–10 mm (covers the path ± margin).  
+       X = 22–38 mm, Y = 12–48 mm, Z = 0–9 mm (covers the path ± margin).  
      - In Mechanical Mesh: **Insert → Body of Influence**, assign that body, Element Size **0.45 mm**.
      - On the plate body: Element Size **1.5–2.0 mm**.
-3. Through-thickness: aim for about **20 elements** across 10 mm in the weld band (≥ 0.5 mm).
+3. Through-thickness: aim for about **18 elements** across 9 mm in the weld band (≥ 0.5 mm).
 4. Click **Generate Mesh**. Note element count in the Mesh statistics (Details).
 
 **Target:** weld-band edge length ≈ **0.4–0.5 mm** (same spirit as twin `dx_mm: 0.5`).
@@ -213,9 +216,9 @@ Do **not** include the `.mac` extension in the `/INPUT` name field (APDL style: 
 
 What the macros do:
 
-- Net power `QNET = 0.72 × 131 × 10.4 ≈ 981.1 W`
-- Torch at `X = 30`, `Y = 20 + 10·t` (mm, s)
-- Double-ellipsoid Goldak sizes from the twin job
+- Net power `QNET = 0.82 × 91 × 22 ≈ 1641.6 W` (Park / `bead_calibrate.yaml`)
+- Torch at `X = 30`, `Y = 20 + 10·t` (mm, s), `ZTOP = 9`
+- Double-ellipsoid Goldak: a_f=2.0, a_r=3.8, b=2.8, c=2.6 mm
 - After `t > 2 s`, heat generation is cleared
 
 ### 9.3 Optional: explicit cool-down clear
@@ -283,7 +286,8 @@ You want the **fusion zone** at (or near) end of weld: **t = 2.0 s**.
 5. Measure:
    - **Width W:** on a cross-section **perpendicular to travel** (cut at constant Y through the hottest pool), measure the X-extent of T ≥ T_liq.  
      Travel is +Y, so width is in **X**.
-   - **Depth D:** on the centerline plane **X = 30 mm**, measure how far below Z = 10 the T ≥ T_liq region goes.
+   - **Depth D:** on the centerline plane **X = 30 mm**, measure how far below Z = 9 the T ≥ T_liq region goes.
+   - Compare to Park: **W = 6.1 mm**, **D = 1.8 mm**.
 
 ### Export for the Python helper (optional)
 
@@ -349,13 +353,15 @@ Then use [`comparison/decision_rubric.md`](comparison/decision_rubric.md).
 
 | Item | Value |
 |------|------:|
-| Plate | 60 × 60 × 10 mm |
-| Path | (30,20,10) → (30,40,10) mm |
+| Plate | 60 × 60 × **9** mm (flat — no crown) |
+| Path | (30,20,9) → (30,40,9) mm |
 | Time | 0–2 s weld, optional cool-down |
 | Speed | 10 mm/s |
-| I, V, η | 131 A, 10.4 V, 0.72 → **981.1 W** |
-| Goldak a_f, a_r, b, c | 2.2, 4.2, 3.0, 1.5 mm |
+| I, V, η | **91 A, 22 V, 0.82** → **1641.6 W** |
+| Goldak a_f, a_r, b, c | **2.0, 3.8, 2.8, 2.6** mm |
 | Goldak f_f, f_r | 0.6, 1.4 |
+| Macrograph | Park flat **6.1 × 1.8** mm (H=2.2 twin/exp only) |
+| Twin job | `jobs/examples/bead_calibrate.yaml` |
 | T_ambient | 19.85 °C |
 | h_conv | 35 W/m²K |
 | T_liq (fusion) | 1519.85 °C |
@@ -372,7 +378,8 @@ Then use [`comparison/decision_rubric.md`](comparison/decision_rubric.md).
 | No melt pool | Mesh too coarse; HGEN units; QNET; T displayed in wrong unit |
 | Pool huge | HGEN ×1e9 too large; ambient/radiation off by accident; latent heat missing so effective heat capacity low |
 | Torch in wrong place | Geometry origin ≠ (0,0,0); edit `X0`,`Y0`,`ZTOP` in `goldak_load_params.mac` |
-| Compare to twin bead height | Don’t — Tier A has no crown |
+| Compare to twin bead height | Don’t — Tier A has no crown (Park H=2.2 is twin/experiment) |
+| Old 131 A / 10.4 V / ZTOP=12.2 run | Stale — re-solve after Park lock |
 
 ---
 

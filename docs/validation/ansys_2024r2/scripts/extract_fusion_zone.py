@@ -131,6 +131,17 @@ def main() -> int:
         x_center_mm=float(geo["torch_path_start_xy"][0]),
         z_top_mm=float(geo["plate_thickness"]),
     )
+    lock = params.get("macrograph_lock") or {}
+    experiment = {
+        "pool_width_mm": lock.get("pool_width_mm", 6.1),
+        "pool_depth_mm": lock.get("pool_depth_mm", 1.8),
+        "bead_height_mm": lock.get("bead_height_mm", 2.2),
+        "source": lock.get(
+            "label",
+            "Park et al. Appl. Sci. 2019 DOI 10.3390/app9214626 (flat P-GMAW)",
+        ),
+        "doi": lock.get("doi", "10.3390/app9214626"),
+    }
     out = {
         "code": "ansys_mechanical_2024r2",
         "tier": "A_thermal_goldak",
@@ -144,6 +155,11 @@ def main() -> int:
             "t85_s": None,
             "time_above_800C_s": None,
             "time_above_1100C_s": None,
+        },
+        "experiment": experiment,
+        "checks": {
+            "Q_net_W_verified": params.get("process", {}).get("Q_net_W"),
+            "h_conv": params.get("heat_loss", {}).get("h_conv_W_m2K"),
         },
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)

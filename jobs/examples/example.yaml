@@ -105,9 +105,10 @@ simulation:
   # Stick-out I²R wire preheat from CTWD / stickout (open-loop).
   enable_ctwd: false
 
-  # Use torch path / robot TCP Z + CTWD to set arc height (KRL/CSV/KRC stream).
-  # Alias: enable_torch_z: true
-  # Leave false when path z_mm is only a substrate datum (often 0).
+  # Use path z for arc height. z_mm = 0 is the plate-top face; a larger
+  # z below CTWD is bead height above that face. z >= CTWD is robot TCP
+  # (bead top = z - CTWD). Alias: enable_torch_z: true
+  # Leave false to ignore path z and snap to the top metal cell.
   use_torch_z: false
   # enable_torch_z: false
 

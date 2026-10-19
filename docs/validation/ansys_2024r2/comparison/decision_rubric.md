@@ -48,14 +48,14 @@ toward the macrograph.
 
 1. One macrograph cross-section → measured W, D (and bead height if available).  
 2. Ideally one thermocouple under/ beside the path.  
-3. Same I, V, travel, stickout as `params_bead_on_plate.json`.
+3. Same I, V, travel, stickout as `params_bead_on_plate.json` (Park lock: 91 A × 22 V).
 
 Without (1), you can still compare **Ansys ↔ twin**, but you cannot decide
 “which code is right” — only “do they implement the same thermal problem.”
 
 ## Suggested report sentence
 
-> On the bead-on-plate process window (131 A × 10.4 V, η=0.72, 10 mm/s),  
+> On the Park 2019 flat P-GMAW window (91 A × 22 V, η=0.82, 10 mm/s; DOI 10.3390/app9214626),  
 > Ansys 2024 R2 Transient Thermal Goldak gave W×D = … mm; waam_twin gave … mm;  
-> macrograph … mm. Relative Ansys–twin errors were …%.  
+> macrograph **6.1 × 1.8** mm. Relative Ansys–twin errors were …%.  
 > Decision: [continue / pause / optional] waam_twin because [rubric row].

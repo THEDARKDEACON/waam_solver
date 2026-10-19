@@ -47,19 +47,21 @@ Decision rules: [`comparison/decision_rubric.md`](comparison/decision_rubric.md)
 
 | Item | Value |
 |------|------:|
-| Plate | 60 × 60 × 10 mm |
-| Path (top face) | (30, 20, 10) → (30, 40, 10) mm |
+| Plate | 60 × 60 × **9** mm (flat — no crown) |
+| Path (top face) | (30, 20, 9) → (30, 40, 9) mm |
 | Travel | 10 mm/s → **2.0 s** weld |
-| \(I \times V \times \eta\) | 131 A × 10.4 V × 0.72 → **≈ 981.1 W** |
-| Goldak \(a_f,a_r,b,c\) | 2.2, 4.2, 3.0, 1.5 mm |
+| \(I \times V \times \eta\) | **91 A × 22 V × 0.82** → **≈ 1641.6 W** |
+| Goldak \(a_f,a_r,b,c\) | **2.0, 3.8, 2.8, 2.6** mm |
 | Goldak \(f_f,f_r\) | 0.6, 1.4 |
+| Macrograph | Park flat **6.1 × 1.8** mm (DOI 10.3390/app9214626); H=2.2 twin/exp only |
+| Twin job | `jobs/examples/bead_calibrate.yaml` |
 | \(T_\mathrm{liq}\) (fusion) | **1519.85 °C** (1793 K) |
 | \(h_\mathrm{conv}\) | 35 W/m²·K |
 | Ambient | 19.85 °C |
 
 - [ ] Do **not** retune Goldak or η to chase a pretty Ansys W/D before the first
   compare — shared knobs must match the twin job
-  (`jobs/examples/bead_on_plate.yaml`).
+  (`jobs/examples/bead_calibrate.yaml` — Park lock).
 
 ### Phase 1 — Build & solve Ansys (Workbench)
 
@@ -69,7 +71,7 @@ Follow [`SETUP_MECHANICAL.md`](SETUP_MECHANICAL.md) steps 1–12. Condensed:
    (`waam_bead_on_plate_tierA.wbpj`).  
 2. Material `ER70S-6_compare`: ρ=7000, k=30, cp=680; prefer latent heat
    solidus/liquidus as in params JSON.  
-3. Geometry: 60×60×10 mm plate, origin at corner, top = weld face Z=10.  
+3. Geometry: 60×60×**9** mm flat plate, origin at corner, top = weld face Z=9. **No bead crown.**  
 4. Mesh: ≤ **0.5 mm** in a weld band around the path (whole-plate 0.5 mm OK if
    RAM allows).  
 5. Initial T = ambient; convection h=35 on exposed faces; radiation optional
@@ -122,9 +124,9 @@ python3 scripts/extract_fusion_zone.py \
 
 Also set `checks.Q_net_W_verified`, `latent_heat_enabled`, `radiation_enabled`.
 
-If you have a lab macrograph for this window, put measured W/D under
-`experiment` in the same JSON (default template already has Park 6.1×1.8 as an
-optional placeholder — replace with **your** coupon if different).
+The experiment block is **locked** to Park flat W×D = 6.1 × 1.8 mm
+(DOI 10.3390/app9214626). Do not swap in a different macrograph without also
+changing I/V/η/Goldak to that paper’s window.
 
 ### Phase 3 — Twin metrics (same process)
 

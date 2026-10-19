@@ -5,9 +5,10 @@
 
 **Click-by-click Workbench:** [`SETUP_MECHANICAL.md`](SETUP_MECHANICAL.md)
 
-**Goal:** Run a simple GMAW-style bead-on-plate case in Ansys that mirrors
-`jobs/examples/bead_on_plate.yaml`, extract **macro** (pool W×D) and **micro**
-(HAZ / cooling) metrics, and decide whether continuing `waam_twin` is necessary.
+**Goal:** Run the **Park 2019 flat P-GMAW** bead-on-plate window in Ansys that mirrors
+`jobs/examples/bead_calibrate.yaml`, extract **macro** (pool W×D) and **micro**
+(HAZ / cooling) metrics, compare to the published macrograph **6.1 × 1.8 mm**,
+and decide whether continuing `waam_twin` is necessary.
 
 **Ansys version:** 2024 R2  
 **Params:** [`params_bead_on_plate.json`](params_bead_on_plate.json)
@@ -41,7 +42,7 @@ the twin as “wrong” for differing bead crown when Ansys never modeled it.
 ansys_2024r2/
   README.md                          ← this file
   PLAYBOOK_TIER_A.md                 ← end-to-end checklist (start here)
-  params_bead_on_plate.json          ← numbers locked to bead_on_plate.yaml
+  params_bead_on_plate.json          ← numbers locked to bead_calibrate.yaml / Park 2019
   SETUP_MECHANICAL.md                ← Tier A Workbench steps (2024 R2)
   SETUP_FLUENT.md                    ← Tier B optional CFD outline
   scripts/
@@ -70,11 +71,13 @@ ansys_2024r2/
 
 | Item | Value |
 |------|-------|
-| Plate | 60 × 60 × 10 mm |
-| Path | (30, 20) → (30, 40) mm, 20 mm @ 10 mm/s → **2.0 s** weld |
-| \(I \times V\) | 131 A × 10.4 V |
-| \(\eta\) | 0.72 → **\(Q_\mathrm{net} \approx 981\) W** |
-| Goldak | \(a_f=2.2\), \(a_r=4.2\), \(b=3.0\), \(c=1.5\) mm; \(f_f=0.6\), \(f_r=1.4\) |
+| Plate | 60 × 60 × **9** mm (flat — no crown) |
+| Path | (30, 20) → (30, 40) mm @ 10 mm/s → **2.0 s** weld |
+| \(I \times V\) | **91 A × 22 V** |
+| \(\eta\) | **0.82** → **\(Q_\mathrm{net} \approx 1642\) W** |
+| Goldak | \(a_f=2.0\), \(a_r=3.8\), \(b=2.8\), \(c=2.6\) mm; \(f_f=0.6\), \(f_r=1.4\) |
+| Macrograph | Park flat **6.1 × 1.8** mm (DOI 10.3390/app9214626); H=2.2 twin/exp only |
+| Twin job | `jobs/examples/bead_calibrate.yaml` |
 | \(T_\mathrm{liq}\) | 1793 K (1520 °C) for fusion isotherm |
 | \(h_\mathrm{conv}\) | 35 W/m²K |
 

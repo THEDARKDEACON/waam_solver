@@ -2,57 +2,64 @@
 ! Double-ellipsoid Goldak volumetric heat source for Transient Thermal.
 ! Requires goldak_load_params.mac already executed (QNET, VTRAV, X0, Y0, ...).
 !
-! Call each substep from a Mechanical Commands object, e.g.:
-!   /INPUT,'.../goldak_load_params','mac'
-!   /INPUT,'.../goldak_heat_source','mac'
+! /units,MPA  (Workbench Metric mm): BFE HGEN is mW/mm^3.
+! QNET is watts and AA,BB,CC are millimetres, so QV is multiplied by 1000.
 !
-! Assumes:
-!   - Geometry lengths in mm (Workbench metric mm)
-!   - Time in seconds
-!   - BFE HGEN in W/mm^3  (typical Workbench mm thermal)
-! If your unit system expects W/m^3, scale QV by 1e9.
+! MAPDL treats a blank followed by * as an end-of-line comment.
+! Every multiplication in this file is written A*B with no spaces around *.
+! Do not "clean up" those operators. A spaced * silently drops the rest of the line
+! (the Oct 2026 run stored CF=6 and QV=1000 instead of CF≈1831 and QV≈1.11e5).
 !
-! Torch motion: X fixed at X0, Y = Y0 + VTRAV * t, depth from ZTOP downward.
-! Travel direction +Y: front hemisphere is YI >= 0, rear YI < 0.
+! A Mechanical Commands object runs once per load step, at the start time of that
+! step. One step paints one stationary ellipsoid. Use one load step per torch station.
 
-*GET,TNOW,ACTIVE,,TIME,ACT
+*GET,TNOW,ACTIVE,0,SET,TIME
 *IF,TNOW,GT,TWELD,THEN
   BFE,ALL,HGEN,,0
   *RETURN
 *ENDIF
 
-YC = Y0 + VTRAV * TNOW
-XC = X0
+YC=Y0+VTRAV*TNOW
+XC=X0
 
-P32 = PI * SQRT(PI)
-CF  = 6.0 * SQRT(3.0) * QNET / P32
+P32=PI*SQRT(PI)
+CF=6.0*SQRT(3.0)*QNET/P32
 
 ESEL,ALL
 *GET,NCOUNT,ELEM,,COUNT
 *GET,EID,ELEM,,NUM,MIN
+PTOT=0
 *DO,II,1,NCOUNT,1
   *GET,EX,ELEM,EID,CENT,X
   *GET,EY,ELEM,EID,CENT,Y
   *GET,EZ,ELEM,EID,CENT,Z
-  XI = EX - XC
-  YI = EY - YC
-  ZI = ZTOP - EZ
+  XI=EX-XC
+  YI=EY-YC
+  ZI=ZTOP-EZ
   *IF,ZI,LT,0,THEN
-    ZI = 0
+    ZI=0
   *ENDIF
   *IF,YI,GE,0,THEN
-    AA = AF
-    FFAC = FF
+    AA=AF
+    FFAC=FF
   *ELSE
-    AA = AR
-    FFAC = FR
+    AA=AR
+    FFAC=FR
   *ENDIF
-  ARG = 3.0*((XI*XI)/(BB*BB) + (YI*YI)/(AA*AA) + (ZI*ZI)/(CC*CC))
+  ARG=3.0*((XI*XI)/(BB*BB)+(YI*YI)/(AA*AA)+(ZI*ZI)/(CC*CC))
   *IF,ARG,LT,9.0,THEN
-    QV = CF * FFAC / (AA*BB*CC) * EXP(-ARG)
+    QV=1000.0*CF*FFAC/(AA*BB*CC)*EXP(-ARG)
   *ELSE
-    QV = 0
+    QV=0
   *ENDIF
   BFE,EID,HGEN,,QV
+  *GET,ETYP,ELEM,EID,ATTR,TYPE
+  *IF,ETYP,LE,3,THEN
+    *GET,EVOL,ELEM,EID,VOLU
+    PTOT=PTOT+QV*EVOL
+  *ENDIF
   *GET,EID,ELEM,EID,NXTH
 *ENDDO
+
+*MSG,NOTE,TNOW,PTOT
+Goldak t=%G s, integrated power=%G mW (expect about 1641640)

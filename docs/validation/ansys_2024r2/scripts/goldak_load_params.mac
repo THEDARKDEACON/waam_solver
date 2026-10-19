@@ -1,17 +1,20 @@
 ! goldak_load_params.mac
-! Parameters for waam_twin jobs/examples/bead_on_plate.yaml
+! Parameters locked to Park 2019 flat P-GMAW + jobs/examples/bead_calibrate.yaml
 ! Ansys Mechanical 2024 R2 — Transient Thermal
 ! Lengths in mm, time in s, power in W (see goldak_heat_source.mac for HGEN units)
+!
+! Macrograph target: Park et al. Appl. Sci. 2019 DOI 10.3390/app9214626
+!   fusion W×D = 6.1 × 1.8 mm (bead H=2.2 mm is experiment/twin only — no crown here)
 
-QNET  = 981.1008    ! eta*I*V = 0.72*131*10.4
+QNET  = 1641.64     ! eta*I*V = 0.82*91*22
 VTRAV = 10.0        ! mm/s
 X0    = 30.0        ! mm torch X (fixed)
 Y0    = 20.0        ! mm torch Y at t=0
-ZTOP  = 10.0        ! mm top surface Z
-AF    = 2.2         ! mm Goldak a_front
-AR    = 4.2         ! mm Goldak a_rear
-BB    = 3.0         ! mm Goldak b (half-width)
-CC    = 1.5         ! mm Goldak c (depth)
+ZTOP  = 9.0         ! mm flat-plate top surface (Park 9 mm coupon; NO bead crown)
+AF    = 2.0         ! mm Goldak a_front (bead_calibrate.yaml)
+AR    = 3.8         ! mm Goldak a_rear
+BB    = 2.8         ! mm Goldak b (half-width)
+CC    = 2.6         ! mm Goldak c (depth into plate)
 FF    = 0.6         ! front fraction
 FR    = 1.4         ! rear fraction (ff+fr=2)
 TWELD = 2.0         ! s weld duration
