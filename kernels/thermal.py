@@ -7,6 +7,8 @@ from ..lattice import EX, EY, EZ, W, OPP
 from ._common import (
     _alloy_pick,
     lookup_table_1d,
+    temperature_from_enthalpy,
+    temperature_from_enthalpy_mix,
 )
 from .grid_init import arc_deposition_weight
 
@@ -622,28 +624,35 @@ def update_phase_variable_cp(
     H: ti.template(),
     T: ti.template(),
     f_l: ti.template(),
-    cp_rho_field: ti.template(),
     L_rho: ti.f32,
     T_solidus: ti.f32,
     T_liquidus: ti.f32,
     H_sol: ti.f32,
     H_liq: ti.f32,
+    rho: ti.f32,
+    cp_T: ti.template(),
+    cp_V: ti.template(),
+    cp_H: ti.template(),
+    n_cp: ti.template(),
 ):
-    dH_mush = H_liq - H_sol + 1e-9  # M9: includes mushy sensible heat
-    _ = L_rho
+    """Invert rho*integral(cp) plus the latent jump between the anchors.
+
+    Liquid fraction stays linear in enthalpy from H_sol to H_liq. Temperature
+    is the inverse of that curve, including the solid below the solidus.
+    """
+    dH_mush = H_liq - H_sol + 1e-9
+    n = n_cp[None]
     for i, j, k in H:
         h = H[i, j, k]
-        cp_rho = cp_rho_field[i, j, k]
+        T[i, j, k] = temperature_from_enthalpy(
+            h, rho, L_rho, T_solidus, T_liquidus, cp_T, cp_V, cp_H, n,
+        )
         if h <= H_sol:
             f_l[i, j, k] = 0.0
-            T[i, j, k] = h / (cp_rho + 1e-9)
         elif h >= H_liq:
             f_l[i, j, k] = 1.0
-            T[i, j, k] = T_liquidus + (h - H_liq) / (cp_rho + 1e-9)
         else:
-            fl = (h - H_sol) / dH_mush
-            f_l[i, j, k] = fl
-            T[i, j, k] = T_solidus + fl * (T_liquidus - T_solidus)
+            f_l[i, j, k] = (h - H_sol) / dH_mush
 
 
 @ti.kernel
@@ -651,8 +660,7 @@ def update_phase_dual(
     H: ti.template(),
     T: ti.template(),
     f_l: ti.template(),
-    cp_rho_field: ti.template(),
-    alloy_id: ti.template(),
+    alloy_frac: ti.template(),
     L_rho_w: ti.f32,
     T_sol_w: ti.f32,
     T_liq_w: ti.f32,
@@ -663,28 +671,36 @@ def update_phase_dual(
     T_liq_p: ti.f32,
     H_sol_p: ti.f32,
     H_liq_p: ti.f32,
+    rho_w: ti.f32,
+    rho_p: ti.f32,
+    w_cp_T: ti.template(),
+    w_cp_V: ti.template(),
+    w_cp_H: ti.template(),
+    w_n_cp: ti.template(),
+    p_cp_T: ti.template(),
+    p_cp_V: ti.template(),
+    p_cp_H: ti.template(),
+    p_n_cp: ti.template(),
 ):
-    """Enthalpy–porosity recovery with composition-weighted melting range."""
+    """Invert each alloy's enthalpy curve. Mixtures use the volume-weighted sum."""
+    nw = w_n_cp[None]
+    np_ = p_n_cp[None]
     for i, j, k in H:
         h = H[i, j, k]
-        cp_rho = cp_rho_field[i, j, k]
-        L_rho = _alloy_pick(alloy_id[i, j, k], L_rho_w, L_rho_p)
-        T_sol = _alloy_pick(alloy_id[i, j, k], T_sol_w, T_sol_p)
-        T_liq = _alloy_pick(alloy_id[i, j, k], T_liq_w, T_liq_p)
-        H_sol = _alloy_pick(alloy_id[i, j, k], H_sol_w, H_sol_p)
-        H_liq = _alloy_pick(alloy_id[i, j, k], H_liq_w, H_liq_p)
+        frac = alloy_frac[i, j, k]
+        H_sol = _alloy_pick(frac, H_sol_w, H_sol_p)
+        H_liq = _alloy_pick(frac, H_liq_w, H_liq_p)
+        T[i, j, k] = temperature_from_enthalpy_mix(
+            h, frac,
+            rho_w, L_rho_w, T_sol_w, T_liq_w, w_cp_T, w_cp_V, w_cp_H, nw,
+            rho_p, L_rho_p, T_sol_p, T_liq_p, p_cp_T, p_cp_V, p_cp_H, np_,
+        )
         if h <= H_sol:
             f_l[i, j, k] = 0.0
-            T[i, j, k] = h / (cp_rho + 1e-9)
         elif h >= H_liq:
             f_l[i, j, k] = 1.0
-            T[i, j, k] = T_liq + (h - H_liq) / (cp_rho + 1e-9)
         else:
-            dH_mush = H_liq - H_sol + 1e-9  # M9
-            _ = L_rho
-            fl = (h - H_sol) / dH_mush
-            f_l[i, j, k] = fl
-            T[i, j, k] = T_sol + fl * (T_liq - T_sol)
+            f_l[i, j, k] = (h - H_sol) / (H_liq - H_sol + 1e-9)
 
 
 @ti.kernel
@@ -751,15 +767,17 @@ def apply_thermal_boundary_losses_variable(
 @ti.kernel
 def clamp_enthalpy_floor(
     H: ti.template(),
-    cp_rho_field: ti.template(),
     flags: ti.template(),
-    T_floor: ti.f32,
+    alloy_frac: ti.template(),
+    H_amb_w: ti.f32,
+    H_amb_p: ti.f32,
     FLAG_GAS: ti.i32,
 ):
+    """Floor metal at the ambient enthalpy rho*integral(cp), per alloy."""
     for i, j, k in H:
         if flags[i, j, k] == FLAG_GAS:
             continue
-        h_min = cp_rho_field[i, j, k] * T_floor
+        h_min = _alloy_pick(alloy_frac[i, j, k], H_amb_w, H_amb_p)
         if H[i, j, k] < h_min:
             H[i, j, k] = h_min
 
@@ -924,73 +942,45 @@ def clamp_enthalpy_ceiling_scalar(
 def clamp_enthalpy_ceiling_variable_cp(
     H: ti.template(),
     flags: ti.template(),
-    cp_rho_field: ti.template(),
-    H_liq: ti.f32,
-    T_liquidus: ti.f32,
-    T_vapor_cap: ti.f32,
+    H_cap: ti.f32,
     dx: ti.f32,
     energy_J_buf: ti.template(),
     FLAG_GAS: ti.i32,
 ):
-    """Cap H using the same H_liq as update_phase_variable_cp."""
+    """Cap H at the enthalpy of T_vapor_cap on the integral curve."""
     dx3 = dx * dx * dx
     energy_J_buf[None] = 0.0
     for i, j, k in H:
         if flags[i, j, k] == FLAG_GAS:
             continue
-        cp_r = cp_rho_field[i, j, k]
-        h_cap_liquid = H_liq + cp_r * (T_vapor_cap - T_liquidus)
-        h_cap_solid = cp_r * T_vapor_cap
         h = H[i, j, k]
-        h_new = h
-        if h > H_liq:
-            if h > h_cap_liquid:
-                h_new = h_cap_liquid
-        else:
-            if h > h_cap_solid:
-                h_new = h_cap_solid
-        if h_new < h:
-            H[i, j, k] = h_new
-            ti.atomic_add(energy_J_buf[None], (h - h_new) * dx3)
+        if h > H_cap:
+            H[i, j, k] = H_cap
+            ti.atomic_add(energy_J_buf[None], (h - H_cap) * dx3)
 
 
 @ti.kernel
 def clamp_enthalpy_ceiling_dual(
     H: ti.template(),
     flags: ti.template(),
-    cp_rho_field: ti.template(),
-    alloy_id: ti.template(),
-    H_liq_w: ti.f32,
-    T_liq_w: ti.f32,
-    H_liq_p: ti.f32,
-    T_liq_p: ti.f32,
-    T_vapor_cap: ti.f32,
+    alloy_frac: ti.template(),
+    H_cap_w: ti.f32,
+    H_cap_p: ti.f32,
     dx: ti.f32,
     energy_J_buf: ti.template(),
     FLAG_GAS: ti.i32,
 ):
-    """Vapor-cap enthalpy using each cell's composition-weighted H_liq / T_liquidus."""
+    """Cap each cell at its alloy's enthalpy of T_vapor_cap."""
     dx3 = dx * dx * dx
     energy_J_buf[None] = 0.0
     for i, j, k in H:
         if flags[i, j, k] == FLAG_GAS:
             continue
-        cp_r = cp_rho_field[i, j, k]
-        H_liq = _alloy_pick(alloy_id[i, j, k], H_liq_w, H_liq_p)
-        T_liq = _alloy_pick(alloy_id[i, j, k], T_liq_w, T_liq_p)
-        h_cap_liquid = H_liq + cp_r * (T_vapor_cap - T_liq)
-        h_cap_solid = cp_r * T_vapor_cap
+        h_cap = _alloy_pick(alloy_frac[i, j, k], H_cap_w, H_cap_p)
         h = H[i, j, k]
-        h_new = h
-        if h > H_liq:
-            if h > h_cap_liquid:
-                h_new = h_cap_liquid
-        else:
-            if h > h_cap_solid:
-                h_new = h_cap_solid
-        if h_new < h:
-            H[i, j, k] = h_new
-            ti.atomic_add(energy_J_buf[None], (h - h_new) * dx3)
+        if h > h_cap:
+            H[i, j, k] = h_cap
+            ti.atomic_add(energy_J_buf[None], (h - h_cap) * dx3)
 
 
 @ti.kernel

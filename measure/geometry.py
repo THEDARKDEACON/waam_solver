@@ -18,6 +18,9 @@ if TYPE_CHECKING:
 
 
 def _liquidus_K(twin: "WAAMTwin") -> float:
+    pmat = getattr(twin, "plate_mat", None)
+    if pmat is not None:
+        return float(pmat.T_liquidus)
     return float(twin.mat.T_liquidus)
 
 
@@ -30,108 +33,128 @@ def _interp_crossing(a: float, b: float, level: float) -> float:
     return float(np.clip(t, 0.0, 1.0))
 
 
-def measure_fusion_zone_mm(twin: "WAAMTwin") -> dict[str, float]:
-    """
-    Fusion W/D from liquidus isosurface of T_max with sub-cell interpolation.
+def _finite_max(values: np.ndarray, axis: int) -> np.ndarray:
+    filled = np.where(np.isfinite(values), values, -np.inf)
+    reduced = filled.max(axis=axis)
+    return np.where(reduced > -1e20, reduced, np.nan)
 
-    Width: transverse (y) extent at the x-slice through the fusion centroid.
-    Depth: penetration below the substrate top (nz_solid).
+
+def _profile_edges(profile: np.ndarray, thr: float) -> tuple[float, float] | None:
+    """Crossings in cell-center coordinates. Samples live at index + 0.5."""
+    finite = np.isfinite(profile)
+    above = np.flatnonzero(finite & (profile >= thr))
+    if above.size == 0:
+        return None
+    i0 = int(above[0])
+    i1 = int(above[-1])
+    if i0 > 0 and finite[i0 - 1] and profile[i0 - 1] < thr:
+        denom = float(profile[i0] - profile[i0 - 1])
+        t = (thr - float(profile[i0 - 1])) / denom if abs(denom) > 1e-12 else 0.5
+        left = (i0 - 1 + 0.5) + float(np.clip(t, 0.0, 1.0))
+    else:
+        left = float(i0)
+    if i1 + 1 < profile.size and finite[i1 + 1] and profile[i1 + 1] < thr:
+        denom = float(profile[i1 + 1] - profile[i1])
+        t = (thr - float(profile[i1])) / denom if abs(denom) > 1e-12 else 0.5
+        right = (i1 + 0.5) + float(np.clip(t, 0.0, 1.0))
+    else:
+        right = float(i1 + 1)
+    return left, right
+
+
+def _depth_mm(col: np.ndarray, thr: float, nz_solid: int, dx_m: float) -> float:
+    """Depth from the plate face (index nz_solid) to the threshold crossing."""
+    if nz_solid <= 0:
+        return 0.0
+    finite = np.isfinite(col)
+    above = np.flatnonzero(finite & (col >= thr) & (np.arange(col.size) < nz_solid))
+    if above.size == 0:
+        return 0.0
+    k_bot = int(above[0])
+    if k_bot > 0 and finite[k_bot - 1] and col[k_bot - 1] < thr:
+        denom = float(col[k_bot] - col[k_bot - 1])
+        t = (thr - float(col[k_bot - 1])) / denom if abs(denom) > 1e-12 else 0.5
+        k_cross = (k_bot - 1 + 0.5) + float(np.clip(t, 0.0, 1.0))
+    else:
+        k_cross = float(k_bot)
+    return float(max(0.0, (nz_solid - k_cross) * dx_m * 1000.0))
+
+
+def fusion_contour_mm(
+    T_max: np.ndarray,
+    metal: np.ndarray,
+    thr: float,
+    dx_m: float,
+    nz_solid: int,
+    dir_x: float,
+    dir_y: float,
+) -> dict[str, float]:
+    """1520-style contour. Width is perpendicular to travel; depth uses cell centers.
+
+    Temperatures are sampled at cell centers (index + 0.5). The plate face is
+    the index ``nz_solid``. Width is the distance between the two threshold
+    crossings on the travel station that holds the hottest metal.
+    """
+    empty = {
+        "pool_width_mm": 0.0,
+        "pool_depth_mm": 0.0,
+        "pool_width_fusion_mm": 0.0,
+        "pool_depth_fusion_mm": 0.0,
+        "fusion_width_mm": 0.0,
+        "fusion_depth_mm": 0.0,
+        "n_fusion_cells": 0.0,
+    }
+    if T_max.size == 0 or nz_solid <= 0 or not np.any(metal):
+        return empty
+    n_fused = float(np.sum(metal & (T_max >= thr)))
+    work = np.where(metal, T_max, np.nan)
+    if not np.isfinite(work).any() or float(np.nanmax(work)) < thr:
+        empty["n_fusion_cells"] = n_fused
+        return empty
+    peak = np.unravel_index(int(np.nanargmax(work)), work.shape)
+    travel_y = abs(float(dir_y)) > abs(float(dir_x))
+    if travel_y:
+        slab = work[:, int(peak[1]), :]
+    else:
+        slab = work[int(peak[0]), :, :]
+    prof = _finite_max(slab, axis=1)
+    if not np.isfinite(prof).any():
+        empty["n_fusion_cells"] = n_fused
+        return empty
+    line = int(np.nanargmax(prof))
+    col = slab[line, :]
+    edges = _profile_edges(prof, thr)
+    width = 0.0 if edges is None else max(0.0, (edges[1] - edges[0]) * dx_m * 1000.0)
+    depth = _depth_mm(col, thr, nz_solid, dx_m)
+    return {
+        "pool_width_mm": float(width),
+        "pool_depth_mm": float(depth),
+        "pool_width_fusion_mm": float(width),
+        "pool_depth_fusion_mm": float(depth),
+        "fusion_width_mm": float(width),
+        "fusion_depth_mm": float(depth),
+        "n_fusion_cells": n_fused,
+    }
+
+
+def measure_fusion_zone_mm(twin: "WAAMTwin", T_threshold_K: float | None = None) -> dict[str, float]:
+    """Fusion width perpendicular to travel, depth below the plate face.
+
+    Both edges are interpolated between cell centers on the maximum-temperature
+    field. The default threshold is the plate liquidus when a plate card is loaded.
     """
     g = twin.grid
     T_max = g.T_max.to_numpy()
     flags = g.flags.to_numpy()
-    T_liq = _liquidus_K(twin)
+    thr = float(_liquidus_K(twin) if T_threshold_K is None else T_threshold_K)
+    dx, dy, _dz = getattr(twin, "_torch_dir_xyz", (1.0, 0.0, 0.0))
     metal = flags != g.FLAG_GAS
-    fused = metal & (T_max >= T_liq)
-    n_fused = int(fused.sum())
-    if n_fused == 0:
-        return {
-            "pool_width_mm": 0.0,
-            "pool_depth_mm": 0.0,
-            "pool_width_fusion_mm": 0.0,
-            "pool_depth_fusion_mm": 0.0,
-            "fusion_width_mm": 0.0,
-            "fusion_depth_mm": 0.0,
-            "n_fusion_cells": 0.0,
-        }
-
-    xs = np.nonzero(fused)[0]
-    i_c = int(round(float(xs.mean())))
-    nz = int(getattr(twin, "nz_solid", 0))
-    sect = T_max[i_c]  # (ny, nz)
-    metal_s = metal[i_c]
-
-    # Width: scan y at each k near surface; find outer liquidus crossings
-    y_lo = None
-    y_hi = None
-    for j in range(g.ny - 1):
-        for k in range(g.nz):
-            if not (metal_s[j, k] or metal_s[j + 1, k]):
-                continue
-            a, b = sect[j, k], sect[j + 1, k]
-            if (a >= T_liq) != (b >= T_liq) or (a >= T_liq and b >= T_liq):
-                if a >= T_liq or b >= T_liq:
-                    if y_lo is None:
-                        if a < T_liq <= b:
-                            y_lo = j + _interp_crossing(a, b, T_liq)
-                        elif a >= T_liq:
-                            y_lo = float(j)
-                    if b < T_liq <= a or b >= T_liq:
-                        if b < T_liq <= a:
-                            y_hi = j + _interp_crossing(a, b, T_liq)
-                        else:
-                            y_hi = float(j + 1)
-
-    # Robust bbox fallback with half-cell correction
-    y_idx = np.where(fused[i_c].any(axis=1))[0]
-    z_idx = np.where(fused[i_c].any(axis=0))[0]
-    if y_idx.size == 0:
-        return {
-            "pool_width_mm": 0.0,
-            "pool_depth_mm": 0.0,
-            "pool_width_fusion_mm": 0.0,
-            "pool_depth_fusion_mm": 0.0,
-            "fusion_width_mm": 0.0,
-            "fusion_depth_mm": 0.0,
-            "n_fusion_cells": float(n_fused),
-        }
-
-    # Refine left/right edges on the mid-k row of the fused band
-    k_mid = int(z_idx.mean())
-    row = sect[:, k_mid]
-    j0, j1 = int(y_idx[0]), int(y_idx[-1])
-    # left edge
-    if j0 > 0 and row[j0 - 1] < T_liq <= row[j0]:
-        y_left = (j0 - 1) + _interp_crossing(row[j0 - 1], row[j0], T_liq)
-    else:
-        y_left = float(j0) - 0.5
-    # right edge
-    if j1 + 1 < g.ny and row[j1] >= T_liq > row[j1 + 1]:
-        y_right = j1 + _interp_crossing(row[j1], row[j1 + 1], T_liq)
-    else:
-        y_right = float(j1) + 0.5
-
-    W_mm = max(0.0, (y_right - y_left) * g.dx * 1000.0)
-
-    # Depth: bottom liquidus crossing below nz_solid
-    col = sect[int(round(0.5 * (y_left + y_right))), :]
-    k_bot = int(z_idx[0])
-    if k_bot > 0 and col[k_bot - 1] < T_liq <= col[k_bot]:
-        k_cross = (k_bot - 1) + _interp_crossing(col[k_bot - 1], col[k_bot], T_liq)
-    else:
-        k_cross = float(k_bot) - 0.5
-    D_mm = max(0.0, (nz - k_cross) * g.dx * 1000.0) if nz > 0 else 0.0
-
-    return {
-        "pool_width_mm": float(W_mm),
-        "pool_depth_mm": float(D_mm),
-        "pool_width_fusion_mm": float(W_mm),
-        "pool_depth_fusion_mm": float(D_mm),
-        # Aliases for benchmark.py / mesh_convergence_report callers
-        "fusion_width_mm": float(W_mm),
-        "fusion_depth_mm": float(D_mm),
-        "n_fusion_cells": float(n_fused),
-    }
+    out = fusion_contour_mm(
+        T_max, metal, thr, float(g.dx), int(getattr(twin, "nz_solid", 0)),
+        float(dx), float(dy),
+    )
+    out["T_threshold_K"] = thr
+    return out
 
 
 def measure_bead_crown_mm(twin: "WAAMTwin") -> dict[str, float]:

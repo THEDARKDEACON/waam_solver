@@ -53,3 +53,76 @@ def interp_linear(T: float, knots: list[tuple[float, float]], fallback: float) -
             w = (T - t0) / (t1 - t0)
             return v0 + w * (v1 - v0)
     return fallback
+
+
+def sensible_knot_enthalpies(knots: list[tuple[float, float]]) -> list[float]:
+    """Integral of cp from absolute zero, evaluated at each knot [J/kg].
+
+    cp is held at the first knot from 0 K up to that knot, then piecewise
+    linear. A constant table therefore stores cp·T, the same zero the
+    historical rho·cp·T anchor used.
+    """
+    if not knots:
+        return []
+    h = [float(knots[0][1]) * float(knots[0][0])]
+    for (t0, c0), (t1, c1) in zip(knots, knots[1:]):
+        h.append(h[-1] + 0.5 * (float(c0) + float(c1)) * (float(t1) - float(t0)))
+    return h
+
+
+def sensible_enthalpy_J_kg(
+    T: float,
+    knots: list[tuple[float, float]],
+    fallback: float,
+) -> float:
+    """Integral of cp from 0 K to T [J/kg]. Latent heat is not included."""
+    if T <= 0.0:
+        return 0.0
+    if not knots:
+        return float(fallback) * float(T)
+    ts = [float(t) for t, _ in knots]
+    cs = [float(c) for _, c in knots]
+    hs = sensible_knot_enthalpies(knots)
+    if T <= ts[0]:
+        return cs[0] * float(T)
+    if T >= ts[-1]:
+        return hs[-1] + cs[-1] * (float(T) - ts[-1])
+    for i in range(len(ts) - 1):
+        t0, t1 = ts[i], ts[i + 1]
+        if t0 <= T <= t1:
+            u = float(T) - t0
+            dt = t1 - t0
+            c0, c1 = cs[i], cs[i + 1]
+            acc = hs[i] + c0 * u
+            if dt > 1e-12:
+                acc += 0.5 * (c1 - c0) / dt * u * u
+            return acc
+    return hs[-1]
+
+
+def volumetric_enthalpy_J_m3(
+    rho: float,
+    cp_fallback: float,
+    knots: list[tuple[float, float]],
+    T: float,
+    T_solidus: float,
+    T_liquidus: float,
+    L_fusion: float,
+) -> float:
+    """Volumetric enthalpy [J/m³]: rho·∫cp plus latent heat across the mush.
+
+    Below the solidus this is the sensible integral. The full rho·L is in
+    by the liquidus, spread linearly in temperature through the mush. With
+    no knots and a constant cp it is rho·cp·T plus that jump, matching the
+    old anchor.
+    """
+    sensible = float(rho) * sensible_enthalpy_J_kg(T, knots, cp_fallback)
+    if float(T) <= float(T_solidus):
+        return sensible
+    latent = float(rho) * float(L_fusion)
+    if float(T) >= float(T_liquidus):
+        return sensible + latent
+    span = float(T_liquidus) - float(T_solidus)
+    if span <= 1e-6:
+        return sensible + latent
+    return sensible + latent * (float(T) - float(T_solidus)) / span

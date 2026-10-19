@@ -20,15 +20,13 @@ def _clamp_enthalpy_ceiling(twin: "WAAMTwin", g) -> None:
         return
     if getattr(twin, "use_dual_alloy", False):
         thermal.clamp_enthalpy_ceiling_dual(
-            g.H, g.flags, g.cp_rho_field, g.alloy_frac,
-            twin.H_liq, twin.mat.T_liquidus,
-            twin.plate_H_liq, twin.plate_mat.T_liquidus,
-            twin.T_vapor_cap_K, g.dx, g.enthalpy_cap_energy_J_buf, g.FLAG_GAS,
+            g.H, g.flags, g.alloy_frac,
+            twin.H_cap, twin.plate_H_cap,
+            g.dx, g.enthalpy_cap_energy_J_buf, g.FLAG_GAS,
         )
     elif twin.use_material_tables:
         thermal.clamp_enthalpy_ceiling_variable_cp(
-            g.H, g.flags, g.cp_rho_field,
-            twin.H_liq, twin.mat.T_liquidus, twin.T_vapor_cap_K,
+            g.H, g.flags, twin.H_cap,
             g.dx, g.enthalpy_cap_energy_J_buf, g.FLAG_GAS,
         )
     else:
@@ -154,20 +152,28 @@ def _refresh_thermal(twin: "WAAMTwin", g) -> bool:
 
 def _update_phase(twin: "WAAMTwin", g) -> None:
     if getattr(twin, "use_dual_alloy", False):
+        wt = twin.gpu_tables
+        pt = twin.gpu_tables_plate
         thermal.update_phase_dual(
-            g.H, g.T, g.f_l, g.cp_rho_field, g.alloy_frac,
+            g.H, g.T, g.f_l, g.alloy_frac,
             twin.L_rho, twin.mat.T_solidus, twin.mat.T_liquidus,
             twin.H_sol, twin.H_liq,
             twin.plate_L_rho, twin.plate_mat.T_solidus, twin.plate_mat.T_liquidus,
             twin.plate_H_sol, twin.plate_H_liq,
+            twin.mat.rho, twin.plate_mat.rho,
+            wt.cp_T, wt.cp_V, wt.cp_H, wt.n_cp,
+            pt.cp_T, pt.cp_V, pt.cp_H, pt.n_cp,
         )
         return
     if twin.use_material_tables:
+        tbl = twin.gpu_tables
         thermal.update_phase_variable_cp(
-            g.H, g.T, g.f_l, g.cp_rho_field,
+            g.H, g.T, g.f_l,
             twin.L_rho,
             twin.mat.T_solidus, twin.mat.T_liquidus,
             twin.H_sol, twin.H_liq,
+            twin.mat.rho,
+            tbl.cp_T, tbl.cp_V, tbl.cp_H, tbl.n_cp,
         )
         return
     phase_change.update_phase(
@@ -346,7 +352,8 @@ def coupled_step(
                 g.nx, g.ny, g.nz,
             )
             thermal.clamp_enthalpy_floor(
-                g.H, g.cp_rho_field, g.flags, twin.T_amb, g.FLAG_GAS,
+                g.H, g.flags, g.alloy_frac,
+                twin.H_amb, twin.plate_H_amb, g.FLAG_GAS,
             )
         else:
             thermal.apply_boundary_losses(

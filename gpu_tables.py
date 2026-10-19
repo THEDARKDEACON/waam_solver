@@ -6,6 +6,7 @@ import numpy as np
 from waam_twin.compiler import ti
 
 from .materials import MaterialProps
+from .material_tables import sensible_knot_enthalpies
 from . import logging_util as log
 
 MAX_KNOTS = 50
@@ -19,6 +20,7 @@ class MaterialGPUTables:
         self.enabled = bool(tbl.cp or tbl.k or tbl.mu or tbl.dgamma_dT)
         self.cp_T = ti.field(dtype=ti.f32, shape=(MAX_KNOTS,))
         self.cp_V = ti.field(dtype=ti.f32, shape=(MAX_KNOTS,))
+        self.cp_H = ti.field(dtype=ti.f32, shape=(MAX_KNOTS,))
         self.k_T = ti.field(dtype=ti.f32, shape=(MAX_KNOTS,))
         self.k_V = ti.field(dtype=ti.f32, shape=(MAX_KNOTS,))
         self.mu_T = ti.field(dtype=ti.f32, shape=(MAX_KNOTS,))
@@ -43,6 +45,7 @@ class MaterialGPUTables:
         v_field: ti.Field,
         n_field: ti.Field,
         fallback: float,
+        h_field: ti.Field | None = None,
     ) -> None:
         n_src = len(knots)
         if n_src > MAX_KNOTS:
@@ -65,10 +68,17 @@ class MaterialGPUTables:
         t_field.from_numpy(t_arr)
         v_field.from_numpy(v_arr)
         n_field[None] = n
+        if h_field is not None:
+            pairs = [(float(t_arr[i]), float(v_arr[i])) for i in range(n)]
+            hs = sensible_knot_enthalpies(pairs)
+            h_arr = np.zeros(MAX_KNOTS, dtype=np.float32)
+            for i, hv in enumerate(hs):
+                h_arr[i] = hv
+            h_field.from_numpy(h_arr)
 
     def _upload(self, mat: MaterialProps) -> None:
         tbl = mat.tables
-        self._upload_knots(tbl.cp, self.cp_T, self.cp_V, self.n_cp, mat.cp)
+        self._upload_knots(tbl.cp, self.cp_T, self.cp_V, self.n_cp, mat.cp, self.cp_H)
         self._upload_knots(tbl.k, self.k_T, self.k_V, self.n_k, mat.k)
         self._upload_knots(tbl.mu, self.mu_T, self.mu_V, self.n_mu, mat.mu)
         self._upload_knots(tbl.dgamma_dT, self.dgamma_T, self.dgamma_V, self.n_dgamma, mat.dgamma_dT)

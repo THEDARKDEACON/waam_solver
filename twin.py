@@ -12,7 +12,8 @@ import numpy as np
 
 from .grid import WAAMGrid
 from .materials import MaterialProps, load_material
-from .gpu_tables import MaterialGPUTables
+from .gpu_tables import MAX_KNOTS, MaterialGPUTables
+from .material_tables import volumetric_enthalpy_J_m3
 from .physics.arc import create_heat_source
 from .physics.bead_geometry import (
     bead_reinforcement_height_mm,
@@ -28,6 +29,19 @@ from .physics.deposition import (
 from .physics.electrical_stickout import droplet_entry_temperature_K
 from .physics.weld_forces import arc_pressure_peak_pa, droplet_impact_velocity_m_s
 from . import kernels
+
+def _enthalpy_J_m3(mat: MaterialProps, T: float) -> float:
+    knots = list(mat.tables.cp)[:MAX_KNOTS]
+    return volumetric_enthalpy_J_m3(
+        mat.rho, mat.cp, knots, float(T),
+        mat.T_solidus, mat.T_liquidus, mat.L_fusion,
+    )
+
+
+def _enthalpy_factor(mat: MaterialProps, T: float) -> float:
+    t = max(float(T), 1e-9)
+    return _enthalpy_J_m3(mat, t) / t
+
 from . import logging_util as log
 from .solvers.coupled_step import coupled_step
 
@@ -355,11 +369,13 @@ class WAAMTwin:
 
         self.gpu_tables = MaterialGPUTables(mat)
         self.use_material_tables = self.gpu_tables.enabled
-        cp_sol = mat.cp_at(mat.T_solidus)
-        cp_liq = mat.cp_at(mat.T_liquidus)
-        # M9: H_liq includes mushy sensible heat cp·(T_liq − T_sol)
-        self.H_sol = mat.rho * cp_sol * mat.T_solidus
-        self.H_liq = mat.rho * cp_liq * mat.T_liquidus + self.L_rho
+        # Anchors are the integral of cp, with latent heat added by the liquidus.
+        self.H_amb = _enthalpy_J_m3(mat, self.T_amb)
+        self.H_sol = _enthalpy_J_m3(mat, mat.T_solidus)
+        self.H_liq = _enthalpy_J_m3(mat, mat.T_liquidus)
+        self.H_cap = _enthalpy_J_m3(mat, self.T_vapor_cap_K)
+        self.plate_H_amb = self.H_amb
+        self.plate_H_cap = self.H_cap
         self.arc_source = create_heat_source(heat_source)
         self._configure_dual_alloy(plate_material)
 
@@ -410,10 +426,10 @@ class WAAMTwin:
         self.plate_cp_rho = pmat.rho * pmat.cp_at(self.T_amb)
         self.plate_L_rho = pmat.rho * pmat.L_fusion
         self.plate_alpha_lu = pmat.alpha * g.dt / (g.dx ** 2)
-        cp_sol = pmat.cp_at(pmat.T_solidus)
-        cp_liq = pmat.cp_at(pmat.T_liquidus)
-        self.plate_H_sol = pmat.rho * cp_sol * pmat.T_solidus
-        self.plate_H_liq = pmat.rho * cp_liq * pmat.T_liquidus + self.plate_L_rho
+        self.plate_H_amb = _enthalpy_J_m3(pmat, self.T_amb)
+        self.plate_H_sol = _enthalpy_J_m3(pmat, pmat.T_solidus)
+        self.plate_H_liq = _enthalpy_J_m3(pmat, pmat.T_liquidus)
+        self.plate_H_cap = _enthalpy_J_m3(pmat, self.T_vapor_cap_K)
         nu_phys = pmat.mu / pmat.rho
         nu_lu = nu_phys * g.dt / (g.dx ** 2)
         self.plate_tau = 3.0 * nu_lu + 0.5
@@ -729,10 +745,11 @@ class WAAMTwin:
             nz_solid = self.nz_solid
             i0, i1, j0, j1 = self.resolve_plate_ij()
 
+        pmat = self.plate_mat or self.mat
         kernels.init_grid(
             g.f_a, g.rho, g.ux, g.uy, g.uz,
             g.T, g.H, g.f_l, g.phi, g.flags, g.alloy_id, g.alloy_frac,
-            T0, RHO_LATTICE, self.cp_rho, float(getattr(self, "plate_cp_rho", self.cp_rho)),
+            T0, RHO_LATTICE, _enthalpy_factor(self.mat, T0), _enthalpy_factor(pmat, T0),
             nz_solid,
             i0, i1, j0, j1,
             g.FLAG_FLUID, g.FLAG_SOLID, g.FLAG_GAS,
@@ -941,7 +958,9 @@ class WAAMTwin:
             g.rho, g.ux, g.uy, g.uz, g.Fx, g.Fy, g.Fz,
             g.cp_rho_field, g.alpha_lu_field, g.dgamma_lu_field, g.tau_field,
             g.alloy_id, g.alloy_frac,
-            self.T_amb, self.cp_rho, float(getattr(self, "plate_cp_rho", self.cp_rho)),
+            self.T_amb,
+            _enthalpy_factor(self.mat, self.T_amb),
+            _enthalpy_factor(self.plate_mat or self.mat, self.T_amb),
             RHO_LATTICE, self.nz_solid,
             g.FLAG_SOLID, g.FLAG_GAS, g.FLAG_FLUID,
             g.nx, g.ny, g.nz,
