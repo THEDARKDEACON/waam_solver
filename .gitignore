@@ -30,6 +30,9 @@ htmlcov/
 !docs/validation/data/**/*.png
 !docs/validation/data/**/*.jpg
 !docs/validation/data/**/*.jpeg
+# Ansys Workbench binaries / scratch (commit filled comparison/*.json + report.md if desired)
+docs/validation/ansys_2024r2/workbook/**
+!docs/validation/ansys_2024r2/workbook/.gitignore
 viewer_output/
 cloud_runs/
 run_out/

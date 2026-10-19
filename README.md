@@ -704,7 +704,7 @@ Clamp probe (equal travel): `python -m waam_twin.tools.diagnostics.clamp_check -
 HPC clamp clearance: [`docs/HPC_CLAMP_CLEARANCE.md`](docs/HPC_CLAMP_CLEARANCE.md).  
 Recoil evidence: `python -m waam_twin.tools.recoil_accommodation_sweep`.  
 Toggle sensitivity: `python -m waam_twin.tools.sensitivity_sweep`.  
-Ansys compare scaffold: `docs/validation/ansys_2024r2/`.
+Ansys Tier A grounding playbook: [`docs/validation/ansys_2024r2/PLAYBOOK_TIER_A.md`](docs/validation/ansys_2024r2/PLAYBOOK_TIER_A.md).
 
 | Flag | Effect |
 |------|--------|

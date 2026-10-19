@@ -1,7 +1,9 @@
 # Ansys 2024 R2 vs waam_twin — bead-on-plate comparison
 
-**Start here for setup:** [`SETUP_MECHANICAL.md`](SETUP_MECHANICAL.md)  
-(click-by-click Transient Thermal + Goldak in Workbench 2024 R2)
+**Start here (operator playbook):** [`PLAYBOOK_TIER_A.md`](PLAYBOOK_TIER_A.md)  
+(checklist: Ansys build → extract W/D → twin export → compare → rubric)
+
+**Click-by-click Workbench:** [`SETUP_MECHANICAL.md`](SETUP_MECHANICAL.md)
 
 **Goal:** Run a simple GMAW-style bead-on-plate case in Ansys that mirrors
 `jobs/examples/bead_on_plate.yaml`, extract **macro** (pool W×D) and **micro**
@@ -38,6 +40,7 @@ the twin as “wrong” for differing bead crown when Ansys never modeled it.
 ```
 ansys_2024r2/
   README.md                          ← this file
+  PLAYBOOK_TIER_A.md                 ← end-to-end checklist (start here)
   params_bead_on_plate.json          ← numbers locked to bead_on_plate.yaml
   SETUP_MECHANICAL.md                ← Tier A Workbench steps (2024 R2)
   SETUP_FLUENT.md                    ← Tier B optional CFD outline
@@ -56,10 +59,10 @@ ansys_2024r2/
 
 ## Quick start (Tier A)
 
-1. Follow the setup guide: **[`SETUP_MECHANICAL.md`](SETUP_MECHANICAL.md)** (Workbench → mesh → Goldak Commands → solve → measure W/D).
+1. Follow **[`PLAYBOOK_TIER_A.md`](PLAYBOOK_TIER_A.md)** end-to-end (or the detailed UI guide [`SETUP_MECHANICAL.md`](SETUP_MECHANICAL.md)).
 2. Fill `comparison/ansys_metrics.json` (template or `scripts/extract_fusion_zone.py`).
-3. Export twin metrics and compare (commands in the setup guide, Step 14).
-4. Read [`comparison/decision_rubric.md`](comparison/decision_rubric.md).
+3. Export twin metrics (`python -m waam_twin.tools.ansys_compare_export`) and run `scripts/compare_to_twin.py`.
+4. Decide with [`comparison/decision_rubric.md`](comparison/decision_rubric.md).
 
 ---
 
