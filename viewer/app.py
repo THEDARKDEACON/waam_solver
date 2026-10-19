@@ -276,7 +276,17 @@ def run(argv: list[str] | None = None) -> None:
     print(f"  Physics : tier={getattr(twin, 'physics_tier', '?')}  VOF={twin.enable_vof}")
     print(f"  Path    : {session.uses_path}  travel={session.torch_spd_m_s * 1000:.2f} mm/s")
     print(f"  Particles: radius={particle_scale:.2f}×dx  (--particle-scale)")
-    print(f"  Output  : {out_dir.resolve()}\n")
+    print(f"  Output  : {out_dir.resolve()}")
+    print(f"  Probes  : {(out_dir / 'probes.csv').resolve()}  (keeps recording after arc off)\n")
+
+    def _flush_probes() -> None:
+        rec = getattr(twin, "probe_recorder", None)
+        if rec is None or not rec.probes:
+            return
+        try:
+            rec.flush_csv(out_dir / "probes.csv")
+        except Exception as exc:
+            print(f"[viewer] Probe log write failed: {exc}")
 
     while window.running:
         for e in window.get_events(ui.PRESS):
@@ -328,10 +338,19 @@ def run(argv: list[str] | None = None) -> None:
                 # but before window.show().
                 pending_screenshot = True
             elif e.key in ("g", "G"):
+                _flush_probes()
                 try:
                     session.export_g_bundle(out_dir)
                 except Exception as exc:
                     print(f"[viewer] Bundle export failed: {exc}")
+                rec = getattr(twin, "probe_recorder", None)
+                if rec is not None and rec._rows:
+                    last = rec._rows[-1]
+                    print(
+                        f"[viewer] Probe log {len(rec._rows)} rows  "
+                        f"last t={last.get('sim_time_ms')} ms  arc_on={last.get('arc_on')}  "
+                        f"-> {(out_dir / 'probes.csv').resolve()}"
+                    )
             elif e.key in ("u", "U"):
                 tx, ty, tz = session.torch_surface_mm()
                 if twin.probe_recorder is None:
@@ -364,6 +383,7 @@ def run(argv: list[str] | None = None) -> None:
         if not paused:
             session.advance_physics(steps_per_frame, is_welding=True)
             session.maybe_auto_export_on_path_end(out_dir)
+        _flush_probes()
 
         # Export/diagnostic buffers are allocated lazily (not on minimal grids).
         g.ensure_export_buffers()
@@ -840,8 +860,8 @@ def _print_controls() -> None:
     print("  N         Toggle φ surface shell (T-colored)")
     print("  X / Y / Z Mid-plane thermal slice (contour-style cut)")
     print("  T / O     Toggle tracers / torch marker")
-    print("  G         Full research VTK bundle → viewer_output/")
-    print("            (also auto-exports once when torch path ends)")
+    print("  G         VTK bundle snapshot. Live probe trace is probes.csv")
+    print("            (that file keeps recording after the arc goes off)")
     print("  U         Add probe at torch position")
     print("  I         Pick probe at camera lookat (screen center)")
     print("  R         Reset simulation")

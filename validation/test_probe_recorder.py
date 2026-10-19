@@ -13,7 +13,30 @@ from waam_twin.export.probes import ProbeRecorder
 from waam_twin.runtime import init_taichi
 
 
+def test_flush_keeps_arc_off_rows() -> None:
+    """The on-disk log grows after arc_on drops. A second flush does not rewrite the weld."""
+    import tempfile
+
+    from waam_twin.export.probes import ProbeRecorder, ProbeSpec
+
+    rec = ProbeRecorder()
+    rec.probes.append(ProbeSpec("sub", 0.0, 0.0, 0.0))
+    rec._rows.append({"sim_time_ms": 10.0, "step": 1, "arc_on": 1, "sub_T_K": 400.0})
+    rec._rows.append({"sim_time_ms": 20.0, "step": 2, "arc_on": 1, "sub_T_K": 500.0})
+    tmp = Path(tempfile.mkdtemp())
+    path = tmp / "probes.csv"
+    assert rec.flush_csv(path) == 2
+    rec._rows.append({"sim_time_ms": 30.0, "step": 3, "arc_on": 0, "sub_T_K": 350.0})
+    assert rec.flush_csv(path) == 1
+    assert rec.flush_csv(path) == 0
+    with open(path, newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert [r["arc_on"] for r in rows] == ["1", "1", "0"]
+    assert rows[-1]["sim_time_ms"] == "30.0"
+
+
 def run(min_rows: int = 5) -> None:
+    test_flush_keeps_arc_off_rows()
     init_taichi(backend="cpu")
     twin = WAAMTwin(nx=16, ny=10, nz=10, dx=3e-4, max_tracers=5)
     twin.reset()

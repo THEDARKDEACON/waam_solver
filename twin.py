@@ -825,6 +825,7 @@ class WAAMTwin:
             if norm > 1e-12:
                 self._torch_dir_xyz = (dx / norm, dy / norm, dz / norm)
         self._last_torch_pos_m = (torch_x_m, torch_y_m, z_now)
+        self._arc_on = bool(is_welding)
         if (
             is_welding
             and self.droplet_freq > 0

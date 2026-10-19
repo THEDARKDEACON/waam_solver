@@ -72,6 +72,8 @@ class ProbeRecorder:
 
     probes: list[ProbeSpec] = field(default_factory=list)
     _rows: list[dict[str, float | str]] = field(default_factory=list)
+    _flushed: int = 0
+    _flush_names: tuple[str, ...] = ()
 
     def add_grid(
         self, i: int, j: int, k: int, twin: "WAAMTwin", name: str | None = None
@@ -153,7 +155,11 @@ class ProbeRecorder:
             return
         g = twin.grid
         t_ms = twin._step_n * g.dt * 1000.0
-        row: dict[str, float | str] = {"sim_time_ms": round(t_ms, 4), "step": twin._step_n}
+        row: dict[str, float | str] = {
+            "sim_time_ms": round(t_ms, 4),
+            "step": twin._step_n,
+            "arc_on": 1 if getattr(twin, "_arc_on", True) else 0,
+        }
         for p in self.probes:
             world = p.world_m(twin)
             if world is None:
@@ -176,22 +182,50 @@ class ProbeRecorder:
             row[f"{p.name}_f_l"] = round(float(g.f_l[i, j, k]), 4)
         self._rows.append(row)
 
+    def _fieldnames(self) -> list[str]:
+        names = ["sim_time_ms", "step", "arc_on"]
+        for p in self.probes:
+            names.append(f"{p.name}_x_mm")
+            names.append(f"{p.name}_y_mm")
+            names.append(f"{p.name}_z_mm")
+            names.append(f"{p.name}_T_K")
+            names.append(f"{p.name}_f_l")
+        return names
+
     def write_csv(self, path: str | pathlib.Path) -> None:
         if not self._rows:
             return
         path = pathlib.Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        fieldnames: list[str] = ["sim_time_ms", "step"]
-        for p in self.probes:
-            fieldnames.append(f"{p.name}_x_mm")
-            fieldnames.append(f"{p.name}_y_mm")
-            fieldnames.append(f"{p.name}_z_mm")
-            fieldnames.append(f"{p.name}_T_K")
-            fieldnames.append(f"{p.name}_f_l")
         with open(path, "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+            writer = csv.DictWriter(f, fieldnames=self._fieldnames(), extrasaction="ignore")
             writer.writeheader()
             writer.writerows(self._rows)
 
+    def flush_csv(self, path: str | pathlib.Path) -> int:
+        """Append rows not yet on disk. The file keeps growing after the arc goes off."""
+        if not self.probes or not self._rows:
+            return 0
+        path = pathlib.Path(path)
+        names = tuple(p.name for p in self.probes)
+        if names != self._flush_names:
+            self._flushed = 0
+            self._flush_names = names
+            if path.exists():
+                path.unlink()
+        if self._flushed >= len(self._rows):
+            return 0
+        path.parent.mkdir(parents=True, exist_ok=True)
+        new = self._rows[self._flushed :]
+        write_header = (not path.exists()) or path.stat().st_size == 0
+        with open(path, "a", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=self._fieldnames(), extrasaction="ignore")
+            if write_header:
+                writer.writeheader()
+            writer.writerows(new)
+        self._flushed = len(self._rows)
+        return len(new)
+
     def clear(self) -> None:
         self._rows.clear()
+        self._flushed = 0

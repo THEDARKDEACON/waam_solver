@@ -115,7 +115,7 @@ class ViewerSession:
                 self._warned_path_end = True
                 print(
                     "[viewer] Torch path complete — arc OFF (cooling at end waypoint). "
-                    "Press R to reset."
+                    "probes.csv in the output folder keeps recording. Press R to reset."
                 )
             if self.path_driver:
                 sim_t = self.twin._step_n * g.dt
