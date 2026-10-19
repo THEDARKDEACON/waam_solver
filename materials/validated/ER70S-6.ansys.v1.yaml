@@ -1,0 +1,85 @@
+# ER70S-6 — Ansys Mechanical 2024 R2 wire card
+#
+# Source, copied, not refitted:
+#   Deposit_Study Engineering Data material "ER70S-6"
+#   Deposit_Study_files/dp0/ENGD/ENGD/EngineeringData.xml
+#     density 7000 kg/m^3
+#     isotropic thermal conductivity, 15 temperatures, W/m·°C
+#     enthalpy, 15 temperatures, J/m^3 (the curve a thermal solve integrates)
+#     specific heat column: 701.3 J/kg·K to 1438.85 °C, then 902.5
+#     viscosity 0.0057 Pa·s, constant
+#
+# The enthalpy slope is 771.43 J/kg·K from 20 °C to 1438.85 °C, 6271 J/kg·K
+# from 1438.85 °C to 1492.85 °C, and 992.75 J/kg·K from 1492.85 °C to 2000 °C.
+# Latent heat is (enthalpy jump) - 771.43*54 = 297000 J/kg exactly.
+# cp stays 771.43 through the melt so that jump is not counted twice.
+# The specific-heat column (701.3 / 902.5) is not the curve the enthalpy integrates.
+#
+# This is not materials/validated/ER70S-6.v1.yaml. That lock keeps
+# solidus 1748 K, liquidus 1793 K, L_fusion 272 kJ/kg, and the three-point
+# tables. jobs/examples/bead_calibrate.yaml stays on v1.
+# The viewer scores fusion at the wire liquidus. This card's liquidus is
+# 1492.85 °C, so do not point bead_calibrate_thermal.yaml at it while the
+# plate comparison is scored at 1520 °C.
+#
+# Surfactant and the surface-tension constants are the v1 Sahoo Fe-S model
+# (S = 28 ppm). They are not in the Ansys thermal card. Marangoni is off
+# in the conduction job.
+name: ER70S-6
+status: calibrated
+source: "Ansys Mechanical 2024 R2 Engineering Data, ER70S-6, Deposit_Study"
+
+constants:
+  k: 33.0                  # W/m·K from 20 °C through 1438.85 °C
+  rho: 7000.0              # kg/m^3, constant in the Ansys card
+  cp: 771.43               # J/kg·K solid enthalpy slope
+  alpha: 6.111e-6          # m^2/s at 20 °C, k=33 / (7000*771.43)
+  T_solidus: 1712.0        # 1438.85 °C
+  T_liquidus: 1766.0       # 1492.85 °C
+  L_fusion: 297000.0       # J/kg
+  gamma_0: 1.8             # N/m, v1 Sahoo value; not in the Ansys card
+  dgamma_dT: -4.3e-4       # N/m·K, v1; not in the Ansys card
+  T_ref_gamma: 1766.0
+  mu: 0.0057               # Pa·s, Ansys viscosity, constant
+  beta_T: 1.2e-4           # 1/K, twin default; buoyancy is off in the thermal job
+
+tables:
+  # [T_K, value]. cp holds the enthalpy slope flat. Melt latent heat is L_fusion.
+  cp:
+    - [293.15, 771.43]     # 20 °C
+    - [1765.95, 771.43]    # through 1492.85 °C, sensible only
+    - [1766.00, 992.75]    # liquidus
+    - [2273.15, 992.75]    # 2000 °C, held above 2000 °C
+  k:
+    - [293.15, 33.0]       # 20 °C
+    - [373.15, 33.0]       # 100
+    - [473.15, 33.0]       # 200
+    - [673.15, 33.0]       # 400
+    - [873.15, 33.0]       # 600
+    - [1073.15, 33.0]      # 800
+    - [1273.15, 33.0]      # 1000
+    - [1473.15, 33.0]      # 1200
+    - [1673.15, 33.0]      # 1400
+    - [1712.00, 33.0]      # 1438.85 solidus
+    - [1739.00, 34.2]      # 1465.85
+    - [1766.00, 35.4]      # 1492.85 liquidus
+    - [1873.15, 35.4]      # 1600
+    - [2073.15, 35.4]      # 1800
+    - [2273.15, 35.4]      # 2000, held above 2000 °C
+
+surface:
+  contact_angle_deg: 80.0
+
+surfactant:
+  model: sahoo
+  sulphur_ppm: 28.0
+
+electrical:
+  rho_e_ohm_m: 1.5e-7
+  eta_stick: 0.85
+
+notes: >
+  Ansys Engineering Data ER70S-6. Conductivity is the 15-point curve.
+  Specific heat is the enthalpy slope: 771.43 J/kg·K until the liquidus,
+  then 992.75. The 297 kJ/kg melt jump is L_fusion. The locked calibrate
+  card remains ER70S-6.v1.yaml.

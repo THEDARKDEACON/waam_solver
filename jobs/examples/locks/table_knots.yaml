@@ -1,4 +1,4 @@
-# Lock M4: material tables longer than MAX_KNOTS=8 warn (strict_mode raises).
+# Lock M4: material tables longer than MAX_KNOTS=50 warn (strict_mode raises).
 name: lock_table_knots
 simulation:
   preset: minimal
@@ -16,5 +16,5 @@ process:
   voltage_V: 15
   T_ambient_K: 300
 model_reference:
-  n_knots_src: 9
-  n_knots_gpu: 8
+  n_knots_src: 51
+  n_knots_gpu: 50

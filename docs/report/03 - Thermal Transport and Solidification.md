@@ -83,7 +83,7 @@ Every step, every cell looks up $c_p(T)$, $k(T)$, $\mu(T)$ and $d\gamma/dT(T)$ f
 
 $$\alpha^{lu} = \frac{k(T)}{\rho c_p(T)}\frac{\Delta t}{\Delta x^2}, \qquad \tau = 3\frac{\mu(T)}{\rho}\frac{\Delta t}{\Delta x^2} + \tfrac{1}{2}$$
 
-The lookup is piecewise-linear with end clamping, and I unrolled the knot search over a fixed maximum of eight knots so it compiles to branchless GPU code. If a material YAML supplies more knots than that, I warn — and under strict mode I raise, rather than silently truncating a carefully measured property curve.
+The lookup is piecewise-linear with end clamping, and I unrolled the knot search over a fixed maximum of 50 knots so it compiles to branchless GPU code. If a material YAML supplies more knots than that, I warn — and under strict mode I raise, rather than silently truncating a carefully measured property curve.
 
 There is also a dual-alloy path that evaluates both the wire and plate tables and blends them by local composition, for studies where filler and substrate differ.
 

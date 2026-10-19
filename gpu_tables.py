@@ -8,11 +8,11 @@ from waam_twin.compiler import ti
 from .materials import MaterialProps
 from . import logging_util as log
 
-MAX_KNOTS = 8
+MAX_KNOTS = 50
 
 
 class MaterialGPUTables:
-    """Piecewise-linear material knots on GPU (max 8 points per property)."""
+    """Piecewise-linear material knots on GPU (max 50 points per property)."""
 
     def __init__(self, mat: MaterialProps):
         tbl = mat.tables
