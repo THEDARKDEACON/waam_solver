@@ -21,8 +21,9 @@ def _front_rear_enthalpy(H_np, arc_i: float, arc_j: float, dir_x: float, dir_y: 
     rear = 0.0
     for i in range(nx):
         for j in range(ny):
-            di = float(i) - arc_i
-            dj = float(j) - arc_j
+            # Kernel samples cell centers, not the integer index.
+            di = (float(i) + 0.5) - arc_i
+            dj = (float(j) + 0.5) - arc_j
             x_travel = di * dir_x + dj * dir_y
             col = float(H_np[i, j, :].sum())
             if x_travel >= 0.0:
@@ -65,8 +66,10 @@ def run(tol_frac: float = 0.01) -> float:
         a_front=4.0, a_rear=8.0, b=4.0, c=3.0,
     )
     g = twin.grid
-    arc_i = (g.nx - 1) * 0.5
-    arc_j = (g.ny - 1) * 0.5
+    # Integer index: the travel-plane falls between cell centers (n+0.5),
+    # so no cell sits on the front/rear discontinuity.
+    arc_i = float(g.nx // 2)
+    arc_j = float(g.ny // 2)
     # Place arc on the mid-plane metal so both front and rear halves exist.
     arc_k = float(twin.nz_solid + 2)
 
@@ -87,13 +90,22 @@ def run(tol_frac: float = 0.01) -> float:
             f"Goldak energy not conserved: |ΔH - ηQΔt|/ηQΔt = {err:.4f} > {tol_frac}"
         )
 
-    # Front/rear asymmetry: longer rear + larger fr ⇒ more heat behind torch (+x).
+    # f/(a b c) weighting: rear plate power is f_r/(f_f+f_r) = 0.7.
     H_np = g.H.to_numpy()
     front, rear = _front_rear_enthalpy(H_np, arc_i, arc_j, 1.0, 0.0)
-    print(f"[goldak_energy] +x travel  H_front={front:.3e}  H_rear={rear:.3e}")
+    rear_frac = rear / max(front + rear, 1e-30)
+    print(
+        f"[goldak_energy] +x travel  H_front={front:.3e}  H_rear={rear:.3e}  "
+        f"rear_frac={rear_frac:.3f}"
+    )
     if rear <= front:
         raise AssertionError(
-            "Expected more enthalpy behind torch on +x (fr>ff, a_rear>a_front)"
+            "Expected more enthalpy behind torch on +x (fr > ff)"
+        )
+    if not (0.64 <= rear_frac <= 0.76):
+        raise AssertionError(
+            f"Rear power fraction {rear_frac:.3f} is outside 0.64-0.76 "
+            "(Goldak f_r/(f_f+f_r) = 0.70 with f/(abc) weights)"
         )
 
     # +y travel: clear and re-inject with torch direction along +y.
@@ -106,10 +118,18 @@ def run(tol_frac: float = 0.01) -> float:
     twin.arc_source.inject(twin, g, arc_i, arc_j, arc_k)
     H_np = g.H.to_numpy()
     front_y, rear_y = _front_rear_enthalpy(H_np, arc_i, arc_j, 0.0, 1.0)
-    print(f"[goldak_energy] +y travel  H_front={front_y:.3e}  H_rear={rear_y:.3e}")
+    rear_frac_y = rear_y / max(front_y + rear_y, 1e-30)
+    print(
+        f"[goldak_energy] +y travel  H_front={front_y:.3e}  H_rear={rear_y:.3e}  "
+        f"rear_frac={rear_frac_y:.3f}"
+    )
     if rear_y <= front_y:
         raise AssertionError(
             "Expected more enthalpy behind torch on +y travel direction"
+        )
+    if not (0.64 <= rear_frac_y <= 0.76):
+        raise AssertionError(
+            f"+y rear power fraction {rear_frac_y:.3f} is outside 0.64-0.76"
         )
     return err
 

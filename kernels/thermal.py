@@ -100,9 +100,12 @@ def _goldak_pdf_weight(
     """
     Goldak (1984) spatial factor (relative):
 
-        f_{f,r} exp(-3 x²/a_{f,r}² - 3 y²/b² - 3 z²/c²)
+        [f_{f,r} / (a_{f,r} b c)] exp(-3 x²/a_{f,r}² - 3 y²/b² - 3 z²/c²)
 
-    Absolute 6√3/(π√π a b c) amplitude is absorbed by energy renormalization.
+    The shared 6√3/(π√π) factor is absorbed by energy renormalization.
+    The 1/(a b c) factor is not: a_front and a_rear differ, so one global
+    scale cannot represent both ellipsoids. With f_f + f_r = 2 the rear
+    then carries f_r/2 of the plate power (0.7 for 0.6/1.4).
     Travel frame: (dir_x, dir_y) is the unit travel direction in the XY plane
     (from torch path). x_travel ≥ 0 ⇒ front ellipsoid.
     """
@@ -112,7 +115,8 @@ def _goldak_pdf_weight(
     is_front = x_travel >= 0.0
     a_axis = ti.select(is_front, a_front, a_rear)
     frac = ti.select(is_front, ff, fr)
-    return frac * ti.math.exp(
+    abc = a_axis * b_axis * c_axis
+    return (frac / (abc + eps)) * ti.math.exp(
         -3.0 * (
             (x_travel * x_travel) / (a_axis * a_axis + eps)
             + (y_trans * y_trans) / (b_axis * b_axis + eps)
@@ -153,9 +157,16 @@ def inject_goldak_heat(
 
     Semi-axes a_front / a_rear (travel), b (transverse), c (depth) in cells.
     (dir_x, dir_y) is the horizontal unit travel direction.
-    Requires f_f + f_r = 2 in the loader (relative split still works under
-    renormalization). Pass 1 sums weights on metal; pass 2 deposits exactly
-    η·Q·dt joules.
+    Requires f_f + f_r = 2 in the loader. Each ellipsoid is weighted by
+    f/(a b c) before the shared rescale, so the rear is not over-weighted
+    when a_rear > a_front. Pass 1 sums weights on metal; pass 2 deposits
+    exactly η·Q·dt joules.
+
+    arc_* is a physical coordinate in index units (position / dx). Cell
+    values live at centers (i+0.5, j+0.5, k+0.5), the same frame as probes.
+    With the face at arc_k = nz_solid, the top metal center is half a cell
+    below the peak. The gas cell on the face is still skipped; the rescale
+    puts its missing share back into the metal.
     """
     norm_buf[None] = 0.0
 
@@ -168,9 +179,9 @@ def inject_goldak_heat(
         )
         if w_dep < 1e-6:
             continue
-        di = ti.f32(i) - arc_i
-        dj = ti.f32(j) - arc_j
-        dk = ti.f32(k) - arc_k
+        di = ti.f32(i) + 0.5 - arc_i
+        dj = ti.f32(j) + 0.5 - arc_j
+        dk = ti.f32(k) + 0.5 - arc_k
         w = _goldak_pdf_weight(
             di, dj, dk, dir_x, dir_y, ff, fr,
             a_front, a_rear, b_axis, c_axis,
@@ -190,9 +201,9 @@ def inject_goldak_heat(
         )
         if w_dep < 1e-6:
             continue
-        di = ti.f32(i) - arc_i
-        dj = ti.f32(j) - arc_j
-        dk = ti.f32(k) - arc_k
+        di = ti.f32(i) + 0.5 - arc_i
+        dj = ti.f32(j) + 0.5 - arc_j
+        dk = ti.f32(k) + 0.5 - arc_k
         w = _goldak_pdf_weight(
             di, dj, dk, dir_x, dir_y, ff, fr,
             a_front, a_rear, b_axis, c_axis,

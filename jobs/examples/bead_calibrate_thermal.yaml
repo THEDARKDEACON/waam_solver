@@ -33,8 +33,10 @@ simulation:
   domain_mm: [70, 70, 14]
   dx_mm: 0.4
   strict_mode: true
-  # Path z_mm = 0 sits on the plate-top face. Without this, z is ignored and
-  # the Goldak origin stays on the last metal cell, one dx under the face.
+  # Path z_mm = 0 is the plate-top face (index nz_solid). The Goldak
+  # kernel samples cell centers, so the first metal cell is half a cell
+  # under that face. Without use_torch_z, z is ignored and the origin
+  # stays on the last metal cell, one dx under the face.
   use_torch_z: true
 
   # Flow and free surface — off. Thermal tier sets these; listed so a later
