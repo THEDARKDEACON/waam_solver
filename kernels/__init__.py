@@ -36,6 +36,7 @@ from .grid_init import (
 from .thermal import (
     inject_arc_heat,
     _goldak_pdf_weight,
+    _goldak_arg,
     inject_goldak_heat,
     update_phase,
     _minmod,

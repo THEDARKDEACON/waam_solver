@@ -228,12 +228,18 @@ def coupled_step(
     pressure_sigma_cells = weld_forces.arc_pressure_sigma_cells(twin)
 
     if is_welding:
+        twin._last_goldak_deposited_J = None
         twin.arc_source.inject(twin, g, arc_i, arc_j, arc_k)
-        # Ledger arc energy actually injected (Phase 4 split-aware)
+        # Ledger arc energy actually injected (Phase 4 split-aware).
+        # Absolute Goldak sets _last_goldak_deposited_J to Σ(ΔH)·dx³.
         from ..physics.ledger import ensure_ledger
         from ..physics.arc import _arc_power_W
-        Q_arc, eta_arc = _arc_power_W(twin)
-        ensure_ledger(twin).record_arc(float(eta_arc) * float(Q_arc) * float(g.dt))
+        deposited = getattr(twin, "_last_goldak_deposited_J", None)
+        if deposited is not None:
+            ensure_ledger(twin).record_arc(float(deposited))
+        else:
+            Q_arc, eta_arc = _arc_power_W(twin)
+            ensure_ledger(twin).record_arc(float(eta_arc) * float(Q_arc) * float(g.dt))
         _clamp_enthalpy_ceiling(twin, g)
         ensure_ledger(twin).record_cap(
             float(getattr(twin, "_enthalpy_cap_energy_J_step", 0.0))

@@ -86,6 +86,31 @@ def inject_arc_heat(
 
 
 @ti.func
+def _goldak_arg(
+    di: ti.f32,
+    dj: ti.f32,
+    dk: ti.f32,
+    dir_x: ti.f32,
+    dir_y: ti.f32,
+    a_front: ti.f32,
+    a_rear: ti.f32,
+    b_axis: ti.f32,
+    c_axis: ti.f32,
+) -> ti.f32:
+    """Goldak ARG = 3(x²/a² + y²/b² + z²/c²) in the travel frame (cell units)."""
+    eps = 1e-6
+    x_travel = di * dir_x + dj * dir_y
+    y_trans = -di * dir_y + dj * dir_x
+    is_front = x_travel >= 0.0
+    a_axis = ti.select(is_front, a_front, a_rear)
+    return 3.0 * (
+        (x_travel * x_travel) / (a_axis * a_axis + eps)
+        + (y_trans * y_trans) / (b_axis * b_axis + eps)
+        + (dk * dk) / (c_axis * c_axis + eps)
+    )
+
+
+@ti.func
 def _goldak_pdf_weight(
     di: ti.f32,
     dj: ti.f32,
@@ -104,9 +129,10 @@ def _goldak_pdf_weight(
 
         [f_{f,r} / (a_{f,r} b c)] exp(-3 x²/a_{f,r}² - 3 y²/b² - 3 z²/c²)
 
-    The shared 6√3/(π√π) factor is absorbed by energy renormalization.
-    The 1/(a b c) factor is not: a_front and a_rear differ, so one global
-    scale cannot represent both ellipsoids. With f_f + f_r = 2 the rear
+    The shared 6√3/(π√π) factor is absorbed by energy renormalization when
+    normalize_energy is on. With absolute CF mode the caller multiplies by CF.
+    The 1/(a b c) factor is not optional: a_front and a_rear differ, so one
+    global scale cannot represent both ellipsoids. With f_f + f_r = 2 the rear
     then carries f_r/2 of the plate power (0.7 for 0.6/1.4).
     Travel frame: (dir_x, dir_y) is the unit travel direction in the XY plane
     (from torch path). x_travel ≥ 0 ⇒ front ellipsoid.
@@ -118,13 +144,10 @@ def _goldak_pdf_weight(
     a_axis = ti.select(is_front, a_front, a_rear)
     frac = ti.select(is_front, ff, fr)
     abc = a_axis * b_axis * c_axis
-    return (frac / (abc + eps)) * ti.math.exp(
-        -3.0 * (
-            (x_travel * x_travel) / (a_axis * a_axis + eps)
-            + (y_trans * y_trans) / (b_axis * b_axis + eps)
-            + (dk * dk) / (c_axis * c_axis + eps)
-        )
+    arg = _goldak_arg(
+        di, dj, dk, dir_x, dir_y, a_front, a_rear, b_axis, c_axis,
     )
+    return (frac / (abc + eps)) * ti.math.exp(-arg)
 
 
 @ti.kernel
@@ -153,27 +176,34 @@ def inject_goldak_heat(
     enable_surface_weight: ti.i32,
     FLAG_SOLID: ti.i32,
     FLAG_GAS: ti.i32,
+    normalize_energy: ti.i32,
 ):
     """
-    Goldak (1984) double-ellipsoid heat source, energy-normalized.
+    Goldak (1984) double-ellipsoid heat source.
 
     Semi-axes a_front / a_rear (travel), b (transverse), c (depth) in cells.
     (dir_x, dir_y) is the horizontal unit travel direction.
-    Requires f_f + f_r = 2 in the loader. Each ellipsoid is weighted by
-    f/(a b c) before the shared rescale, so the rear is not over-weighted
-    when a_rear > a_front. Pass 1 sums weights on metal; pass 2 deposits
-    exactly η·Q·dt joules.
+    Requires f_f + f_r = 2 in the loader.
+
+    normalize_energy != 0 (default / twin historical path):
+      Pass 1 sums relative weights on metal; pass 2 deposits exactly η·Q·dt J.
+      Gas cells are skipped; their missing share is folded back into metal.
+
+    normalize_energy == 0 (Ansys / APDL absolute CF):
+      q_vol = CF * f/(a b c) * exp(-ARG) with CF = 6*sqrt(3)*(eta*Q)/(pi*sqrt(pi)),
+      using cell-unit a,b,c so q_vol = CF * w / dx3. ARG >= 9 is zeroed like
+      MAPDL. No rescale; deposited joules are whatever the mesh sums to.
+      On exit norm_buf holds sum(dH)*dx3 [J] for the ledger.
 
     arc_* is a physical coordinate in index units (position / dx). Cell
     values live at centers (i+0.5, j+0.5, k+0.5), the same frame as probes.
     With the face at arc_k = nz_solid, the top metal center is half a cell
-    below the peak. The gas cell on the face is still skipped; the rescale
-    puts its missing share back into the metal.
+    below the peak.
     """
     norm_buf[None] = 0.0
 
     for i, j, k in H:
-        if flags[i, j, k] == FLAG_GAS:
+        if normalize_energy == 0 or flags[i, j, k] == FLAG_GAS:
             continue
         w_dep = arc_deposition_weight(
             i, j, k, arc_i, arc_j, arc_k,
@@ -192,10 +222,20 @@ def inject_goldak_heat(
 
     w_total = norm_buf[None]
     energy_per_weight = 0.0
-    if w_total > 1e-9:
+    if normalize_energy != 0 and w_total > 1e-9:
         energy_per_weight = Q_w * eta * dt / (w_total * dx3)
+
+    # Absolute CF (Ansys): Q_net = η·Q_elec [W]. SI volumetric power uses
+    # CF·w/dx³ because w already has 1/(a b c) with a,b,c in cells.
+    Q_net = Q_w * eta
+    CF = 6.0 * ti.sqrt(3.0) * Q_net / (ti.math.pi * ti.sqrt(ti.math.pi))
+    if normalize_energy == 0:
+        norm_buf[None] = 0.0
+
     for i, j, k in H:
-        if energy_per_weight <= 0.0 or flags[i, j, k] == FLAG_GAS:
+        if flags[i, j, k] == FLAG_GAS:
+            continue
+        if normalize_energy != 0 and energy_per_weight <= 0.0:
             continue
         w_dep = arc_deposition_weight(
             i, j, k, arc_i, arc_j, arc_k,
@@ -206,11 +246,22 @@ def inject_goldak_heat(
         di = ti.f32(i) + 0.5 - arc_i
         dj = ti.f32(j) + 0.5 - arc_j
         dk = ti.f32(k) + 0.5 - arc_k
+        if normalize_energy == 0:
+            arg = _goldak_arg(
+                di, dj, dk, dir_x, dir_y, a_front, a_rear, b_axis, c_axis,
+            )
+            if arg >= 9.0:
+                continue
         w = _goldak_pdf_weight(
             di, dj, dk, dir_x, dir_y, ff, fr,
             a_front, a_rear, b_axis, c_axis,
         )
-        H[i, j, k] += energy_per_weight * w * w_dep
+        if normalize_energy != 0:
+            H[i, j, k] += energy_per_weight * w * w_dep
+        else:
+            dH = CF * w * w_dep * dt / dx3
+            H[i, j, k] += dH
+            ti.atomic_add(norm_buf[None], dH * dx3)
 
 # ──────────────────────────────────────────────────────────────────────────────
 #  KERNEL 3 — Enthalpy-Porosity Phase Change

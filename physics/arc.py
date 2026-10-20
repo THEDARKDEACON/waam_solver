@@ -106,6 +106,10 @@ class Goldak3D:
 
     Semi-axes are in lattice cells. Values ≤0 are resolved at inject time
     from the twin's arc σ and legacy depth fields.
+
+    normalize_energy:
+      True  — metal-only rescale so ΣΔH·dx³ = ηQΔt (historical twin path)
+      False — absolute CF like Ansys MAPDL (no rescale; ARG<9 cutoff)
     """
 
     ff: float = 0.6
@@ -118,6 +122,7 @@ class Goldak3D:
     depth_front: float = 2.0
     depth_rear: float = 4.0
     sigma_scale: float = 1.0
+    normalize_energy: bool = True
 
     def _resolved_axes(self, twin: "WAAMTwin") -> tuple[float, float, float, float]:
         sig = max(0.5, twin.sigma_cells * self.sigma_scale)
@@ -145,6 +150,7 @@ class Goldak3D:
         pen_cells, enable = _arc_weight_args(twin)
         a_f, a_r, b, c = self._resolved_axes(twin)
         Q, eta = _arc_power_W(twin)
+        normalize = 1 if self.normalize_energy else 0
         kernels.inject_goldak_heat(
             g.H, g.flags, g.phi, g.f_l, g.arc_norm_buf,
             arc_i, arc_j, arc_k,
@@ -154,7 +160,12 @@ class Goldak3D:
             a_f, a_r, b, c,
             pen_cells, enable,
             g.FLAG_SOLID, g.FLAG_GAS,
+            normalize,
         )
+        if self.normalize_energy:
+            twin._last_goldak_deposited_J = float(eta) * float(Q) * float(g.dt)
+        else:
+            twin._last_goldak_deposited_J = float(g.arc_norm_buf.to_numpy())
 
 
 @dataclass
@@ -241,6 +252,13 @@ def goldak_from_job_mm(twin: "WAAMTwin", goldak_cfg: dict) -> Goldak3D:
     elif c <= 0.0:
         c = depth_front
 
+    normalize_energy = bool(cfg.get("normalize_energy", True))
+    if not normalize_energy:
+        log.info(
+            "[Goldak] normalize_energy=false — absolute CF (Ansys/APDL style), "
+            "no metal-only rescale"
+        )
+
     return Goldak3D(
         ff=ff,
         fr=fr,
@@ -251,6 +269,7 @@ def goldak_from_job_mm(twin: "WAAMTwin", goldak_cfg: dict) -> Goldak3D:
         depth_front=depth_front,
         depth_rear=depth_rear,
         sigma_scale=sigma_scale,
+        normalize_energy=normalize_energy,
     )
 
 

@@ -67,6 +67,7 @@ goldak:
   a_rear_mm: 3.8
   b_mm: 5.0
   c_mm: 3.0
+  normalize_energy: true   # metal-only rescale (historical twin); abs job sets false
 
 arc_physics:
   sigma_mm: 2.0

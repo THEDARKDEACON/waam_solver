@@ -64,6 +64,7 @@ def run(tol_frac: float = 0.01) -> float:
     twin.arc_source = Goldak3D(
         ff=0.6, fr=1.4,
         a_front=4.0, a_rear=8.0, b=4.0, c=3.0,
+        normalize_energy=True,
     )
     g = twin.grid
     # Integer index: the travel-plane falls between cell centers (n+0.5),
@@ -113,6 +114,7 @@ def run(tol_frac: float = 0.01) -> float:
     twin.arc_source = Goldak3D(
         ff=0.6, fr=1.4,
         a_front=4.0, a_rear=8.0, b=4.0, c=3.0,
+        normalize_energy=True,
     )
     twin._torch_dir_xyz = (0.0, 1.0, 0.0)
     twin.arc_source.inject(twin, g, arc_i, arc_j, arc_k)
@@ -131,6 +133,34 @@ def run(tol_frac: float = 0.01) -> float:
         raise AssertionError(
             f"+y rear power fraction {rear_frac_y:.3f} is outside 0.64-0.76"
         )
+
+    # Absolute CF (Ansys-style): no rescale. On a full-metal domain the
+    # discrete integral should stay near ηQΔt (not forced equal).
+    g.H.fill(0.0)
+    twin.arc_source = Goldak3D(
+        ff=0.6, fr=1.4,
+        a_front=4.0, a_rear=8.0, b=4.0, c=3.0,
+        normalize_energy=False,
+    )
+    twin._torch_dir_xyz = (1.0, 0.0, 0.0)
+    twin.arc_source.inject(twin, g, arc_i, arc_j, arc_k)
+    H_abs = float(g.H.to_numpy().sum()) * (g.dx ** 3)
+    booked = float(getattr(twin, "_last_goldak_deposited_J", 0.0))
+    abs_err = abs(H_abs - expected) / max(expected, 1e-30)
+    book_err = abs(booked - H_abs) / max(H_abs, 1e-30)
+    print(
+        f"[goldak_energy] absolute CF  ΔH={H_abs:.6e} J  ηQΔt={expected:.6e} J  "
+        f"rel_err={abs_err:.4f}  booked={booked:.6e}  book_err={book_err:.4f}"
+    )
+    if abs_err > 0.15:
+        raise AssertionError(
+            f"Absolute Goldak far from ηQΔt on full-metal domain: rel_err={abs_err:.4f}"
+        )
+    if book_err > 1e-5:
+        raise AssertionError(
+            f"Absolute Goldak ledger booking mismatch: book_err={book_err:.4f}"
+        )
+
     return err
 
 
