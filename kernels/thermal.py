@@ -791,6 +791,8 @@ def apply_thermal_boundary_losses_variable(
         n_exposed = 0
         if k + 1 < nz and flags[i, j, k + 1] == FLAG_GAS:
             n_exposed += 1
+        if k - 1 >= 0 and flags[i, j, k - 1] == FLAG_GAS:
+            n_exposed += 1
         if j + 1 < ny and flags[i, j + 1, k] == FLAG_GAS:
             n_exposed += 1
         if j - 1 >= 0 and flags[i, j - 1, k] == FLAG_GAS:
@@ -1101,6 +1103,8 @@ def apply_thermal_boundary_losses(
 
         n_exposed = 0
         if k + 1 < nz and flags[i, j, k + 1] == FLAG_GAS:
+            n_exposed += 1
+        if k - 1 >= 0 and flags[i, j, k - 1] == FLAG_GAS:
             n_exposed += 1
         if j + 1 < ny and flags[i, j + 1, k] == FLAG_GAS:
             n_exposed += 1

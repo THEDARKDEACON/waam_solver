@@ -62,12 +62,16 @@ def _profile_edges(profile: np.ndarray, thr: float) -> tuple[float, float] | Non
     return left, right
 
 
-def _depth_mm(col: np.ndarray, thr: float, nz_solid: int, dx_m: float) -> float:
+def _depth_mm(col: np.ndarray, thr: float, nz_solid: int, dx_m: float,
+              plate_k0: int = 0) -> float:
     """Depth from the plate face (index nz_solid) to the threshold crossing."""
     if nz_solid <= 0:
         return 0.0
     finite = np.isfinite(col)
-    above = np.flatnonzero(finite & (col >= thr) & (np.arange(col.size) < nz_solid))
+    kk = np.arange(col.size)
+    above = np.flatnonzero(
+        finite & (col >= thr) & (kk >= plate_k0) & (kk < nz_solid)
+    )
     if above.size == 0:
         return 0.0
     k_bot = int(above[0])
@@ -88,6 +92,7 @@ def fusion_contour_mm(
     nz_solid: int,
     dir_x: float,
     dir_y: float,
+    plate_k0: int = 0,
 ) -> dict[str, float]:
     """1520-style contour. Width is perpendicular to travel; depth uses cell centers.
 
@@ -125,7 +130,7 @@ def fusion_contour_mm(
     col = slab[line, :]
     edges = _profile_edges(prof, thr)
     width = 0.0 if edges is None else max(0.0, (edges[1] - edges[0]) * dx_m * 1000.0)
-    depth = _depth_mm(col, thr, nz_solid, dx_m)
+    depth = _depth_mm(col, thr, nz_solid, dx_m, plate_k0)
     return {
         "pool_width_mm": float(width),
         "pool_depth_mm": float(depth),
@@ -152,6 +157,7 @@ def measure_fusion_zone_mm(twin: "WAAMTwin", T_threshold_K: float | None = None)
     out = fusion_contour_mm(
         T_max, metal, thr, float(g.dx), int(getattr(twin, "nz_solid", 0)),
         float(dx), float(dy),
+        int(getattr(twin, "plate_k0", 0)),
     )
     out["T_threshold_K"] = thr
     return out

@@ -35,8 +35,52 @@ def test_flush_keeps_arc_off_rows() -> None:
     assert rows[-1]["sim_time_ms"] == "30.0"
 
 
+def test_z_ref_resolution() -> None:
+    """Job z_ref resolves to domain world mm; stored probes are world-frame."""
+    from waam_twin.export.probes import (
+        ProbeRecorder,
+        normalize_z_ref,
+        resolve_probe_z_world_mm,
+    )
+
+    assert normalize_z_ref("plate-face") == "plate_face"
+    init_taichi(backend="cpu")
+    twin = WAAMTwin(nx=20, ny=20, nz=40, dx=1e-3, max_tracers=5)
+    twin.plate_thickness_mm = 9.0
+    twin.plate_center_z = True
+    twin.nz_solid = twin.resolve_nz_solid()
+    dx_mm = twin.grid.dx * 1000.0
+    bottom = twin.plate_k0 * dx_mm
+    face = twin.nz_solid * dx_mm
+    assert twin.plate_k0 > 0
+    assert abs(resolve_probe_z_world_mm(twin, 7.0, "plate_bottom") - (bottom + 7.0)) < 1e-9
+    assert abs(resolve_probe_z_world_mm(twin, -2.0, "plate_face") - (face - 2.0)) < 1e-9
+    assert abs(resolve_probe_z_world_mm(twin, 12.0, "world") - 12.0) < 1e-9
+
+    rec = ProbeRecorder.from_job_list(
+        {
+            "z_ref": "plate_bottom",
+            "points": [
+                {"name": "mid", "x_mm": 10.0, "y_mm": 10.0, "z_mm": 7.0},
+                {"name": "face_tc", "x_mm": 10.0, "y_mm": 10.0, "z_mm": -2.0, "z_ref": "plate_face"},
+            ],
+        },
+        twin,
+    )
+    assert abs(rec.probes[0].z_m * 1000.0 - (bottom + 7.0)) < 1e-9
+    assert abs(rec.probes[1].z_m * 1000.0 - (face - 2.0)) < 1e-9
+    # Same physical depth: 2 mm under face on a 9 mm plate
+    assert abs(rec.probes[0].z_m - rec.probes[1].z_m) < 1e-9
+    print(
+        f"[probe_z_ref] plate_k0={twin.plate_k0} face={twin.nz_solid} "
+        f"mid_z={rec.probes[0].z_m*1e3:.2f} mm world"
+    )
+
+
+
 def run(min_rows: int = 5) -> None:
     test_flush_keeps_arc_off_rows()
+    test_z_ref_resolution()
     init_taichi(backend="cpu")
     twin = WAAMTwin(nx=16, ny=10, nz=10, dx=3e-4, max_tracers=5)
     twin.reset()

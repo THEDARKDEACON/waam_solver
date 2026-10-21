@@ -53,7 +53,7 @@ def build_meta_dict(twin: "WAAMTwin", job_path: str | None = None) -> dict[str, 
         "plate_ij": list(twin.resolve_plate_ij()) if hasattr(twin, "resolve_plate_ij") else None,
         "nz_solid": int(getattr(twin, "nz_solid", 0)),
         "substrate_thickness_mm": round(
-            float(getattr(twin, "nz_solid", 0)) * g.dx * 1000.0, 3
+            float(getattr(twin, "nz_solid", 0) - getattr(twin, "plate_k0", 0)) * g.dx * 1000.0, 3
         ),
         "material": {
             "name": mat.name,

@@ -307,6 +307,11 @@ class WAAMTwin:
         # Lateral footprint: None → full domain XY. size=(Lx,Ly) mm, origin=(x0,y0) mm.
         self.plate_size_mm: tuple[float, float] | None = None
         self.plate_origin_mm: tuple[float, float] | None = None
+        # Z placement: metal is plate_k0 <= k < nz_solid (nz_solid = face index).
+        # plate_k0 > 0 leaves gas below so the bottom face can lose heat.
+        self.plate_k0 = 0
+        self.plate_center_z = False
+        self.plate_z0_mm: float | None = None
         self.nz_solid = max(1, nz // 5)
         self._step_n = 0
         self._last_droplet_time = 0.0
@@ -446,17 +451,16 @@ class WAAMTwin:
             f"(enable_alloy_mixing={'on' if self.enable_alloy_mixing else 'off, birth composition'})"
         )
 
-    def resolve_nz_solid(self, test_fluid_domain: bool = False) -> int:
-        """Substrate layer count from job plate thickness, else nz//5.
+    def resolve_plate_thickness_cells(self, test_fluid_domain: bool = False) -> int:
+        """Substrate thickness in cells from job plate thickness, else nz//5.
 
-        Always leaves bead/air headroom above the plate so ``feed_wire_surface``
+        Always leaves bead/air headroom above the plate face so ``feed_wire_surface``
         has gas cells to convert. A job thickness that exceeds the grid is
         clamped (with a warning) rather than filling ``nz-2``.
         """
         if test_fluid_domain:
             return 0
         g = self.grid
-        # Need room for droplet footprint above arc_k (several cells of gas).
         headroom = max(6, g.nz // 4)
         max_solid = max(1, g.nz - headroom)
         thick = getattr(self, "plate_thickness_mm", None)
@@ -471,6 +475,46 @@ class WAAMTwin:
                 )
             return max(1, min(n, max_solid))
         return max(1, min(g.nz // 5, max_solid))
+
+    def resolve_plate_k0(self, n_thick: int) -> int:
+        """Bottom index of the plate band (gas for k < plate_k0).
+
+        ``plate_z0_mm`` wins when set; else ``plate_center_z`` centers the band
+        in the domain; else the plate sits on the floor (k0=0). Headroom above
+        the face is preserved by pulling the plate down if needed.
+        """
+        if n_thick <= 0:
+            return 0
+        g = self.grid
+        headroom = max(6, g.nz // 4)
+        max_face = max(n_thick, g.nz - headroom)
+        z0 = getattr(self, "plate_z0_mm", None)
+        if z0 is not None:
+            k0 = int(round(float(z0) / (g.dx * 1000.0)))
+        elif bool(getattr(self, "plate_center_z", False)):
+            k0 = (g.nz - n_thick) // 2
+        else:
+            k0 = 0
+        k0 = max(0, k0)
+        if k0 + n_thick > max_face:
+            k0 = max(0, max_face - n_thick)
+        return k0
+
+    def resolve_nz_solid(self, test_fluid_domain: bool = False) -> int:
+        """Plate-top face index (exclusive end of metal band).
+
+        Metal occupies ``plate_k0 <= k < nz_solid``. When the plate sits on the
+        floor (``plate_k0 == 0``) this equals the thickness in cells — same as
+        the historical meaning. With a lifted plate it is ``plate_k0 + n_thick``.
+        Also stores ``self.plate_k0``.
+        """
+        if test_fluid_domain:
+            self.plate_k0 = 0
+            return 0
+        n = self.resolve_plate_thickness_cells(False)
+        k0 = self.resolve_plate_k0(n)
+        self.plate_k0 = k0
+        return k0 + n
 
     def resolve_plate_ij(self) -> tuple[int, int, int, int]:
         """Inclusive/exclusive plate footprint indices (i0,i1,j0,j1).
@@ -507,15 +551,27 @@ class WAAMTwin:
         plate_thickness_mm: float | None = None,
         plate_size_mm: tuple[float, float] | None = None,
         plate_origin_mm: tuple[float, float] | None = None,
+        plate_center_z: bool | None = None,
+        plate_z0_mm: float | None = None,
     ) -> None:
         """Store job plate geometry used by ``reset()`` / ``init_grid``."""
+        if plate_center_z is not None:
+            self.plate_center_z = bool(plate_center_z)
+        if plate_z0_mm is not None:
+            self.plate_z0_mm = float(plate_z0_mm)
         if plate_thickness_mm is not None:
             self.plate_thickness_mm = float(plate_thickness_mm)
-            self.nz_solid = self.resolve_nz_solid()
         if plate_size_mm is not None:
             self.plate_size_mm = (float(plate_size_mm[0]), float(plate_size_mm[1]))
         if plate_origin_mm is not None:
             self.plate_origin_mm = (float(plate_origin_mm[0]), float(plate_origin_mm[1]))
+        # Recompute face / k0 whenever thickness or z-placement may have changed.
+        if (
+            plate_thickness_mm is not None
+            or plate_center_z is not None
+            or plate_z0_mm is not None
+        ):
+            self.nz_solid = self.resolve_nz_solid()
 
     @classmethod
     def from_preset(
@@ -581,8 +637,9 @@ class WAAMTwin:
             f"  domain={dom[0]:.0f}×{dom[1]:.0f}×{dom[2]:.0f}mm"
             f"  budget≈{vram} MB"
             + (f"  max_cells={cfg.max_cells}" if cfg.max_cells else "")
-            + f"  plate≈{twin.nz_solid * dx * 1e3:.2f}mm thick"
-            f"  footprint i=[{i0},{i1}) j=[{j0},{j1})"
+            + f"  plate≈{(twin.nz_solid - twin.plate_k0) * dx * 1e3:.2f}mm thick"
+            + (f"  z0={twin.plate_k0 * dx * 1e3:.2f}mm" if twin.plate_k0 else "")
+            + f"  footprint i=[{i0},{i1}) j=[{j0},{j1})"
         )
         return twin
 
@@ -712,6 +769,8 @@ class WAAMTwin:
             plate_thickness_mm=grid["plate_thickness_mm"],
             plate_size_mm=grid["plate_size_mm"],
             plate_origin_mm=grid["plate_origin_mm"],
+            plate_center_z=grid.get("plate_center_z"),
+            plate_z0_mm=grid.get("plate_z0_mm"),
         )
         # Footprint log after plate geometry is applied (from_preset ran earlier).
         i0, i1, j0, j1 = twin.resolve_plate_ij()
@@ -720,9 +779,11 @@ class WAAMTwin:
         plate_xy = (
             f"{ps[0]:.0f}×{ps[1]:.0f} mm" if ps else "full domain XY"
         )
+        n_thick = max(0, twin.nz_solid - getattr(twin, "plate_k0", 0))
         log.info(
             f"[WAAMTwin] job geometry: plate {plate_xy}  "
             f"footprint i=[{i0},{i1}) j=[{j0},{j1})  "
+            f"z=[{twin.plate_k0},{twin.nz_solid}) ({n_thick * dx_mm:.2f} mm thick)  "
             f"resolved dx={dx_mm:.3f} mm"
         )
         twin._job_config = job
@@ -739,10 +800,13 @@ class WAAMTwin:
         if test_fluid_domain:
             nz_solid = -1
             self.nz_solid = 0
+            self.plate_k0 = 0
             i0, i1, j0, j1 = 0, g.nx, 0, g.ny
+            plate_k0 = 0
         else:
             self.nz_solid = self.resolve_nz_solid(False)
             nz_solid = self.nz_solid
+            plate_k0 = int(self.plate_k0)
             i0, i1, j0, j1 = self.resolve_plate_ij()
 
         pmat = self.plate_mat or self.mat
@@ -751,6 +815,7 @@ class WAAMTwin:
             g.T, g.H, g.f_l, g.phi, g.flags, g.alloy_id, g.alloy_frac,
             T0, RHO_LATTICE, _enthalpy_factor(self.mat, T0), _enthalpy_factor(pmat, T0),
             nz_solid,
+            plate_k0,
             i0, i1, j0, j1,
             g.FLAG_FLUID, g.FLAG_SOLID, g.FLAG_GAS,
         )
@@ -962,7 +1027,7 @@ class WAAMTwin:
             self.T_amb,
             _enthalpy_factor(self.mat, self.T_amb),
             _enthalpy_factor(self.plate_mat or self.mat, self.T_amb),
-            RHO_LATTICE, self.nz_solid,
+            RHO_LATTICE, self.nz_solid, int(getattr(self, "plate_k0", 0)),
             g.FLAG_SOLID, g.FLAG_GAS, g.FLAG_FLUID,
             g.nx, g.ny, g.nz,
         )
@@ -1026,25 +1091,31 @@ class WAAMTwin:
             kernels.shift_simulation_window_z(n_z, 1, *self._window_field_args())
             self._window_offset_z_m += n_z * g.dx
             self.nz_solid = max(1, self.nz_solid - n_z)
+            if getattr(self, "plate_k0", 0) > 0:
+                self.plate_k0 = max(0, self.plate_k0 - n_z)
             kernels.shift_tracers(
                 g.porosity_pos, g.porosity_active,
                 0.0, 0.0, n_z * g.dx, g.max_tracers,
             )
             log.info(
                 f"[WAAMTwin] Moving window +Z −{n_z} cells  "
-                f"offset_z={self._window_offset_z_m*1e3:.2f}mm  nz_solid={self.nz_solid}"
+                f"offset_z={self._window_offset_z_m*1e3:.2f}mm  "
+                f"nz_solid={self.nz_solid} plate_k0={self.plate_k0}"
             )
         elif sim_z <= margin_z and n_z < g.nz and self.nz_solid + n_z <= g.nz - 2:
             kernels.shift_simulation_window_z(n_z, -1, *self._window_field_args())
             self._window_offset_z_m -= n_z * g.dx
             self.nz_solid = min(g.nz - 2, self.nz_solid + n_z)
+            if getattr(self, "plate_k0", 0) > 0:
+                self.plate_k0 = min(self.nz_solid - 1, self.plate_k0 + n_z)
             kernels.shift_tracers(
                 g.porosity_pos, g.porosity_active,
                 0.0, 0.0, -n_z * g.dx, g.max_tracers,
             )
             log.info(
                 f"[WAAMTwin] Moving window −Z +{n_z} cells  "
-                f"offset_z={self._window_offset_z_m*1e3:.2f}mm  nz_solid={self.nz_solid}"
+                f"offset_z={self._window_offset_z_m*1e3:.2f}mm  "
+                f"nz_solid={self.nz_solid} plate_k0={self.plate_k0}"
             )
 
     def run(self, n_steps: int, torch_x_m: float = 0.0,

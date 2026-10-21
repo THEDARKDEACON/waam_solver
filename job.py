@@ -225,9 +225,12 @@ def resolve_plate_and_domain(
         thickness_mm: 10.0
         size_mm: [50, 50]
         origin_mm: [15, 15]          # optional; default = centered
+        center_z: true               # optional; lift plate to mid-domain (gas below)
+        z0_mm: 5.0                   # optional; explicit plate bottom in domain mm
         material: materials/validated/SS316L.v1.yaml  # optional substrate alloy
         domain_margin_mm: 15         # XY pad when domain is derived
         air_gap_mm: 15               # Z above plate when domain is derived
+                                         # (doubled when center_z and Z is derived)
       simulation:
         domain_mm: [80, 80, 25]
         dx_mm: 0.3
@@ -258,6 +261,7 @@ def resolve_plate_and_domain(
         plate_origin_mm = (float(origin[0]), float(origin[1]))
 
     domain = plate.get("domain_mm", sim.get("domain_mm"))
+    center_z = bool(plate.get("center_z", sim.get("plate_center_z", False)))
     if domain is not None:
         domain_mm = (float(domain[0]), float(domain[1]), float(domain[2]))
     elif plate_size_mm is not None:
@@ -265,15 +269,18 @@ def resolve_plate_and_domain(
         thick_for_z = plate_thickness_mm if plate_thickness_mm is not None else 8.0
         air = plate.get("air_gap_mm", sim.get("air_gap_mm"))
         air_gap = float(air) if air is not None else max(12.0, 1.5 * thick_for_z)
+        # Gas below + above when the plate is centered in Z.
+        z_span = thick_for_z + (2.0 * air_gap if center_z else air_gap)
         domain_mm = (
             plate_size_mm[0] + 2.0 * margin,
             plate_size_mm[1] + 2.0 * margin,
-            thick_for_z + air_gap,
+            z_span,
         )
         log.info(
             f"[job] domain_mm derived from plate {plate_size_mm[0]:.0f}×{plate_size_mm[1]:.0f} mm "
-            f"+ margin {margin:.0f} mm / air {air_gap:.0f} mm → "
-            f"{domain_mm[0]:.0f}×{domain_mm[1]:.0f}×{domain_mm[2]:.0f} mm"
+            f"+ margin {margin:.0f} mm / air {air_gap:.0f} mm"
+            + (" ×2 (center_z)" if center_z else "")
+            + f" → {domain_mm[0]:.0f}×{domain_mm[1]:.0f}×{domain_mm[2]:.0f} mm"
         )
     elif fallback_domain_mm is not None:
         domain_mm = (
@@ -308,12 +315,15 @@ def resolve_plate_and_domain(
             f"{domain_mm[2]} mm — raise simulation.domain_mm Z (air gap for the bead)."
         )
 
+    z0 = plate.get("z0_mm", sim.get("plate_z0_mm"))
     return {
         "domain_mm": domain_mm,
         "dx_mm": dx_mm,
         "plate_thickness_mm": plate_thickness_mm,
         "plate_size_mm": plate_size_mm,
         "plate_origin_mm": plate_origin_mm,
+        "plate_center_z": center_z,
+        "plate_z0_mm": float(z0) if z0 is not None else None,
     }
 
 
@@ -390,6 +400,7 @@ _KNOWN_PROCESS_KEYS = frozenset({
 _KNOWN_GOLDAK_KEYS = frozenset({
     "ff", "fr", "a_front_mm", "a_rear_mm", "b_mm", "c_mm",
     "depth_front_mm", "depth_rear_mm", "sigma_scale",
+    "normalize_energy",
 })
 
 _KNOWN_ARC_PHYSICS_KEYS = frozenset({
@@ -711,10 +722,13 @@ def apply_job_to_twin(twin, job: dict[str, Any] | JobConfig) -> None:
     plate_origin = None
     if origin is not None:
         plate_origin = (float(origin[0]), float(origin[1]))
+    z0 = plate.get("z0_mm", sim.get("plate_z0_mm"))
     twin.apply_plate_geometry(
         plate_thickness_mm=float(thick) if thick is not None else None,
         plate_size_mm=plate_size,
         plate_origin_mm=plate_origin,
+        plate_center_z=bool(plate.get("center_z", sim.get("plate_center_z", False))),
+        plate_z0_mm=float(z0) if z0 is not None else None,
     )
 
     from .frame import apply_frame_from_job

@@ -199,7 +199,8 @@
         "c_mm": { "type": "number" },
         "depth_front_mm": { "type": "number" },
         "depth_rear_mm": { "type": "number" },
-        "sigma_scale": { "type": "number" }
+        "sigma_scale": { "type": "number" },
+        "normalize_energy": { "type": "boolean" }
       }
     },
     "process": {

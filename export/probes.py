@@ -11,6 +11,68 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from ..twin import WAAMTwin
 
+_Z_REF_ALIASES = {
+    "plate_bottom": "plate_bottom",
+    "bottom": "plate_bottom",
+    "plate_face": "plate_face",
+    "face": "plate_face",
+    "world": "world",
+    "domain": "world",
+}
+
+
+def normalize_z_ref(z_ref: str) -> str:
+    """Map job spelling to plate_bottom | plate_face | world."""
+    key = str(z_ref).strip().lower().replace("-", "_")
+    if key not in _Z_REF_ALIASES:
+        raise ValueError(
+            f"Unknown z_ref={z_ref!r}. Use plate_bottom, plate_face, or world."
+        )
+    return _Z_REF_ALIASES[key]
+
+
+def resolve_probe_z_world_mm(twin: "WAAMTwin", z_mm: float, z_ref: str) -> float:
+    """Convert a job probe height to domain-world millimetres (k=0 floor).
+
+    ``plate_bottom`` — z=0 at the metal band bottom (``plate_k0``).
+    ``plate_face``   — z=0 at the plate-top face (``nz_solid``); negative into metal.
+    ``world``        — z already in domain coordinates.
+    """
+    ref = normalize_z_ref(z_ref)
+    z = float(z_mm)
+    if ref == "world":
+        return z
+    dx_mm = float(twin.grid.dx) * 1000.0
+    if ref == "plate_bottom":
+        k0 = int(getattr(twin, "plate_k0", 0))
+        return k0 * dx_mm + z
+    # plate_face
+    face = int(getattr(twin, "nz_solid", 0))
+    return face * dx_mm + z
+
+
+def _coerce_probes_config(
+    entries: list[dict] | dict,
+) -> tuple[str, list[dict]]:
+    """Return (default_z_ref, point dicts) from list or {z_ref, points} form."""
+    if isinstance(entries, dict):
+        default = str(entries.get("z_ref", "plate_bottom"))
+        points = entries.get("points")
+        if points is None:
+            # Allow legacy key name
+            points = entries.get("probes")
+        if points is None:
+            raise ValueError(
+                "probes dict must include a 'points' list "
+                "(and optional section-level z_ref)."
+            )
+        if not isinstance(points, list):
+            raise ValueError("probes.points must be a list of probe entries.")
+        return default, points
+    if isinstance(entries, list):
+        return "plate_bottom", entries
+    raise TypeError(f"probes must be a list or dict, got {type(entries).__name__}")
+
 
 @dataclass
 class ProbeSpec:
@@ -126,25 +188,63 @@ class ProbeRecorder:
         ))
 
     @classmethod
-    def from_job_list(cls, entries: list[dict], twin: "WAAMTwin") -> "ProbeRecorder":
+    def from_job_list(
+        cls,
+        entries: list[dict] | dict,
+        twin: "WAAMTwin",
+    ) -> "ProbeRecorder":
+        """Build probes from a job ``probes`` block; store world-frame positions.
+
+        Job forms::
+
+            probes:
+              z_ref: plate_bottom   # or plate_face | world  (section default)
+              points:
+                - name: tc1
+                  x_mm: 30
+                  y_mm: 30
+                  z_mm: 7.0
+                  # z_ref: plate_face   # optional per-probe override
+
+            # Legacy list form (default z_ref=plate_bottom):
+            probes:
+              - name: tc1
+                x_mm: 30
+                y_mm: 30
+                z_mm: 7.0
+
+        Legacy ``world_z: true`` on an entry maps to ``z_ref: world``.
+        Grid-index probes (i/j/k) skip z_ref (already domain cells).
+        """
         rec = cls()
-        for entry in entries:
+        default_z_ref, points = _coerce_probes_config(entries)
+        for entry in points:
             name = str(entry.get("name", f"probe_{len(rec.probes)}"))
+            if "i" in entry and "j" in entry and "k" in entry:
+                rec.add_grid(int(entry["i"]), int(entry["j"]), int(entry["k"]), twin, name)
+                continue
+            if "z_ref" in entry:
+                z_ref = str(entry["z_ref"])
+            elif bool(entry.get("world_z", False)):
+                z_ref = "world"
+            else:
+                z_ref = default_z_ref
+            z_world_mm = resolve_probe_z_world_mm(
+                twin, float(entry.get("z_mm", 0.0)), z_ref
+            )
             if "behind_mm" in entry:
                 rec.add_torch_relative(
                     float(entry["behind_mm"]),
-                    float(entry.get("z_mm", 0.0)),
+                    z_world_mm,
                     twin,
                     name,
                     lateral_mm=float(entry.get("lateral_mm", 0.0)),
                 )
-            elif "i" in entry and "j" in entry and "k" in entry:
-                rec.add_grid(int(entry["i"]), int(entry["j"]), int(entry["k"]), twin, name)
             else:
                 rec.add_world_mm(
                     float(entry.get("x_mm", 0)),
                     float(entry.get("y_mm", 0)),
-                    float(entry.get("z_mm", 0)),
+                    z_world_mm,
                     twin,
                     name,
                 )

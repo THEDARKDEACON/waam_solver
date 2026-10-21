@@ -30,7 +30,8 @@ def init_grid(
     rho0:      ti.f32,
     cp_rho:    ti.f32,      # wire ρ·cp  [J/(m³·K)]
     cp_rho_plate: ti.f32,   # plate ρ·cp (same as wire unless dual-alloy)
-    nz_solid:  ti.i32,      # Number of z-layers that are solid substrate
+    nz_solid:  ti.i32,      # Plate face index (exclusive end); metal is plate_k0 <= k < nz_solid
+    plate_k0:  ti.i32,      # Inclusive bottom index of plate (gas below when > 0)
     plate_i0:  ti.i32,      # Plate footprint [i0,i1) × [j0,j1)
     plate_i1:  ti.i32,
     plate_j0:  ti.i32,
@@ -42,9 +43,11 @@ def init_grid(
     """
     Quiescent ambient initial state.
 
-    Substrate occupies k < nz_solid only inside [plate_i0, plate_i1) ×
-    [plate_j0, plate_j1). Outside that XY footprint those layers are gas
-    so coupon side faces can convect/radiate. nz_solid < 0 → all-fluid test.
+    Substrate occupies plate_k0 <= k < nz_solid inside [plate_i0, plate_i1) ×
+    [plate_j0, plate_j1). Gas below the plate (k < plate_k0) is never treated as
+    cooled metal — only FLAG_GAS neighbors count for boundary losses.
+    Outside the XY footprint those layers are gas so coupon side faces can
+    convect/radiate. nz_solid < 0 → all-fluid test.
     """
     for i, j, k in rho:
         for q in ti.static(range(19)):
@@ -70,7 +73,7 @@ def init_grid(
                 i >= plate_i0 and i < plate_i1
                 and j >= plate_j0 and j < plate_j1
             )
-            if in_plate and k < nz_solid:
+            if in_plate and k >= plate_k0 and k < nz_solid:
                 phi[i, j, k] = 1.0
                 flags[i, j, k] = FLAG_SOLID
                 alloy_id[i, j, k] = ALLOY_PLATE
@@ -615,6 +618,7 @@ def shift_simulation_window_x(
     cp_rho_plate: ti.f32,
     rho0: ti.f32,
     nz_solid: ti.i32,
+    plate_k0: ti.i32,
     FLAG_SOLID: ti.i32,
     FLAG_GAS: ti.i32,
     FLAG_FLUID: ti.i32,
@@ -646,7 +650,7 @@ def shift_simulation_window_x(
     for i, j, k in ti.ndrange(nx, ny, nz):
         if i < i0:
             continue
-        as_plate = 1 if k < nz_solid else 0
+        as_plate = 1 if (k >= plate_k0 and k < nz_solid) else 0
         _window_fill_cell(
             i, j, k,
             T, H, f_l, phi, flags, T_max, T_prev, dT_dt,
@@ -691,6 +695,7 @@ def shift_simulation_window_y(
     cp_rho_plate: ti.f32,
     rho0: ti.f32,
     nz_solid: ti.i32,
+    plate_k0: ti.i32,
     FLAG_SOLID: ti.i32,
     FLAG_GAS: ti.i32,
     FLAG_FLUID: ti.i32,
@@ -715,7 +720,7 @@ def shift_simulation_window_y(
         for i, j, k in ti.ndrange(nx, ny, nz):
             if j < j0:
                 continue
-            as_plate = 1 if k < nz_solid else 0
+            as_plate = 1 if (k >= plate_k0 and k < nz_solid) else 0
             _window_fill_cell(
                 i, j, k,
                 T, H, f_l, phi, flags, T_max, T_prev, dT_dt,
@@ -740,7 +745,7 @@ def shift_simulation_window_y(
         for i, j, k in ti.ndrange(nx, ny, nz):
             if j >= n_shift:
                 continue
-            as_plate = 1 if k < nz_solid else 0
+            as_plate = 1 if (k >= plate_k0 and k < nz_solid) else 0
             _window_fill_cell(
                 i, j, k,
                 T, H, f_l, phi, flags, T_max, T_prev, dT_dt,
@@ -785,6 +790,7 @@ def shift_simulation_window_z(
     cp_rho_plate: ti.f32,
     rho0: ti.f32,
     nz_solid: ti.i32,
+    plate_k0: ti.i32,
     FLAG_SOLID: ti.i32,
     FLAG_GAS: ti.i32,
     FLAG_FLUID: ti.i32,
@@ -792,7 +798,9 @@ def shift_simulation_window_z(
     ny: ti.i32,
     nz: ti.i32,
 ):
-    """Slide the mesh in ±Z. +Z fills the new top with gas; −Z fills the bottom with plate."""
+    """Slide the mesh in ±Z. +Z fills the new top with gas; −Z fills bottom
+    with plate only when the plate sits on the floor (plate_k0==0). A floating
+    plate keeps gas below — new bottom cells stay gas."""
     if direction > 0:
         for i, j in ti.ndrange(nx, ny):
             for k in range(nz - n_shift):
@@ -833,12 +841,14 @@ def shift_simulation_window_z(
         for i, j, k in ti.ndrange(nx, ny, nz):
             if k >= n_shift:
                 continue
+            # Floor-anchored plate grows downward; floating plate keeps gas below.
+            as_plate = 1 if plate_k0 == 0 else 0
             _window_fill_cell(
                 i, j, k,
                 T, H, f_l, phi, flags, T_max, T_prev, dT_dt,
                 time_above_800, time_above_1100, time_above_solidus,
                 rho, ux, uy, uz, Fx, Fy, Fz, f_a, f_b, alloy_id, alloy_frac,
-                T_amb, cp_rho, cp_rho_plate, rho0, 1, FLAG_SOLID, FLAG_GAS,
+                T_amb, cp_rho, cp_rho_plate, rho0, as_plate, FLAG_SOLID, FLAG_GAS,
             )
 
 

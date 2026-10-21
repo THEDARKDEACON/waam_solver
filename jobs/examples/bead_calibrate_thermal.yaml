@@ -136,10 +136,12 @@ heat_loss:
   eps_rad: 0.4
 
 probes:
-  - name: substrate_behind_arc
-    x_mm: 20.0
-    y_mm: 10.0
-    z_mm: 2.0
+  z_ref: plate_bottom
+  points:
+    - name: substrate_behind_arc
+      x_mm: 20.0
+      y_mm: 10.0
+      z_mm: 2.0
 
 reference:
   awaiting_measurement: false
