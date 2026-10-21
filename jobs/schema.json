@@ -4,64 +4,142 @@
   "type": "object",
   "additionalProperties": true,
   "properties": {
-    "name": { "type": "string" },
+    "name": {
+      "type": "string"
+    },
     "simulation": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "preset": { "type": "string" },
-        "backend": { "type": "string" },
+        "preset": {
+          "type": "string"
+        },
+        "backend": {
+          "type": "string"
+        },
         "physics_tier": {
           "type": "string",
-          "enum": ["thermal", "flow", "full", "base", "default", "standard_physics"]
+          "enum": [
+            "thermal",
+            "flow",
+            "full",
+            "base",
+            "default",
+            "standard_physics"
+          ]
         },
         "domain_mm": {
           "type": "array",
-          "items": { "type": "number" },
+          "items": {
+            "type": "number"
+          },
           "minItems": 3,
           "maxItems": 3
         },
-        "dx_mm": { "type": "number", "exclusiveMinimum": 0 },
+        "dx_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
         "auto_grid": {
           "type": "boolean",
           "description": "Accepted for compatibility. dx_mm is allocated as requested; the device OOMs if the mesh does not fit. Cell count scales as 1/dx^3."
         },
-        "strict_mode": { "type": "boolean" },
-        "enable_vof": { "type": "boolean" },
-        "enable_csf_tension": { "type": "boolean" },
-        "enable_wetting": { "type": "boolean" },
-        "enable_hydrostatic_gravity": { "type": "boolean" },
-        "enable_bead_freeze": { "type": "boolean" },
-        "enable_trailing_solidify": { "type": "boolean" },
-        "periodic_x": { "type": "boolean" },
-        "use_free_surface_lbm": { "type": "boolean" },
-        "C_darcy_phys": { "type": "number" },
-        "dt_mode": { "type": "string" },
-        "ma_max": { "type": "number" },
-        "force_limit_m_s2": { "type": "number" },
-        "enable_droplet_impact_pressure": { "type": "boolean" },
-        "enable_recoil": { "type": "boolean" },
-        "use_recoil_clausius_clapeyron": { "type": "boolean" },
-        "enable_lorentz": { "type": "boolean" },
-        "enable_gas_shear": { "type": "boolean" },
-        "enable_enthalpy_cap": { "type": "boolean" },
-        "enable_evaporative_cooling": { "type": "boolean" },
-        "arc_surface_weighting": { "type": "boolean" },
-        "enable_substrate_growth": { "type": "boolean" },
-        "enable_ctwd": { "type": "boolean" },
-        "enable_marangoni": { "type": "boolean" },
-        "enable_buoyancy": { "type": "boolean" },
-        "enable_arc_pressure": { "type": "boolean" },
-        "enable_deposition_momentum": { "type": "boolean" },
-        "use_torch_z": { "type": "boolean" },
-        "enable_torch_z": { "type": "boolean" },
+        "strict_mode": {
+          "type": "boolean"
+        },
+        "enable_vof": {
+          "type": "boolean"
+        },
+        "enable_csf_tension": {
+          "type": "boolean"
+        },
+        "enable_wetting": {
+          "type": "boolean"
+        },
+        "enable_hydrostatic_gravity": {
+          "type": "boolean"
+        },
+        "enable_bead_freeze": {
+          "type": "boolean"
+        },
+        "enable_trailing_solidify": {
+          "type": "boolean"
+        },
+        "periodic_x": {
+          "type": "boolean"
+        },
+        "use_free_surface_lbm": {
+          "type": "boolean"
+        },
+        "C_darcy_phys": {
+          "type": "number"
+        },
+        "dt_mode": {
+          "type": "string"
+        },
+        "ma_max": {
+          "type": "number"
+        },
+        "force_limit_m_s2": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Physical body-force acceleration cap [m/s\u00b2]. When >0, F_lu=a\u00b7dt\u00b2/dx each step (mesh-invariant Phase 3 path)."
+        },
+        "enable_droplet_impact_pressure": {
+          "type": "boolean"
+        },
+        "enable_recoil": {
+          "type": "boolean"
+        },
+        "use_recoil_clausius_clapeyron": {
+          "type": "boolean"
+        },
+        "enable_lorentz": {
+          "type": "boolean"
+        },
+        "enable_gas_shear": {
+          "type": "boolean"
+        },
+        "enable_enthalpy_cap": {
+          "type": "boolean"
+        },
+        "enable_evaporative_cooling": {
+          "type": "boolean"
+        },
+        "arc_surface_weighting": {
+          "type": "boolean"
+        },
+        "enable_substrate_growth": {
+          "type": "boolean"
+        },
+        "enable_ctwd": {
+          "type": "boolean"
+        },
+        "enable_marangoni": {
+          "type": "boolean"
+        },
+        "enable_buoyancy": {
+          "type": "boolean"
+        },
+        "enable_arc_pressure": {
+          "type": "boolean"
+        },
+        "enable_deposition_momentum": {
+          "type": "boolean"
+        },
+        "use_torch_z": {
+          "type": "boolean"
+        },
+        "enable_torch_z": {
+          "type": "boolean"
+        },
         "enable_moving_window": {
           "type": "boolean",
-          "description": "Slide the local mesh with the torch in +X, ±Y, and ±Z (Z only when use_torch_z is set). New strips are filled with ambient plate/gas."
+          "description": "Slide the local mesh with the torch in +X, \u00b1Y, and \u00b1Z (Z only when use_torch_z is set). New strips are filled with ambient plate/gas."
         },
         "enable_alloy_mixing": {
           "type": "boolean",
-          "description": "Diffuse alloy_frac among neighbouring liquid cells in the fusion zone. Default false — birth composition is unchanged. Dual-alloy jobs only."
+          "description": "Diffuse alloy_frac among neighbouring liquid cells in the fusion zone. Default false \u2014 birth composition is unchanged. Dual-alloy jobs only."
         },
         "alloy_mix_rate": {
           "type": "number",
@@ -72,7 +150,7 @@
         "dt_scale": {
           "type": "number",
           "exclusiveMinimum": 0,
-          "description": "Optional multiplier on WAAMGrid.dt (default 1.0). τ>0.5 and α_lu≤1/6 guards still apply. Values <1 reduce thermal–flow operator-splitting lag."
+          "description": "Optional multiplier on WAAMGrid.dt (default 1.0). \u03c4>0.5 and \u03b1_lu\u22641/6 guards still apply. Values <1 reduce thermal\u2013flow operator-splitting lag."
         },
         "warn_on_force_clamp": {
           "type": "boolean",
@@ -80,15 +158,15 @@
         },
         "use_variable_tau": {
           "type": "boolean",
-          "description": "Per-cell τ from μ(T) tables. With use_srt false → two-rate MRT variable-τ; with use_srt true → SRT variable-τ."
+          "description": "Per-cell \u03c4 from \u03bc(T) tables. With use_srt false \u2192 two-rate MRT variable-\u03c4; with use_srt true \u2192 SRT variable-\u03c4."
         },
         "use_srt": {
           "type": "boolean",
-          "description": "Override preset collision. false → two-rate central-moment MRT (constant or variable τ)."
+          "description": "Override preset collision. false \u2192 two-rate central-moment MRT (constant or variable \u03c4)."
         },
         "auto_dt_ma": {
           "type": "boolean",
-          "description": "Shrink dt so u_design_m_s*dt/dx ≤ u_mach_limit_lu and τ≥0.505."
+          "description": "Shrink dt so u_design_m_s*dt/dx \u2264 u_mach_limit_lu and \u03c4\u22650.505."
         },
         "u_design_m_s": {
           "type": "number",
@@ -97,7 +175,10 @@
         },
         "pool_metric": {
           "type": "string",
-          "enum": ["fusion_zone", "fl_bbox"],
+          "enum": [
+            "fusion_zone",
+            "fl_bbox"
+          ],
           "description": "Primary pool W/D metric (prefer claim.pool_metric)."
         },
         "u_mach_limit_lu": {
@@ -110,154 +191,306 @@
           "exclusiveMinimum": 0,
           "description": "Body-force magnitude clamp in lattice units (default 0.05). Used when force_limit_m_s2 is unset/0."
         },
-        "force_limit_m_s2": {
-          "type": "number",
-          "minimum": 0,
-          "description": "Physical body-force acceleration cap [m/s²]. When >0, F_lu=a·dt²/dx each step (mesh-invariant Phase 3 path)."
-        },
         "C_darcy": {
           "type": "number",
           "minimum": 0,
-          "description": "Carman–Kozeny lattice constant at C_darcy_ref_dt_s (default 1.6e5). Kernels use C_eff=C·(dt/dt_ref)."
+          "description": "Carman\u2013Kozeny lattice constant at C_darcy_ref_dt_s (default 1.6e5). Kernels use C_eff=C\u00b7(dt/dt_ref)."
         },
         "C_darcy_ref_dt_s": {
           "type": "number",
           "exclusiveMinimum": 0,
           "description": "Reference timestep [s] at which job C_darcy was defined. Effective C scales as dt/dt_ref."
         },
-        "plate_thickness_mm": { "type": "number" },
+        "plate_thickness_mm": {
+          "type": "number"
+        },
         "plate_size_mm": {
           "type": "array",
-          "items": { "type": "number" },
+          "items": {
+            "type": "number"
+          },
           "minItems": 2,
           "maxItems": 2
         },
         "plate_origin_mm": {
           "type": "array",
-          "items": { "type": "number" },
+          "items": {
+            "type": "number"
+          },
           "minItems": 2,
           "maxItems": 2
         },
-        "plate_length_mm": { "type": "number" },
-        "plate_width_mm": { "type": "number" },
-        "substrate_thickness_mm": { "type": "number" },
-        "domain_margin_mm": { "type": "number" },
-        "air_gap_mm": { "type": "number" }
+        "plate_length_mm": {
+          "type": "number"
+        },
+        "plate_width_mm": {
+          "type": "number"
+        },
+        "substrate_thickness_mm": {
+          "type": "number"
+        },
+        "domain_margin_mm": {
+          "type": "number"
+        },
+        "air_gap_mm": {
+          "type": "number"
+        }
       }
     },
     "plate": {
       "type": "object",
       "additionalProperties": true,
       "properties": {
-        "thickness_mm": { "type": "number", "exclusiveMinimum": 0 },
+        "thickness_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
         "size_mm": {
           "type": "array",
-          "items": { "type": "number" },
+          "items": {
+            "type": "number"
+          },
           "minItems": 2,
           "maxItems": 2
         },
         "origin_mm": {
           "type": "array",
-          "items": { "type": "number" },
+          "items": {
+            "type": "number"
+          },
           "minItems": 2,
           "maxItems": 2
         },
-        "material": { "type": ["string", "object"] }
+        "material": {
+          "type": [
+            "string",
+            "object"
+          ]
+        }
       }
     },
-    "material": { "type": ["string", "object"] },
-    "calibration": { "type": ["string", "object", "null"] },
-    "frame": { "type": "string" },
-    "torch_path_csv": { "type": "string" },
+    "material": {
+      "type": [
+        "string",
+        "object"
+      ]
+    },
+    "calibration": {
+      "type": [
+        "string",
+        "object",
+        "null"
+      ]
+    },
+    "frame": {
+      "type": "string"
+    },
+    "torch_path_csv": {
+      "type": "string"
+    },
     "torch_path": {
       "type": "array",
       "items": {
         "type": "object",
         "properties": {
-          "x_mm": { "type": "number" },
-          "y_mm": { "type": "number" },
-          "z_mm": { "type": "number" }
+          "x_mm": {
+            "type": "number"
+          },
+          "y_mm": {
+            "type": "number"
+          },
+          "z_mm": {
+            "type": "number"
+          }
         }
       }
     },
     "heat_source": {
       "type": "string",
       "enum": [
-        "gaussian2d", "gaussian", "gauss",
-        "goldak", "goldak3d", "doubleellipsoid"
+        "gaussian2d",
+        "gaussian",
+        "gauss",
+        "goldak",
+        "goldak3d",
+        "doubleellipsoid"
       ]
     },
     "goldak": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "ff": { "type": "number" },
-        "fr": { "type": "number" },
-        "a_front_mm": { "type": "number" },
-        "a_rear_mm": { "type": "number" },
-        "b_mm": { "type": "number" },
-        "c_mm": { "type": "number" },
-        "depth_front_mm": { "type": "number" },
-        "depth_rear_mm": { "type": "number" },
-        "sigma_scale": { "type": "number" },
-        "normalize_energy": { "type": "boolean" }
+        "ff": {
+          "type": "number"
+        },
+        "fr": {
+          "type": "number"
+        },
+        "a_front_mm": {
+          "type": "number"
+        },
+        "a_rear_mm": {
+          "type": "number"
+        },
+        "b_mm": {
+          "type": "number"
+        },
+        "c_mm": {
+          "type": "number"
+        },
+        "depth_front_mm": {
+          "type": "number"
+        },
+        "depth_rear_mm": {
+          "type": "number"
+        },
+        "sigma_scale": {
+          "type": "number"
+        },
+        "normalize_energy": {
+          "type": "boolean"
+        }
       }
     },
     "process": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "current_A": { "type": "number" },
-        "voltage_V": { "type": "number" },
-        "arc_efficiency": { "type": "number", "minimum": 0, "maximum": 1 },
-        "travel_speed_mm_s": { "type": "number" },
-        "wire_feed_m_min": { "type": "number" },
-        "wire_diameter_mm": { "type": "number", "exclusiveMinimum": 0 },
-        "droplet_length_mm": { "type": "number" },
-        "T_ambient_K": { "type": "number" },
-        "stickout_mm": { "type": "number" },
-        "ctwd_mm": { "type": "number" },
-        "transfer_mode": { "type": "string" },
-        "droplet_transfer_mode": { "type": "string" },
-        "droplet_size_jitter": { "type": "number" },
-        "impact_lead_angle_deg": { "type": "number" },
-        "droplet_freq_hz": { "type": "number" },
-        "pulse_frequency_hz": { "type": "number" },
-        "power_factor": { "type": "number" },
-        "duty_cycle": { "type": "number" },
-        "arc_sigma_mm": { "type": "number" }
+        "current_A": {
+          "type": "number"
+        },
+        "voltage_V": {
+          "type": "number"
+        },
+        "arc_efficiency": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "travel_speed_mm_s": {
+          "type": "number"
+        },
+        "wire_feed_m_min": {
+          "type": "number"
+        },
+        "wire_diameter_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "droplet_length_mm": {
+          "type": "number"
+        },
+        "T_ambient_K": {
+          "type": "number"
+        },
+        "stickout_mm": {
+          "type": "number"
+        },
+        "ctwd_mm": {
+          "type": "number"
+        },
+        "transfer_mode": {
+          "type": "string"
+        },
+        "droplet_transfer_mode": {
+          "type": "string"
+        },
+        "droplet_size_jitter": {
+          "type": "number"
+        },
+        "impact_lead_angle_deg": {
+          "type": "number"
+        },
+        "droplet_freq_hz": {
+          "type": "number"
+        },
+        "pulse_frequency_hz": {
+          "type": "number"
+        },
+        "power_factor": {
+          "type": "number"
+        },
+        "duty_cycle": {
+          "type": "number"
+        },
+        "arc_sigma_mm": {
+          "type": "number"
+        }
       }
     },
     "arc_physics": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "sigma_mm": { "type": "number" },
-        "penetration_mm": { "type": "number" },
-        "T_vapor_cap_K": { "type": "number" },
-        "surface_weighting": { "type": "boolean" },
-        "pressure_model": { "type": "string" },
-        "pressure_pa": { "type": "number" },
-        "pressure_sigma_mm": { "type": ["number", "null"] }
+        "sigma_mm": {
+          "type": "number"
+        },
+        "penetration_mm": {
+          "type": "number"
+        },
+        "T_vapor_cap_K": {
+          "type": "number"
+        },
+        "surface_weighting": {
+          "type": "boolean"
+        },
+        "pressure_model": {
+          "type": "string"
+        },
+        "pressure_pa": {
+          "type": "number"
+        },
+        "pressure_sigma_mm": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
       }
     },
     "advanced_physics": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "gas_jet_velocity_m_s": { "type": "number" },
-        "gas_shear_coeff": { "type": "number" },
-        "sigma_liquid_Sm": { "type": "number" },
-        "sigma_solid_Sm": { "type": "number" },
-        "lorentz_jacobi_iters": { "type": "integer" },
-        "lorentz_jacobi_cold_iters": { "type": "integer" },
-        "lorentz_jacobi_tol": { "type": "number" },
-        "T_boiling_K": { "type": "number" },
-        "T_recoil_onset_K": { "type": "number" },
-        "L_vapor_J_kg": { "type": "number" },
-        "R_spec_vapor_J_kgK": { "type": "number" },
-        "recoil_accommodation": { "type": "number" },
-        "evap_cooling_scale": { "type": "number" },
+        "gas_jet_velocity_m_s": {
+          "type": "number"
+        },
+        "gas_shear_coeff": {
+          "type": "number"
+        },
+        "sigma_liquid_Sm": {
+          "type": "number"
+        },
+        "sigma_solid_Sm": {
+          "type": "number"
+        },
+        "lorentz_jacobi_iters": {
+          "type": "integer"
+        },
+        "lorentz_jacobi_cold_iters": {
+          "type": "integer"
+        },
+        "lorentz_jacobi_tol": {
+          "type": "number"
+        },
+        "T_boiling_K": {
+          "type": "number"
+        },
+        "T_recoil_onset_K": {
+          "type": "number"
+        },
+        "L_vapor_J_kg": {
+          "type": "number"
+        },
+        "R_spec_vapor_J_kgK": {
+          "type": "number"
+        },
+        "recoil_accommodation": {
+          "type": "number"
+        },
+        "evap_cooling_scale": {
+          "type": "number"
+        },
         "bulk_tau": {
           "type": "number",
           "exclusiveMinimum": 0.5,
@@ -265,12 +498,12 @@
         },
         "marangoni_scale": {
           "type": "number",
-          "description": "Multiplier on material dγ/dT (default 1.0). Prefer material surfactant model over this knob."
+          "description": "Multiplier on material d\u03b3/dT (default 1.0). Prefer material surfactant model over this knob."
         },
         "C_darcy": {
           "type": "number",
           "minimum": 0,
-          "description": "Alias for simulation.C_darcy (Carman–Kozeny)."
+          "description": "Alias for simulation.C_darcy (Carman\u2013Kozeny)."
         },
         "C_darcy_ref_dt_s": {
           "type": "number",
@@ -306,81 +539,213 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "superheat_K": { "type": "number" },
-        "footprint_sigma_scale": { "type": "number" },
-        "trailing_solidify_lookback_mm": { "type": "number" },
-        "trailing_solidify_temp_margin_K": { "type": "number" },
-        "max_footprint_mm": { "type": "number", "minimum": 0 }
+        "superheat_K": {
+          "type": "number"
+        },
+        "footprint_sigma_scale": {
+          "type": "number"
+        },
+        "trailing_solidify_lookback_mm": {
+          "type": "number"
+        },
+        "trailing_solidify_temp_margin_K": {
+          "type": "number"
+        },
+        "max_footprint_mm": {
+          "type": "number",
+          "minimum": 0
+        }
       }
     },
     "surface_wetting": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "contact_angle_deg": { "type": "number" }
+        "contact_angle_deg": {
+          "type": "number"
+        }
       }
     },
     "heat_loss": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "convection": { "type": "boolean" },
-        "radiation": { "type": "boolean" },
-        "h_conv": { "type": "number" },
-        "eps_rad": { "type": "number" }
+        "convection": {
+          "type": "boolean"
+        },
+        "radiation": {
+          "type": "boolean"
+        },
+        "h_conv": {
+          "type": "number"
+        },
+        "eps_rad": {
+          "type": "number"
+        }
       }
     },
     "interpass": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "cooling_steps": { "type": "integer" },
-        "travel_speed_mm_s": { "type": "number" }
+        "cooling_steps": {
+          "type": "integer"
+        },
+        "travel_speed_mm_s": {
+          "type": "number"
+        }
       }
     },
     "electrical": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "rho_e_ohm_m": { "type": "number" },
-        "eta_stick": { "type": "number" }
+        "rho_e_ohm_m": {
+          "type": "number"
+        },
+        "eta_stick": {
+          "type": "number"
+        }
       }
     },
-    "layer_height_mm": { "type": "number" },
+    "layer_height_mm": {
+      "type": "number"
+    },
     "claim": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "mesh_tier": { "type": "string", "enum": ["shop", "hpc"] },
-        "absolute_wd": { "type": "boolean" },
-        "trend_only": { "type": "boolean" },
-        "tier_label": { "type": "string" },
-        "pool_metric": { "type": "string", "enum": ["fusion_zone", "fl_bbox"] },
-        "characterisation": { "type": "string" },
-        "accuracy": { "type": "object", "additionalProperties": { "type": "string" } },
-        "knobs_fitted": { "type": "array", "items": { "type": "string" } },
-        "knobs_predicted": { "type": "array", "items": { "type": "string" } },
+        "mesh_tier": {
+          "type": "string",
+          "enum": [
+            "shop",
+            "hpc"
+          ]
+        },
+        "absolute_wd": {
+          "type": "boolean"
+        },
+        "trend_only": {
+          "type": "boolean"
+        },
+        "tier_label": {
+          "type": "string"
+        },
+        "pool_metric": {
+          "type": "string",
+          "enum": [
+            "fusion_zone",
+            "fl_bbox"
+          ]
+        },
+        "characterisation": {
+          "type": "string"
+        },
+        "accuracy": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "knobs_fitted": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "knobs_predicted": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "knobs_locked": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Must match calibrate lock on held-outs (not free process knobs)."
         },
         "known_defects": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Documented solver/claim defects; shrink as fixes land."
         },
         "operating_regime": {
           "type": "string",
-          "description": "τ/Ma/clamp honesty for the lock mesh."
+          "description": "\u03c4/Ma/clamp honesty for the lock mesh."
         },
-        "limitations": { "type": "array", "items": { "type": "string" } },
-        "out_of_scope": { "type": "array", "items": { "type": "string" } },
-        "notes": { "type": "string" }
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "out_of_scope": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "notes": {
+          "type": "string"
+        }
       }
     },
-    "reference": { "type": "object", "additionalProperties": true },
-    "model_reference": { "type": "object", "additionalProperties": true },
-    "probes": { "type": "array", "items": { "type": "object" } }
+    "reference": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "model_reference": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "probes": {
+      "oneOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "description": "Legacy list of probe points (default z_ref=plate_bottom)."
+        },
+        {
+          "type": "object",
+          "required": [
+            "points"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "z_ref": {
+              "type": "string",
+              "enum": [
+                "plate_bottom",
+                "plate_face",
+                "world",
+                "bottom",
+                "face",
+                "domain"
+              ],
+              "description": "Section default for converting z_mm to domain world."
+            },
+            "points": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            },
+            "probes": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              },
+              "description": "Alias for points."
+            }
+          }
+        }
+      ]
+    }
   }
 }

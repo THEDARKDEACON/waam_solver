@@ -64,12 +64,12 @@ simulation:
 plate:
   thickness_mm: 9.0
   size_mm: [60, 60]
-  origin_mm: [0, 0]
+  origin_mm: [5.0, 5.0]  # center 60 mm plate in 70 mm domain
   material: materials/validated/MildSteel.ansys.v1.yaml
 
 material: materials/validated/ER70S-6.v1.yaml
 calibration: null
-torch_path_csv: jobs/paths/bead_line.csv
+torch_path_csv: jobs/paths/bead_line_plate60_in70.csv
 
 heat_source: goldak
 goldak:
@@ -139,8 +139,8 @@ probes:
   z_ref: plate_bottom
   points:
     - name: substrate_behind_arc
-      x_mm: 20.0
-      y_mm: 10.0
+      x_mm: 25.0
+      y_mm: 15.0
       z_mm: 2.0
 
 reference:
