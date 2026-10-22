@@ -51,6 +51,7 @@ def run() -> float:
         0.0,  # C_darcy
         g.FLAG_SOLID, g.FLAG_GAS,
         g.nx, g.ny, g.nz,
+        0.0,  # cs_smag
     )
     f1 = g.f_b.to_numpy()
     mass1 = float(f1.sum())

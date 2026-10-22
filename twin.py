@@ -185,6 +185,8 @@ class WAAMTwin:
         self.arc_pressure_model = "constant"  # or lin_eagar
         self.pressure_sigma_m: float | None = None  # None → use arc_sigma_m
         self.physics_tier = "flow"
+        # Set by from_job for thermal-tier jobs stepped at the conduction dt.
+        self.thermal_fast_path = False
         self.strict_mode = False
         self.enable_force_diagnostics = True
         self._force_diag: dict[str, float] = {}
@@ -261,6 +263,10 @@ class WAAMTwin:
         self.welding_current_A = welding_current_A
         self.sigma_liquid_Sm = sigma_liquid_Sm
         self.sigma_solid_Sm = sigma_solid_Sm
+        # Gas is grounded through this leakage conductivity. ~1 S/m keeps metal
+        # cut off from the plate (droplets in flight) well-posed while leaking
+        # well under 0.1 % of the current from an attached pool.
+        self.sigma_gas_Sm = 1.0
         self.lorentz_jacobi_iters = lorentz_jacobi_iters
         self.lorentz_jacobi_omega = lorentz_jacobi_omega
         self.lorentz_jacobi_tol = 1.0e-4
@@ -281,6 +287,10 @@ class WAAMTwin:
         self.enable_evaporative_cooling = enable_evaporative_cooling
         self.evap_cooling_scale = 1.0  # M3: physical Hertz–Knudsen (was 25× fudge)
         self.periodic_x = False  # M5: production BCs are closed; tests may enable
+        # Stream gas only within this many cells of metal (0 = stream all gas).
+        self.lbm_gas_band = 0
+        # Smagorinsky constant for the subgrid eddy viscosity (0 = off).
+        self.smagorinsky_cs = 0.17
         self.enable_trailing_solidify = False  # H3: geometric prior off by default
         self._evap_energy_J_step = 0.0
         self._evap_energy_J_cum = 0.0
@@ -703,7 +713,14 @@ class WAAMTwin:
         v_lorentz, v_vof, v_export = vram_flags_from_job(job)
         sim_job = job.get("simulation") or {}
         adv_job = job.get("advanced_physics") or {}
+        dt_scale_set = "dt_scale" in kwargs or "dt_scale" in sim_job
         dt_scale = float(kwargs.pop("dt_scale", sim_job.get("dt_scale", 1.0)))
+        thermal_dt_s = None
+        if not dt_scale_set:
+            from .solvers.thermal_only import job_thermal_dt_s
+            thermal_dt_s = job_thermal_dt_s(job, float(grid["dx_mm"]))
+            if thermal_dt_s is not None:
+                dt_scale = thermal_dt_s / WAAMGrid.base_dt_s(float(grid["dx_mm"]) * 1e-3)
         if auto_grid is None:
             auto_grid = bool(sim_job.get("auto_grid", True))
 
@@ -772,6 +789,15 @@ class WAAMTwin:
             plate_center_z=grid.get("plate_center_z"),
             plate_z0_mm=grid.get("plate_z0_mm"),
         )
+        twin.thermal_fast_path = thermal_dt_s is not None
+        if twin.thermal_fast_path:
+            from .solvers.thermal_only import check_thermal_fast_path
+            check_thermal_fast_path(twin)
+            log.info(
+                f"[WAAMTwin] thermal tier: conduction dt={twin.grid.dt * 1e6:.1f} µs "
+                f"(LBM dt would be {WAAMGrid.base_dt_s(twin.grid.dx) * 1e6:.1f} µs); "
+                "LBM, VOF and forces are not stepped"
+            )
         # Footprint log after plate geometry is applied (from_preset ran earlier).
         i0, i1, j0, j1 = twin.resolve_plate_ij()
         dx_mm = twin.grid.dx * 1e3
@@ -788,6 +814,9 @@ class WAAMTwin:
         )
         twin._job_config = job
         twin._job_path = str(job_path)
+        # Flags/H are still the constructor's all-metal block until reset();
+        # step() resets once if the caller did not.
+        twin._needs_reset = True
         probes_cfg = job.get("probes")
         if probes_cfg:
             from .export.probes import ProbeRecorder
@@ -797,6 +826,7 @@ class WAAMTwin:
     def reset(self, T_ambient: float | None = None, test_fluid_domain: bool = False):
         T0 = T_ambient or self.T_amb
         g = self.grid
+        self._needs_reset = False
         if test_fluid_domain:
             nz_solid = -1
             self.nz_solid = 0
@@ -833,6 +863,7 @@ class WAAMTwin:
             1 if getattr(self, "periodic_x", False) else 0,
         )
         self._step_n = 0
+        self._surface_k_cache = {}
         self._last_droplet_time = 0.0
         self._deposited_volume_m3 = 0.0
         self._n_droplets_fired = 0
@@ -844,6 +875,8 @@ class WAAMTwin:
         self._warned_zero_wire_feed = False
         self._warned_overflow = False
         self._lorentz_warm = False
+        self._lorentz_JB_valid = False
+        self._lbm_band_state = None
         self._lorentz_unconverged = 0
         self._lorentz_unconverged_streak = 0
         self._lorentz_iters_last = 0
@@ -880,6 +913,9 @@ class WAAMTwin:
         is_welding: bool = True,
         torch_z_m: float | None = None,
     ):
+        if getattr(self, "_needs_reset", False):
+            log.info("[WAAMTwin] step() before reset(): initialising the job grid")
+            self.reset()
         z_now = 0.0 if torch_z_m is None else float(torch_z_m)
         if self._last_torch_pos_m is not None:
             px, py, pz = self._last_torch_pos_m
@@ -970,6 +1006,15 @@ class WAAMTwin:
                 f"(deposited vs ṁ·t_weld) after {self._n_droplets_fired} droplets "
                 f"(overflow_count={self._deposition_overflow})"
             )
+
+    def fs_iface_flag(self) -> int:
+        """FLAG_IFACE when the free-surface LBM owns the interface, else -1.
+
+        Thermal kernels take this to switch to fill-weighted energy.
+        """
+        if self.enable_vof and getattr(self, "use_free_surface_lbm", False):
+            return int(self.grid.FLAG_IFACE)
+        return -1
 
     def effective_C_darcy(self) -> float:
         """Lattice Carman–Kozeny coefficient for the current ``dt``.

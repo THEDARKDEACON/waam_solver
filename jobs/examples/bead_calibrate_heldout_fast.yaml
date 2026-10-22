@@ -8,6 +8,7 @@ simulation:
   - 25
   dx_mm: 0.4
   enable_vof: true
+  use_free_surface_lbm: true
   enable_csf_tension: true
   enable_wetting: true
   enable_hydrostatic_gravity: true
@@ -22,10 +23,11 @@ simulation:
   arc_surface_weighting: true
   dt_scale: 1.0
   use_variable_tau: true
-  use_srt: true
-  auto_dt_ma: false
+  # Locked to bead_calibrate.yaml (MRT + real Ma gate).
+  use_srt: false
+  auto_dt_ma: true
   u_design_m_s: 0.5
-  u_mach_limit_lu: 0.2
+  u_mach_limit_lu: 0.08
   force_limit_lu: 0.05
   C_darcy: 160000.0
   strict_mode: true
@@ -57,13 +59,14 @@ arc_physics:
   pressure_pa: 150.0
   pressure_sigma_mm: 2.0
 advanced_physics:
-  evap_cooling_scale: 25.0
+  evap_cooling_scale: 1.0
   T_boiling_K: 3000.0
   recoil_accommodation: 0.25
   L_vapor_J_kg: 6.0e6
   R_spec_vapor_J_kgK: 149.0
   lorentz_jacobi_iters: 300
   lorentz_jacobi_tol: 0.001
+  lorentz_solve_every_s: 2.5e-4
   sigma_liquid_Sm: 1.0e6
   sigma_solid_Sm: 1.0e5
   gas_jet_velocity_m_s: 12.0

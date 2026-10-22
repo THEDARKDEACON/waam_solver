@@ -13,6 +13,10 @@ from .. import logging_util as log
 
 if TYPE_CHECKING:
     from ..twin import WAAMTwin
+    from ..grid import WAAMGrid
+
+# Curvature limit for the free-surface pressure condition (radius ≥ 2 cells).
+FS_KAPPA_MAX = 0.5
 
 
 def _clamp_enthalpy_ceiling(twin: "WAAMTwin", g) -> None:
@@ -23,19 +27,24 @@ def _clamp_enthalpy_ceiling(twin: "WAAMTwin", g) -> None:
             g.H, g.flags, g.alloy_frac,
             twin.H_cap, twin.plate_H_cap,
             g.dx, g.enthalpy_cap_energy_J_buf, g.FLAG_GAS,
+            g.phi, twin.fs_iface_flag(),
         )
     elif twin.use_material_tables:
         thermal.clamp_enthalpy_ceiling_variable_cp(
             g.H, g.flags, twin.H_cap,
             g.dx, g.enthalpy_cap_energy_J_buf, g.FLAG_GAS,
+            g.phi, twin.fs_iface_flag(),
         )
     else:
         thermal.clamp_enthalpy_ceiling_scalar(
             g.H, g.flags, twin.cp_rho,
             twin.mat.T_solidus, twin.mat.T_liquidus, twin.T_vapor_cap_K,
             twin.L_rho, g.dx, g.enthalpy_cap_energy_J_buf, g.FLAG_GAS,
+            g.phi, twin.fs_iface_flag(),
         )
     e = float(g.enthalpy_cap_energy_J_buf[None])
+    from ..physics.ledger import ensure_ledger
+    ensure_ledger(twin).record_cap(e)
     twin._enthalpy_cap_energy_J_step = float(
         getattr(twin, "_enthalpy_cap_energy_J_step", 0.0)
     ) + e
@@ -53,13 +62,25 @@ def _resolve_arc_k(
 ) -> float:
     i0 = max(0, min(int(arc_i), g.nx - 1))
     j0 = max(0, min(int(arc_j), g.ny - 1))
-    free_surface.surface_height_at(
-        g.phi, g.flags, g.surface_k_buf,
-        i0, j0, twin.nz_solid, g.FLAG_GAS, g.nz,
+    # Without VOF, wire feed or a window shift the surface never moves, so the
+    # query (and its device sync) runs once per column.
+    static_surface = (
+        not twin.enable_vof
+        and (twin.droplet_freq <= 0 or twin.wire_feed_m_s <= 0.0)
+        and not twin.enable_moving_window
     )
-    k_surface = float(g.surface_k_buf[None])
-    if k_surface < 1.0:
-        k_surface = float(max(1, twin.nz_solid - 1))
+    cache = twin.__dict__.setdefault("_surface_k_cache", {}) if static_surface else None
+    k_surface = cache.get((i0, j0)) if cache is not None else None
+    if k_surface is None:
+        free_surface.surface_height_at(
+            g.phi, g.flags, g.surface_k_buf,
+            i0, j0, twin.nz_solid, g.FLAG_GAS, g.nz,
+        )
+        k_surface = float(g.surface_k_buf[None])
+        if k_surface < 1.0:
+            k_surface = float(max(1, twin.nz_solid - 1))
+        if cache is not None:
+            cache[(i0, j0)] = k_surface
 
     if getattr(twin, "use_torch_z", False) and torch_z_m is not None:
         # Two conventions for torch_z_m:
@@ -183,6 +204,204 @@ def _update_phase(twin: "WAAMTwin", g) -> None:
     )
 
 
+def _inject_arc(twin: "WAAMTwin", g, arc_i: float, arc_j: float, arc_k: float) -> None:
+    """Arc heat for one step, booked in the ledger, then the enthalpy ceiling."""
+    from ..physics.ledger import ensure_ledger
+    from ..physics.arc import _arc_power_W
+
+    twin._last_goldak_deposited_J = None
+    twin.arc_source.inject(twin, g, arc_i, arc_j, arc_k)
+    # Ledger arc energy actually injected (Phase 4 split-aware).
+    # Absolute Goldak sets _last_goldak_deposited_J to Σ(ΔH)·dx³.
+    deposited = getattr(twin, "_last_goldak_deposited_J", None)
+    if deposited is not None:
+        ensure_ledger(twin).record_arc(float(deposited))
+    else:
+        Q_arc, eta_arc = _arc_power_W(twin)
+        ensure_ledger(twin).record_arc(float(eta_arc) * float(Q_arc) * float(g.dt))
+    _clamp_enthalpy_ceiling(twin, g)
+
+
+def _conduct_and_recover(twin: "WAAMTwin", g, use_fields: bool) -> None:
+    """Advection–diffusion, surface losses, evaporation and T/f_l recovery."""
+    # M1: snapshot H before advection so neighbour reads are race-free.
+    g.H_tmp.copy_from(g.H)
+    fs_iface = twin.fs_iface_flag()
+    if use_fields:
+        thermal.advect_diffuse_variable(
+            g.H, g.H_tmp, g.T, g.ux, g.uy, g.uz, g.flags,
+            g.alpha_lu_field, g.cp_rho_field, 1.0,
+            g.FLAG_SOLID, g.FLAG_GAS,
+            g.nx, g.ny, g.nz, g.phi, fs_iface,
+        )
+    else:
+        thermal.advect_diffuse_temperature(
+            g.H, g.H_tmp, g.T, g.ux, g.uy, g.uz, g.flags,
+            twin.alpha_lu, 1.0,
+            g.FLAG_SOLID, g.FLAG_GAS,
+            twin.cp_rho, g.nx, g.ny, g.nz, g.phi, fs_iface,
+        )
+
+    if twin.enable_heat_loss:
+        t_cap = float(twin.T_vapor_cap_K) if twin.enable_enthalpy_cap else 0.0
+        if use_fields:
+            thermal.apply_boundary_losses_variable(
+                g.H, g.T, g.flags, g.cp_rho_field,
+                twin.T_amb,
+                twin.h_conv, twin.eps_rad,
+                1 if twin.enable_convection else 0,
+                1 if twin.enable_radiation else 0,
+                g.dt, g.dx, twin.sigma_sb, t_cap,
+                g.FLAG_SOLID, g.FLAG_GAS,
+                g.nx, g.ny, g.nz, g.energy_acc_J, g.phi, fs_iface,
+            )
+            thermal.clamp_enthalpy_floor(
+                g.H, g.flags, g.alloy_frac,
+                twin.H_amb, twin.plate_H_amb, g.FLAG_GAS, g.dx, g.energy_acc_J,
+                g.phi, fs_iface,
+            )
+        else:
+            thermal.apply_boundary_losses(
+                g.H, g.T, g.flags,
+                twin.T_amb,
+                twin.h_conv, twin.eps_rad,
+                1 if twin.enable_convection else 0,
+                1 if twin.enable_radiation else 0,
+                twin.cp_rho, g.dt, g.dx, twin.sigma_sb, t_cap,
+                g.FLAG_SOLID, g.FLAG_GAS,
+                g.nx, g.ny, g.nz, g.energy_acc_J, g.phi, fs_iface,
+            )
+            thermal.clamp_enthalpy_floor_scalar(
+                g.H, twin.cp_rho, g.flags, twin.T_amb, g.FLAG_GAS, g.dx, g.energy_acc_J,
+                g.phi, fs_iface,
+            )
+
+    _update_phase(twin, g)
+
+    # Evaporative energy sink on the free surface (before hard vapor ceiling).
+    # Onset must match CC recoil, including twin.T_recoil_onset_K if set.
+    if getattr(twin, "enable_evaporative_cooling", False):
+        T_boil = float(twin.T_boiling_K)
+        T_onset = weld_forces.recoil_onset_K(twin)
+        use_field = 1 if use_fields else 0
+        thermal.apply_evaporative_enthalpy_sink(
+            g.H, g.T, g.phi, g.f_l, g.flags,
+            g.cp_rho_field,
+            use_field,
+            float(twin.cp_rho),
+            T_boil,
+            T_onset,
+            float(twin.L_vapor_J_kg),
+            float(twin.R_spec_vapor_J_kgK),
+            float(twin.P_vapor_ref_Pa),
+            float(getattr(twin, "recoil_accommodation", 0.54)),
+            float(getattr(twin, "evap_cooling_scale", 1.0)),
+            g.dt, g.dx,
+            g.evap_energy_J_buf,
+            g.FLAG_GAS,
+            g.nx, g.ny, g.nz,
+            fs_iface,
+        )
+        e_step = float(g.evap_energy_J_buf[None])
+        twin._evap_energy_J_step = e_step
+        twin._evap_energy_J_cum = float(getattr(twin, "_evap_energy_J_cum", 0.0)) + e_step
+        from ..physics.ledger import ensure_ledger
+        ensure_ledger(twin).record_evap(e_step)
+        if not twin.enable_enthalpy_cap:
+            _update_phase(twin, g)
+    else:
+        twin._evap_energy_J_step = 0.0
+
+    # Cap H, then re-recover T so telemetry / T_max cannot retain a
+    # post-phase spike above T_vapor_cap while H was already clamped.
+    if twin.enable_enthalpy_cap:
+        _clamp_enthalpy_ceiling(twin, g)
+        _update_phase(twin, g)
+
+
+def _refresh_lbm_band(twin: "WAAMTwin", g: "WAAMGrid", band: int) -> None:
+    """Rebuild the streamed-gas mask (metal dilated by ``band`` cells).
+
+    Rebuilt every band//2 steps (the interface moves < 0.1 cell/step under the
+    Mach limit) and whenever a droplet fires or the window shifts, since both
+    create metal away from the previous band.
+    """
+    g.ensure_lbm_band_fields()
+    key = (
+        int(getattr(twin, "_n_droplets_fired", 0)),
+        float(getattr(twin, "_window_offset_x_m", 0.0)),
+        float(getattr(twin, "_window_offset_y_m", 0.0)),
+        float(getattr(twin, "_window_offset_z_m", 0.0)),
+        band,
+    )
+    last = getattr(twin, "_lbm_band_state", None)
+    if last is not None and last[0] == key and twin._step_n - last[1] < max(1, band // 2):
+        return
+    kernels.mark_non_gas(g.flags, g.lbm_active, g.FLAG_GAS)
+    kernels.dilate_mask_axis(g.lbm_active, g.lbm_band_tmp, band, 0, g.nx)
+    kernels.dilate_mask_axis(g.lbm_band_tmp, g.lbm_active, band, 1, g.ny)
+    kernels.dilate_mask_axis(g.lbm_active, g.lbm_band_tmp, band, 2, g.nz)
+    g.lbm_active.copy_from(g.lbm_band_tmp)
+    twin._lbm_band_state = (key, twin._step_n)
+
+
+def _free_surface_stream(twin: "WAAMTwin", g: "WAAMGrid") -> None:
+    """Free-surface LBM stream and interface update (see kernels/fslbm.py)."""
+    nx, ny, nz = g.nx, g.ny, g.nz
+    gamma = float(twin.gamma_lu) if twin.enable_csf_tension else 0.0
+    kernels.fs_prepare(g.flags, g.FLAG_FLUID, g.FLAG_GAS, g.FLAG_IFACE, nx, ny, nz)
+    kernels.fs_stream(
+        g.f_dst, g.f_src, g.rho, g.ux, g.uy, g.uz, g.phi, g.flags,
+        g.fs_mass, g.fs_mark, g.H, g.fs_energy, gamma, FS_KAPPA_MAX,
+        g.FLAG_SOLID, g.FLAG_GAS, g.FLAG_IFACE, nx, ny, nz,
+    )
+    kernels.fs_mark_neighbors(g.flags, g.fs_mark, g.FLAG_GAS, nx, ny, nz)
+    kernels.fs_init_new_iface(
+        g.f_src, g.rho, g.ux, g.uy, g.uz, g.flags, g.fs_mark, g.fs_mass,
+        g.fs_energy, g.H, g.T, g.f_l,
+        g.FLAG_FLUID, g.FLAG_IFACE, nx, ny, nz,
+    )
+    kernels.fs_promote_new_iface(g.flags, g.fs_mark, g.fs_mass, g.rho, g.FLAG_IFACE)
+    kernels.fs_distribute_excess(
+        g.flags, g.fs_mark, g.fs_mass, g.rho, g.fs_energy, g.f_l, g.dx, g.energy_acc_J,
+        g.fs_mass_lost, g.FLAG_FLUID, g.FLAG_GAS, g.FLAG_IFACE, nx, ny, nz,
+    )
+    kernels.fs_count_surface(
+        g.flags, g.fs_mass_lost, g.fs_n_surface, g.fs_share,
+        g.FLAG_GAS, g.FLAG_IFACE, nx, ny, nz,
+    )
+    kernels.fs_settle_unplaced(
+        g.flags, g.fs_mass, g.fs_energy, g.H, g.fs_share, g.dx, g.energy_acc_J,
+        g.FLAG_GAS, g.FLAG_IFACE, nx, ny, nz,
+    )
+    kernels.fs_update_phi(
+        g.flags, g.phi, g.fs_mass, g.rho, g.fs_mark,
+        g.FLAG_FLUID, g.FLAG_GAS, g.FLAG_IFACE,
+    )
+    kernels.fs_apply_energy(
+        g.H, g.flags, g.phi, g.fs_energy, g.dx, g.energy_acc_J,
+        g.FLAG_SOLID, g.FLAG_GAS,
+    )
+
+
+def _update_time_above(twin: "WAAMTwin", g) -> None:
+    if getattr(twin, "use_dual_alloy", False):
+        kernels.update_time_above_T_dual(
+            g.T, g.flags, g.alloy_frac,
+            g.time_above_800_s, g.time_above_1100_s, g.time_above_solidus_s,
+            g.dt, 800.0 + 273.15, 1100.0 + 273.15,
+            twin.mat.T_solidus, twin.plate_mat.T_solidus,
+            g.FLAG_GAS,
+        )
+    else:
+        kernels.update_time_above_T(
+            g.T, g.flags,
+            g.time_above_800_s, g.time_above_1100_s, g.time_above_solidus_s,
+            g.dt, 800.0 + 273.15, 1100.0 + 273.15, twin.mat.T_solidus,
+            g.FLAG_GAS,
+        )
+
+
 def coupled_step(
     twin: "WAAMTwin",
     torch_x_m: float,
@@ -200,6 +419,11 @@ def coupled_step(
     discretization error, but it is a systematic phase lag — halve dt to
     check sensitivity if you operate at extreme surface-tension gradients.
     """
+    if twin.thermal_fast_path:
+        from .thermal_only import thermal_tier_step
+        thermal_tier_step(twin, torch_x_m, torch_y_m, is_welding, torch_z_m)
+        return
+
     g = twin.grid
 
     arc_i = torch_x_m / g.dx
@@ -227,23 +451,9 @@ def coupled_step(
     current_pressure = weld_forces.arc_pressure_peak_pa(twin)
     pressure_sigma_cells = weld_forces.arc_pressure_sigma_cells(twin)
 
+    deposited_this_step = False
     if is_welding:
-        twin._last_goldak_deposited_J = None
-        twin.arc_source.inject(twin, g, arc_i, arc_j, arc_k)
-        # Ledger arc energy actually injected (Phase 4 split-aware).
-        # Absolute Goldak sets _last_goldak_deposited_J to Σ(ΔH)·dx³.
-        from ..physics.ledger import ensure_ledger
-        from ..physics.arc import _arc_power_W
-        deposited = getattr(twin, "_last_goldak_deposited_J", None)
-        if deposited is not None:
-            ensure_ledger(twin).record_arc(float(deposited))
-        else:
-            Q_arc, eta_arc = _arc_power_W(twin)
-            ensure_ledger(twin).record_arc(float(eta_arc) * float(Q_arc) * float(g.dt))
-        _clamp_enthalpy_ceiling(twin, g)
-        ensure_ledger(twin).record_cap(
-            float(getattr(twin, "_enthalpy_cap_energy_J_step", 0.0))
-        )
+        _inject_arc(twin, g, arc_i, arc_j, arc_k)
 
         sim_time = twin._step_n * g.dt
         if twin.droplet_freq > 0:
@@ -282,6 +492,14 @@ def coupled_step(
                     # the footprint instead of re-filling with thermal no-ops.
                     g.deposit_vol_buf[None] = placed_real
                     g.deposit_real_buf[None] = placed_real
+                    if twin.fs_iface_flag() >= 0:
+                        kernels.fs_deposit_into_interface(
+                            g.phi, g.flags, g.H,
+                            arc_i, arc_j, arc_k, r_try, drop_r, drop_vol,
+                            float(twin.cp_rho) * T_drop + L_eff,
+                            g.deposit_vol_buf, g.deposit_real_buf, g.dx ** 3,
+                            g.FLAG_IFACE, g.nx, g.ny, g.nz,
+                        )
                     deposition.feed_wire_surface(
                         g.f_src, g.flags, g.f_l, g.phi, g.H, g.T, g.rho,
                         arc_i, arc_j, arc_k,
@@ -312,6 +530,7 @@ def coupled_step(
                         )
                 twin._deposited_volume_m3 += placed_real
                 twin._n_droplets_fired += 1
+                deposited_this_step = True
                 # Ledger droplet enthalpy for converted volume
                 from ..physics.ledger import ensure_ledger
                 H_drop = (
@@ -326,94 +545,9 @@ def coupled_step(
 
     # Properties already refreshed at step start (H6); refresh again after
     # deposition so newly created metal cells get correct tables.
-    use_fields = _refresh_thermal(twin, g)
-    # M1: snapshot H before advection so neighbour reads are race-free.
-    g.H_tmp.copy_from(g.H)
-    if use_fields:
-        thermal.advect_diffuse_variable(
-            g.H, g.H_tmp, g.T, g.ux, g.uy, g.uz, g.flags,
-            g.alpha_lu_field, g.cp_rho_field, 1.0,
-            g.FLAG_SOLID, g.FLAG_GAS,
-            g.nx, g.ny, g.nz,
-        )
-    else:
-        thermal.advect_diffuse_temperature(
-            g.H, g.H_tmp, g.T, g.ux, g.uy, g.uz, g.flags,
-            twin.alpha_lu, 1.0,
-            g.FLAG_SOLID, g.FLAG_GAS,
-            twin.cp_rho, g.nx, g.ny, g.nz,
-        )
-
-    if twin.enable_heat_loss:
-        t_cap = float(twin.T_vapor_cap_K) if twin.enable_enthalpy_cap else 0.0
-        if use_fields:
-            thermal.apply_boundary_losses_variable(
-                g.H, g.T, g.flags, g.cp_rho_field,
-                twin.T_amb,
-                twin.h_conv, twin.eps_rad,
-                1 if twin.enable_convection else 0,
-                1 if twin.enable_radiation else 0,
-                g.dt, g.dx, twin.sigma_sb, t_cap,
-                g.FLAG_SOLID, g.FLAG_GAS,
-                g.nx, g.ny, g.nz,
-            )
-            thermal.clamp_enthalpy_floor(
-                g.H, g.flags, g.alloy_frac,
-                twin.H_amb, twin.plate_H_amb, g.FLAG_GAS,
-            )
-        else:
-            thermal.apply_boundary_losses(
-                g.H, g.T, g.flags,
-                twin.T_amb,
-                twin.h_conv, twin.eps_rad,
-                1 if twin.enable_convection else 0,
-                1 if twin.enable_radiation else 0,
-                twin.cp_rho, g.dt, g.dx, twin.sigma_sb, t_cap,
-                g.FLAG_SOLID, g.FLAG_GAS,
-                g.nx, g.ny, g.nz,
-            )
-            thermal.clamp_enthalpy_floor_scalar(
-                g.H, twin.cp_rho, g.flags, twin.T_amb, g.FLAG_GAS,
-            )
-
-    _update_phase(twin, g)
-
-    # Evaporative energy sink on the free surface (before hard vapor ceiling).
-    # Onset must match CC recoil, including twin.T_recoil_onset_K if set.
-    if getattr(twin, "enable_evaporative_cooling", False):
-        T_boil = float(twin.T_boiling_K)
-        T_onset = weld_forces.recoil_onset_K(twin)
-        use_field = 1 if use_fields else 0
-        thermal.apply_evaporative_enthalpy_sink(
-            g.H, g.T, g.phi, g.f_l, g.flags,
-            g.cp_rho_field,
-            use_field,
-            float(twin.cp_rho),
-            T_boil,
-            T_onset,
-            float(twin.L_vapor_J_kg),
-            float(twin.R_spec_vapor_J_kgK),
-            float(twin.P_vapor_ref_Pa),
-            float(getattr(twin, "recoil_accommodation", 0.54)),
-            float(getattr(twin, "evap_cooling_scale", 1.0)),
-            g.dt, g.dx,
-            g.evap_energy_J_buf,
-            g.FLAG_GAS,
-            g.nx, g.ny, g.nz,
-        )
-        e_step = float(g.evap_energy_J_buf[None])
-        twin._evap_energy_J_step = e_step
-        twin._evap_energy_J_cum = float(getattr(twin, "_evap_energy_J_cum", 0.0)) + e_step
-        from ..physics.ledger import ensure_ledger
-        ensure_ledger(twin).record_evap(e_step)
-        _update_phase(twin, g)
-    else:
-        twin._evap_energy_J_step = 0.0
-
-    # Cap H, then re-recover T so telemetry / T_max cannot retain a
-    # post-phase spike above T_vapor_cap while H was already clamped.
-    _clamp_enthalpy_ceiling(twin, g)
-    _update_phase(twin, g)
+    if deposited_this_step:
+        use_fields = _refresh_thermal(twin, g)
+    _conduct_and_recover(twin, g, use_fields)
 
     if (
         getattr(twin, "enable_alloy_mixing", False)
@@ -431,7 +565,14 @@ def coupled_step(
         g.T, g.T_prev, g.dT_dt, g.flags, g.dt, g.FLAG_GAS,
     )
 
-    if twin.enable_vof:
+    fs_on = bool(twin.enable_vof and getattr(twin, "use_free_surface_lbm", False))
+    if fs_on:
+        g.ensure_fslbm_fields()
+        kernels.fs_update_phase_flags(
+            g.phi, g.f_l, g.flags, g.f_src, g.rho, g.ux, g.uy, g.uz,
+            twin.nz_solid, g.FLAG_FLUID, g.FLAG_SOLID, g.FLAG_GAS, g.FLAG_IFACE,
+        )
+    elif twin.enable_vof:
         g.ensure_vof_buffers()
         free_surface.advect_phi(
             g.phi_tmp, g.phi, g.ux, g.uy, g.uz, g.flags,
@@ -451,6 +592,7 @@ def coupled_step(
         free_surface.update_flags_from_phi(
             g.phi, g.f_l, g.flags, twin.nz_solid,
             g.FLAG_FLUID, g.FLAG_SOLID, g.FLAG_GAS, g.FLAG_IFACE,
+            g.H, g.dx, g.energy_acc_J,
         )
         # Clear contradictory liquid-in-gas / solid-with-f_l after flag update.
         free_surface.sync_phi_liquid_fraction(
@@ -465,7 +607,9 @@ def coupled_step(
     # Order: CSF → Marangoni → gas shear → arc pressure → recoil
     #      → hydrostatic → Boussinesq → Lorentz → collide (Darcy inside).
 
-    if twin.enable_csf_tension:
+    # Under the free-surface LBM, surface tension enters through the
+    # interface pressure condition instead of a CSF body force.
+    if twin.enable_csf_tension and not fs_on:
         forces.compute_csf_tension(
             g.phi, g.flags, g.Fx, g.Fy, g.Fz,
             twin.gamma_lu,
@@ -531,6 +675,8 @@ def coupled_step(
                 solve_lorentz_multigrid(twin, g, arc_i, arc_j, arc_k)
             else:
                 weld_forces.solve_lorentz(twin, g, arc_i, arc_j, arc_k)
+        else:
+            weld_forces.apply_cached_lorentz(twin, g)
 
     # Stability: full-tier surface/body forces on coarse grids can drive Ma≫1.
     # Prefer physical force_limit_m_s2 (mesh-scaled LU) when set — Phase 3 / Level A.
@@ -574,6 +720,7 @@ def coupled_step(
             C_darcy_eff,
             g.FLAG_SOLID, g.FLAG_GAS,
             g.nx, g.ny, g.nz,
+            float(getattr(twin, "smagorinsky_cs", 0.0) or 0.0),
         )
     elif twin.use_material_tables and twin.use_variable_tau:
         lbm.collide_srt_variable_tau(
@@ -620,13 +767,23 @@ def coupled_step(
         twin._mach_clamp_hits_cum = int(getattr(twin, "_mach_clamp_hits_cum", 0)) + n_u
         twin._mach_clamp_steps = int(getattr(twin, "_mach_clamp_steps", 0)) + (1 if n_u > 0 else 0)
 
-    lbm.stream(
-        g.f_dst, g.f_src,
-        g.flags,
-        g.FLAG_SOLID, g.FLAG_GAS,
-        g.nx, g.ny, g.nz,
-        1 if getattr(twin, "periodic_x", False) else 0,
-    )
+    band = int(getattr(twin, "lbm_gas_band", 0) or 0)
+    if fs_on:
+        _free_surface_stream(twin, g)
+    elif band > 0 and not getattr(twin, "periodic_x", False):
+        _refresh_lbm_band(twin, g, band)
+        kernels.stream_banded(
+            g.f_dst, g.f_src, g.flags, g.lbm_active,
+            g.FLAG_SOLID, g.FLAG_GAS, g.nx, g.ny, g.nz,
+        )
+    else:
+        lbm.stream(
+            g.f_dst, g.f_src,
+            g.flags,
+            g.FLAG_SOLID, g.FLAG_GAS,
+            g.nx, g.ny, g.nz,
+            1 if getattr(twin, "periodic_x", False) else 0,
+        )
 
     kernels.advect_tracers(
         g.porosity_pos, g.porosity_active,
@@ -635,22 +792,7 @@ def coupled_step(
         g.FLAG_SOLID, g.FLAG_GAS,
     )
 
-    if getattr(twin, "use_dual_alloy", False):
-        kernels.update_time_above_T_dual(
-            g.T, g.flags, g.alloy_frac,
-            g.time_above_800_s, g.time_above_1100_s, g.time_above_solidus_s,
-            g.dt, 800.0 + 273.15, 1100.0 + 273.15,
-            twin.mat.T_solidus, twin.plate_mat.T_solidus,
-            g.FLAG_GAS,
-        )
-    else:
-        kernels.update_time_above_T(
-            g.T, g.flags,
-            g.time_above_800_s, g.time_above_1100_s, g.time_above_solidus_s,
-            g.dt, 800.0 + 273.15, 1100.0 + 273.15, twin.mat.T_solidus,
-            g.FLAG_GAS,
-        )
-    kernels.snapshot_forces(g.Fx, g.Fy, g.Fz, g.Fx_snap, g.Fy_snap, g.Fz_snap)
+    _update_time_above(twin, g)
 
     if twin.enable_substrate_growth or twin.enable_bead_freeze:
         if getattr(twin, "use_dual_alloy", False):
@@ -711,7 +853,9 @@ def coupled_step(
                 )
         _solidify_if_enabled(twin, g)
 
-    g.swap_buffers()
+    # Collide wrote f_dst and stream pulled it back into f_src, so f_src already
+    # holds the next state; swapping here would feed the unstreamed buffer to
+    # the next collide and discard propagation.
     twin._step_n += 1
 
     if hasattr(twin, "probe_recorder") and twin.probe_recorder is not None:

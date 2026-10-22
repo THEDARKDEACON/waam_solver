@@ -58,7 +58,7 @@ def _load_yaml(path: pathlib.Path) -> dict[str, Any]:
         raise ImportError(
             "PyYAML is required for waam_twin v2 presets. Install with: pip install pyyaml"
         ) from exc
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 

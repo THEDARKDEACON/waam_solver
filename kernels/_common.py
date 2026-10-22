@@ -22,6 +22,25 @@ def bind_velocity_set(grid):
     """Kept for API compatibility — velocity set is now compile-time constant."""
     return None
 
+# ceil(log2(MAX_KNOTS - 1)) halvings bracket any interval of a full table.
+_BISECT_STEPS = max(1, (MAX_KNOTS - 2).bit_length())
+
+
+@ti.func
+def _bracket(x: ti.f32, arr: ti.template(), n: ti.i32) -> ti.i32:
+    """Largest idx in [0, n-2] with arr[idx] <= x, for ascending arr[0] < x < arr[n-1]."""
+    lo = 0
+    hi = n - 1
+    for _ in ti.static(range(_BISECT_STEPS)):
+        if hi - lo > 1:
+            mid = (lo + hi) // 2
+            if x >= arr[mid]:
+                lo = mid
+            else:
+                hi = mid
+    return lo
+
+
 @ti.func
 def lookup_table_1d(
     T: ti.f32,
@@ -37,13 +56,11 @@ def lookup_table_1d(
         elif T >= t_arr[n - 1]:
             result = v_arr[n - 1]
         else:
-            for idx in ti.static(range(MAX_KNOTS - 1)):
-                if idx < n - 1:
-                    t0 = t_arr[idx]
-                    t1 = t_arr[idx + 1]
-                    if T >= t0 and T <= t1:
-                        w = (T - t0) / (t1 - t0 + 1e-8)
-                        result = v_arr[idx] + w * (v_arr[idx + 1] - v_arr[idx])
+            idx = _bracket(T, t_arr, n)
+            t0 = t_arr[idx]
+            t1 = t_arr[idx + 1]
+            w = (T - t0) / (t1 - t0 + 1e-8)
+            result = v_arr[idx] + w * (v_arr[idx + 1] - v_arr[idx])
     return result
 
 
@@ -85,20 +102,16 @@ def sensible_specific(
         elif T >= t_arr[n - 1]:
             out = h_arr[n - 1] + cp_arr[n - 1] * (T - t_arr[n - 1])
         else:
-            found = 0
-            for idx in range(n - 1):
-                if found == 0:
-                    t0 = t_arr[idx]
-                    t1 = t_arr[idx + 1]
-                    if T >= t0 and T <= t1:
-                        u = T - t0
-                        dt = t1 - t0
-                        c0 = cp_arr[idx]
-                        c1 = cp_arr[idx + 1]
-                        out = h_arr[idx] + c0 * u
-                        if dt > 1e-8:
-                            out = out + 0.5 * (c1 - c0) / dt * u * u
-                        found = 1
+            idx = _bracket(T, t_arr, n)
+            t0 = t_arr[idx]
+            t1 = t_arr[idx + 1]
+            u = T - t0
+            dt = t1 - t0
+            c0 = cp_arr[idx]
+            c1 = cp_arr[idx + 1]
+            out = h_arr[idx] + c0 * u
+            if dt > 1e-8:
+                out = out + 0.5 * (c1 - c0) / dt * u * u
     return out
 
 
@@ -118,16 +131,12 @@ def invert_sensible(
         elif target >= h_arr[n - 1]:
             T_out = t_arr[n - 1] + (target - h_arr[n - 1]) / (cp_arr[n - 1] + 1e-12)
         else:
-            found = 0
-            for idx in range(n - 1):
-                if found == 0:
-                    if target >= h_arr[idx] and target <= h_arr[idx + 1]:
-                        dt = t_arr[idx + 1] - t_arr[idx]
-                        u = _segment_temperature_offset(
-                            target - h_arr[idx], cp_arr[idx], cp_arr[idx + 1], dt,
-                        )
-                        T_out = t_arr[idx] + u
-                        found = 1
+            idx = _bracket(target, h_arr, n)
+            dt = t_arr[idx + 1] - t_arr[idx]
+            u = _segment_temperature_offset(
+                target - h_arr[idx], cp_arr[idx], cp_arr[idx + 1], dt,
+            )
+            T_out = t_arr[idx] + u
     return T_out
 
 

@@ -1,5 +1,9 @@
 """
-test_lbm_poiseuille.py — Steady Poiseuille profile preservation under Guo forcing.
+test_lbm_poiseuille.py — Steady force-driven duct flow under Guo forcing.
+
+init_poiseuille_channel walls off y and z, so the channel is a rectangular
+duct; the reference is the duct series solution with half-way bounce-back
+walls, sampled across y on the mid-z line after the flow reaches steady state.
 """
 
 from __future__ import annotations
@@ -13,8 +17,20 @@ from waam_twin import WAAMTwin
 from waam_twin import kernels
 
 
-def run(n_steps: int = 100, threshold: float = 8.0) -> float:
-    # Gate tightened 15% → 10% after the Guo-forcing ρ_lu fix (measured 6.5%).
+def _duct_profile(js, k, ny, nz, terms: int = 41) -> np.ndarray:
+    """Unnormalised duct velocity at cells (js, k); walls half-way outside the fluid nodes."""
+    a = (ny - 2) / 2.0
+    b = (nz - 2) / 2.0
+    y = js - (ny - 1) / 2.0
+    z = k - (nz - 1) / 2.0
+    u = np.zeros_like(y, dtype=np.float64)
+    for n in range(1, 2 * terms, 2):
+        q = n * np.pi / (2.0 * a)
+        u += ((-1) ** ((n - 1) // 2) / n ** 3) * (1.0 - np.cosh(q * z) / np.cosh(q * b)) * np.cos(q * y)
+    return u
+
+
+def run(n_steps: int = 3000, threshold: float = 5.0) -> float:
     init_taichi(backend="cpu")
 
     nx, ny, nz = 64, 32, 6
@@ -42,10 +58,8 @@ def run(n_steps: int = 100, threshold: float = 8.0) -> float:
     )
     kernels.stream(g.f_a, g.f_b, g.flags, g.FLAG_SOLID, g.FLAG_GAS, g.nx, g.ny, g.nz, 1)
 
-    h_cells = ny - 2
     js = np.arange(1, ny - 1, dtype=np.float64)
-    y_from_wall = js - 1.0
-    u_anal = (fx_lu / (2.0 * nu_lu)) * y_from_wall * (h_cells - 1.0 - y_from_wall)
+    u_anal = _duct_profile(js, nz // 2, ny, nz)
 
     for _ in range(n_steps):
         kernels.set_uniform_Fx(g.Fx, g.Fy, g.Fz, fx_lu, g.flags, g.FLAG_FLUID)
@@ -62,9 +76,8 @@ def run(n_steps: int = 100, threshold: float = 8.0) -> float:
         kernels.stream(
             g.f_dst, g.f_src,
             g.flags, g.FLAG_SOLID, g.FLAG_GAS,
-            g.nx, g.ny, g.nz,
-        , 1)
-        g.swap_buffers()
+            g.nx, g.ny, g.nz, 1,
+        )
 
     ux_np = g.ux.to_numpy()
     flags_np = g.flags.to_numpy()

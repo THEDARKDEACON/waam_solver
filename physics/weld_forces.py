@@ -242,13 +242,14 @@ def solve_lorentz(twin: "WAAMTwin", g: "WAAMGrid", arc_i: float, arc_j: float, a
     kwf = _kwf()
     kwf.elec_build_sigma(
         g.sigma_elec, g.f_l, g.flags,
-        twin.sigma_liquid_Sm, twin.sigma_solid_Sm,
+        twin.sigma_liquid_Sm, twin.sigma_solid_Sm, twin.sigma_gas_Sm,
         g.FLAG_GAS,
     )
     kwf.elec_clear_source(g.elec_source)
     kwf.elec_inject_arc_source(
         g.elec_source, arc_i, arc_j, arc_k,
         twin.sigma_cells, twin.welding_current_A, g.dx, g.nz,
+        g.flags, twin.nz_solid, g.FLAG_GAS, g.FLAG_SOLID,
     )
     kwf.elec_normalize_source(g.elec_source, twin.welding_current_A, g.dx)
 
@@ -262,53 +263,73 @@ def solve_lorentz(twin: "WAAMTwin", g: "WAAMGrid", arc_i: float, arc_j: float, a
         kwf.elec_init_ground(g.phi_elec, g.flags, twin.nz_solid, g.FLAG_SOLID)
         twin._lorentz_warm = True
 
-    # Jacobi solve with convergence monitoring: iterate in chunks and stop
-    # when the relative L1 change drops below tolerance. Jacobi needs
-    # O(N²·ln 1/tol) iterations from a cold start, so the first solve gets a
-    # grid-scaled cap; warm-started steps use the configured budget.
+    # Conjugate gradients on the symmetric conduction operator (harmonic face
+    # sigma, Jacobi preconditioner), stopped on the true residual
+    # ||b - A phi|| / ||b|| < lorentz_jacobi_tol. CG needs O(N) iterations from
+    # a cold start, so the first solve gets a grid-scaled cap.
     max_iters = max(int(twin.lorentz_jacobi_iters), 1)
     if cold_start:
         max_iters = lorentz_cold_max_iters(twin, g)
     twin._lorentz_max_iters_last = max_iters
     tol = float(getattr(twin, "lorentz_jacobi_tol", 1e-4))
     check_every = 10
-    converged = False
+    s = g.elec_scal
+    ground = (twin.nz_solid, g.FLAG_GAS, g.FLAG_SOLID)
+
+    def rel_residual() -> float:
+        v = s.to_numpy()
+        return math.sqrt(max(float(v[3]), 0.0) / max(float(v[4]), 1e-300))
+
+    kwf.elec_pcg_init(
+        g.phi_elec, g.elec_r, g.elec_p, g.phi_elec_tmp, g.sigma_elec, g.elec_source,
+        g.flags, s, g.elec_box, g.dx, *ground, g.nx, g.ny, g.nz,
+    )
+    bi = g.elec_box.to_numpy()
+    # Cells outside the unknown box are Dirichlet or gas with p = 0, so the
+    # CG sweeps only need the box.
+    box = (int(bi[0]), int(bi[1]) + 1, int(bi[2]), int(bi[3]) + 1, int(bi[4]), int(bi[5]) + 1)
+    if bi[1] < 0 or float(s.to_numpy()[4]) <= 0.0:
+        # No ungrounded metal under the arc (no pool yet): the plate carries
+        # all the current and there is no liquid for J x B to act on.
+        g._elec_rel_residual = 0.0
+        twin._lorentz_iters_last = 0
+        twin._lorentz_unconverged_streak = 0
+        twin._lorentz_JB_valid = False
+        return
+    rel = rel_residual()
     iters_done = 0
-    while iters_done < max_iters:
-        for _ in range(min(check_every, max_iters - iters_done)):
-            kwf.elec_jacobi_step(
-                g.phi_elec, g.phi_elec_tmp, g.sigma_elec, g.elec_source, g.flags,
-                g.dx, twin.lorentz_jacobi_omega,
-                g.FLAG_GAS, g.FLAG_SOLID, twin.nz_solid, g.nx, g.ny, g.nz,
-            )
-            kwf.elec_l1_diff(g.phi_elec_tmp, g.phi_elec, g.elec_res_buf, g.elec_norm_buf)
-            g.phi_elec.copy_from(g.phi_elec_tmp)
-            iters_done += 1
-        rel = float(g.elec_res_buf[None]) / max(float(g.elec_norm_buf[None]), 1e-30)
-        if rel < tol:
-            converged = True
-            break
+    while rel >= tol and iters_done < max_iters and math.isfinite(rel):
+        n = min(check_every, max_iters - iters_done)
+        kwf.elec_pcg_iterate(
+            g.phi_elec, g.elec_r, g.elec_p, g.elec_Ap, g.phi_elec_tmp, g.sigma_elec,
+            g.flags, s, *ground, g.nx, g.ny, g.nz, *box, n,
+        )
+        iters_done += n
+        rel = rel_residual()
+    converged = math.isfinite(rel) and rel < tol
+    if not math.isfinite(rel):
+        # Restart from ground next call rather than iterating on NaNs.
+        twin._lorentz_warm = False
+    g._elec_rel_residual = rel
     twin._lorentz_iters_last = iters_done
     if cold_start:
         log.info(
-            f"[weld_forces] Lorentz cold-start Jacobi iters={iters_done}/{max_iters} "
-            f"converged={int(converged)}"
+            f"[weld_forces] Lorentz cold-start CG iters={iters_done}/{max_iters} "
+            f"converged={int(converged)} rel_residual={rel:.2e}"
         )
     if not converged:
+        twin._lorentz_JB_valid = False
         twin._lorentz_unconverged = getattr(twin, "_lorentz_unconverged", 0) + 1
         twin._lorentz_unconverged_streak = getattr(twin, "_lorentz_unconverged_streak", 0) + 1
         if twin._lorentz_unconverged in (1, 10, 100) or twin._lorentz_unconverged % 1000 == 0:
             log.warning(
-                f"[weld_forces] WARNING: Lorentz Jacobi hit {max_iters} iters "
-                f"without converging (rel Δ={rel:.2e} > {tol:.0e}); "
+                f"[weld_forces] WARNING: Lorentz CG hit {max_iters} iters "
+                f"without converging (residual {rel:.2e} > {tol:.0e}); "
                 f"J×B skipped this step. Raise lorentz_jacobi_iters. "
                 f"({twin._lorentz_unconverged} occurrences)"
             )
-    else:
-        twin._lorentz_unconverged_streak = 0
-
-    if not converged:
         return
+    twin._lorentz_unconverged_streak = 0
 
     kwf.elec_compute_J(
         g.Jx, g.Jy, g.Jz, g.phi_elec, g.sigma_elec, g.flags, g.dx,
@@ -326,8 +347,16 @@ def solve_lorentz(twin: "WAAMTwin", g: "WAAMGrid", arc_i: float, arc_j: float, a
         g.Bx, g.By, g.Bz, g.elec_rad_bins,
         arc_i, arc_j, g.dx, bin_dr_cells, MU0, g.n_elec_bins, g.nz,
     )
+    twin._lorentz_JB_valid = True
+    apply_cached_lorentz(twin, g)
+
+
+def apply_cached_lorentz(twin: "WAAMTwin", g: "WAAMGrid") -> None:
+    """J×B from the last converged solve; forces are cleared every step."""
+    if not getattr(twin, "_lorentz_JB_valid", False):
+        return
     alloy_id, rho_w, rho_p = alloy_rho_args(twin)
-    kwf.apply_lorentz_JxB(
+    _kwf().apply_lorentz_JxB(
         g.Fx, g.Fy, g.Fz,
         g.Jx, g.Jy, g.Jz, g.Bx, g.By, g.Bz,
         g.f_l, g.flags, g.dt, g.dx, alloy_id, rho_w, rho_p, g.FLAG_GAS,

@@ -33,6 +33,7 @@ def run() -> float:
         free_surface.update_flags_from_phi(
             g.phi, g.f_l, g.flags, twin.nz_solid,
             g.FLAG_FLUID, g.FLAG_SOLID, g.FLAG_GAS, g.FLAG_IFACE,
+            g.H, g.dx, g.energy_acc_J,
         )
     m1 = phi_mass()
     rel = abs(m1 - m0) / max(m0, 1.0)

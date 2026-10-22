@@ -56,6 +56,14 @@ class WAAMGrid:
     FLAG_GAS    = 2   # gas cell (above free surface)
     FLAG_IFACE  = 4   # VOF interface cell
 
+    U_REF_PHYS_M_S = 0.5   # m/s  (physical reference velocity)
+    U_REF_LU = 0.05        # lu/ts (lattice reference velocity)
+
+    @classmethod
+    def base_dt_s(cls, dx: float) -> float:
+        """Mach-scaled LBM dt [s] at dt_scale = 1."""
+        return dx * cls.U_REF_LU / cls.U_REF_PHYS_M_S
+
     def __init__(
         self,
         nx: int,
@@ -80,6 +88,8 @@ class WAAMGrid:
         self._has_lorentz = False
         self._has_vof_buf = False
         self._has_export = False
+        self._has_lbm_band = False
+        self._has_fslbm = False
         self._n_optional_volume = 0
         scale = float(dt_scale)
         if scale <= 0.0:
@@ -95,9 +105,9 @@ class WAAMGrid:
         # We target Ma ≈ 0.05 for stability with molten steel velocities.
         # Physical max velocity ≈ 0.5 m/s (Marangoni jets)
         # Ma = u_max_lu / c_s = 0.05  →  u_max_lu = 0.05 / sqrt(3) ≈ 0.029 lu/ts
-        self.u_ref_phys = 0.5          # m/s  (physical reference velocity)
-        self.u_ref_lu   = 0.05         # lu/ts (lattice reference velocity)
-        self.dt         = dx * self.u_ref_lu / self.u_ref_phys * scale   # [s]
+        self.u_ref_phys = self.U_REF_PHYS_M_S
+        self.u_ref_lu   = self.U_REF_LU
+        self.dt         = self.base_dt_s(dx) * scale   # [s]
 
         from . import logging_util as log
 
@@ -206,10 +216,6 @@ class WAAMGrid:
         self.time_above_800_s = ti.field(dtype=ti.f32, shape=shape3)
         self.time_above_1100_s = ti.field(dtype=ti.f32, shape=shape3)
         self.time_above_solidus_s = ti.field(dtype=ti.f32, shape=shape3)
-        # End-of-step body-force snapshot for VTK [lu/ts²]
-        self.Fx_snap = ti.field(dtype=ti.f32, shape=shape3)
-        self.Fy_snap = ti.field(dtype=ti.f32, shape=shape3)
-        self.Fz_snap = ti.field(dtype=ti.f32, shape=shape3)
         self.surface_k_buf = ti.field(dtype=ti.f32, shape=())  # arc height query
         self.deposit_vol_buf = ti.field(dtype=ti.f32, shape=())   # droplet budget accumulator [m³]
         self.deposit_real_buf = ti.field(dtype=ti.f32, shape=())  # actually-converted volume [m³]
@@ -226,6 +232,10 @@ class WAAMGrid:
         self.telem_n_cap = ti.field(dtype=ti.i32, shape=())
         self.evap_energy_J_buf = ti.field(dtype=ti.f32, shape=())
         self.enthalpy_cap_energy_J_buf = ti.field(dtype=ti.f32, shape=())
+        # Cumulative joules since allocation: [0] convection, [1] radiation,
+        # [2] enthalpy-floor restore, [3] signed gas<->metal relabel.
+        # Read by the ledger, never per step.
+        self.energy_acc_J = ti.field(dtype=ti.f64, shape=4)
         self.phi_volume_buf = ti.field(dtype=ti.f32, shape=())
         self.clamp_force_hits_buf = ti.field(dtype=ti.i32, shape=())
         self.clamp_mach_hits_buf = ti.field(dtype=ti.i32, shape=())
@@ -246,6 +256,9 @@ class WAAMGrid:
         self.Fx = ti.field(dtype=ti.f32, shape=shape3)
         self.Fy = ti.field(dtype=ti.f32, shape=shape3)
         self.Fz = ti.field(dtype=ti.f32, shape=shape3)
+        # Body forces are cleared at the start of a step and untouched after
+        # collision, so between steps F already is the end-of-step snapshot.
+        self.Fx_snap, self.Fy_snap, self.Fz_snap = self.Fx, self.Fy, self.Fz
 
         # Cell type flags
         self.flags = ti.field(dtype=ti.i32, shape=shape3)
@@ -308,8 +321,35 @@ class WAAMGrid:
         self.elec_rad_bins = ti.field(dtype=ti.f32, shape=(self.nz, self.n_elec_bins))
         self.elec_res_buf = ti.field(dtype=ti.f32, shape=())
         self.elec_norm_buf = ti.field(dtype=ti.f32, shape=())
+        # CG residual / direction / A·p; phi_elec_tmp holds the Jacobi preconditioner.
+        self.elec_r = ti.field(dtype=ti.f32, shape=shape3)
+        self.elec_p = ti.field(dtype=ti.f32, shape=shape3)
+        self.elec_Ap = ti.field(dtype=ti.f32, shape=shape3)
+        self.elec_scal = ti.field(dtype=ti.f64, shape=8)
+        self.elec_box = ti.field(dtype=ti.i32, shape=6)
+        self._elec_rel_residual = float("inf")
         self._has_lorentz = True
-        self._n_optional_volume += 10
+        self._n_optional_volume += 13
+
+    def ensure_lbm_band_fields(self) -> None:
+        if self._has_lbm_band:
+            return
+        self.lbm_active = ti.field(dtype=ti.u8, shape=self._shape3)
+        self.lbm_band_tmp = ti.field(dtype=ti.u8, shape=self._shape3)
+        self._has_lbm_band = True
+        self._n_optional_volume += 1  # two u8 volumes ≈ half an f32 volume
+
+    def ensure_fslbm_fields(self) -> None:
+        if self._has_fslbm:
+            return
+        self.fs_mass = ti.field(dtype=ti.f32, shape=self._shape3)
+        self.fs_mark = ti.field(dtype=ti.i32, shape=self._shape3)
+        self.fs_energy = ti.field(dtype=ti.f32, shape=self._shape3)
+        self.fs_mass_lost = ti.field(dtype=ti.f64, shape=())
+        self.fs_n_surface = ti.field(dtype=ti.i32, shape=())
+        self.fs_share = ti.field(dtype=ti.f32, shape=())
+        self._has_fslbm = True
+        self._n_optional_volume += 3
 
     def ensure_export_buffers(self) -> None:
         if self._has_export:

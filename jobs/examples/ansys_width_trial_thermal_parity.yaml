@@ -1,0 +1,102 @@
+# =============================================================================
+# Ansys 2024 R2 width trial — Tier A thermal parity (conduction only)
+# =============================================================================
+# Process: 91 A, 26 V, eta 0.82 (Q = 1940 W), 10 mm/s, 60x60x9 mm MildSteel
+# plate centered in a 70x70x28 mm domain, absolute Goldak b=5 c=3 (APDL CF).
+#
+# physics_tier thermal + no wire feed selects the conduction fast path:
+# thermal_dt auto steps at 0.8 dx^2/(6 alpha_max) (~0.8 ms at dx=0.3) and
+# skips LBM / VOF / forces. Use thermal_dt: lbm to cross-check on the
+# Mach-scaled dt with the coupled step.
+#
+# Parity found at dx=0.3 (mid-bead probe 2.0 mm below the top face):
+#   twin 1087.5 C peak vs reference 1086 C; tail 389/247/129 C at 3/4/7 s
+#   vs Ansys 414/252/129 C. The probe column below brackets the Ansys probe
+#   depth (best fit ~1.64 mm below the top face).
+#
+# Do not retune b / c / eta against this job: it is a parity check.
+# =============================================================================
+
+simulation:
+  preset: standard
+  backend: cuda
+  physics_tier: thermal
+  thermal_dt: auto
+  domain_mm: [70, 70, 28]
+  dx_mm: 0.3          # nz_solid = 30 puts the plate top exactly at 9.0 mm
+  strict_mode: true
+  use_torch_z: true   # path z_mm = 0 is the plate-top face
+
+  enable_vof: false
+  enable_csf_tension: false
+  enable_wetting: false
+  enable_hydrostatic_gravity: false
+  enable_bead_freeze: false
+  enable_trailing_solidify: false
+  enable_droplet_impact_pressure: false
+  enable_recoil: false
+  use_recoil_clausius_clapeyron: false
+  enable_lorentz: false
+  enable_gas_shear: false
+  enable_marangoni: false
+  enable_buoyancy: false
+  enable_arc_pressure: false
+  enable_enthalpy_cap: false
+  enable_evaporative_cooling: false
+  arc_surface_weighting: false
+
+plate:
+  thickness_mm: 9.0
+  size_mm: [60, 60]
+  origin_mm: [5.0, 5.0]
+  center_z: true      # gas above and below: the bottom face loses heat too
+  material: materials/validated/MildSteel.ansys.v1.yaml
+
+material: materials/validated/ER70S-6.v1.yaml
+calibration: null
+torch_path_csv: jobs/paths/bead_line_plate60_in70.csv
+
+heat_source: goldak
+goldak:
+  ff: 0.6
+  fr: 1.4
+  a_front_mm: 2.0
+  a_rear_mm: 3.8
+  b_mm: 5.0
+  c_mm: 3.0
+  normalize_energy: false   # APDL absolute CF, no rescale to eta*Q*dt
+
+process:
+  current_A: 91
+  voltage_V: 26.0
+  arc_efficiency: 0.82
+  power_factor: 1.0
+  duty_cycle: 1.0
+  travel_speed_mm_s: 10.0
+  wire_feed_m_min: 0.0      # required for the fast path
+  wire_diameter_mm: 1.0
+  T_ambient_K: 293
+
+heat_loss:
+  convection: true
+  radiation: true
+  h_conv: 35.0
+  eps_rad: 0.4
+
+probes:
+  z_ref: plate_bottom
+  points:
+    - {name: substrate_mid_bead, x_mm: 35.0, y_mm: 35.0, z_mm: 7.0}
+    - {name: mid_bead_d1p0, x_mm: 35.0, y_mm: 35.0, z_mm: 8.0}
+    - {name: mid_bead_d1p5, x_mm: 35.0, y_mm: 35.0, z_mm: 7.5}
+    - {name: mid_bead_d2p5, x_mm: 35.0, y_mm: 35.0, z_mm: 6.5}
+    - {name: substrate_behind_arc, x_mm: 25.0, y_mm: 15.0, z_mm: 2.0}
+
+reference:
+  source: ansys_2024r2_width_trial_26V_b5_c3_absolute_cf
+  gate: thermal_probe_parity
+  mid_bead_peak_C: 1086
+  mid_bead_tail_C: {t3s: 414, t4s: 252, t7s: 129}
+  note: >
+    Run with the thermal parity driver: weld 2 s along the path, cool to 7 s,
+    compare substrate_mid_bead to the Ansys probe trace.

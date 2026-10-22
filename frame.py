@@ -41,7 +41,7 @@ def load_weld_frame(path: str | None = None) -> WeldFrame:
         import yaml
     except ImportError as exc:
         raise ImportError("PyYAML required") from exc
-    with open(p) as f:
+    with open(p, encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
     origin = data.get("origin_mm", {}) or {}
     off = data.get("sim_origin_offset_m", {}) or {}

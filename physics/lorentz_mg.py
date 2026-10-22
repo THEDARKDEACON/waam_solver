@@ -17,10 +17,8 @@ if TYPE_CHECKING:
 
 
 def residual_converged(g: "WAAMGrid", tol: float) -> tuple[bool, float]:
-    """Return (ok, rel_residual) from last elec_l1_diff buffers as proxy."""
-    res = float(g.elec_res_buf[None])
-    norm = max(float(g.elec_norm_buf[None]), 1e-30)
-    rel = res / norm
+    """Return (ok, ||b - A phi|| / ||b||) from the last Lorentz solve."""
+    rel = float(getattr(g, "_elec_rel_residual", float("inf")))
     return rel < tol, rel
 
 

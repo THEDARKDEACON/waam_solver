@@ -25,7 +25,7 @@ def load_calibration(path: str | None) -> CalibrationProfile:
     from pathlib import Path
     from .paths import resolve_project_path
 
-    with open(resolve_project_path(path)) as f:
+    with open(resolve_project_path(path), encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
     return CalibrationProfile(
         arc_efficiency=float(data.get("arc_efficiency", 1.0)),

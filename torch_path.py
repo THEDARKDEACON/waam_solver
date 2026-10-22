@@ -44,7 +44,7 @@ def load_torch_path_csv(path: str | pathlib.Path) -> list[tuple[float, float, fl
     """
     path = pathlib.Path(path)
     out: list[tuple[float, float, float]] = []
-    with open(path, newline="") as f:
+    with open(path, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
             out.append((

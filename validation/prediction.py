@@ -79,6 +79,7 @@ def _sim_lock_defaults(sim: dict[str, Any], claim: dict[str, Any]) -> dict[str, 
     # None = follow preset; lock compares explicit values only when set on either side
     out["use_srt"] = sim.get("use_srt")
     out["auto_dt_ma"] = bool(sim.get("auto_dt_ma", False))
+    out["use_free_surface_lbm"] = bool(sim.get("use_free_surface_lbm", False))
     out["C_darcy"] = float(sim.get("C_darcy", 1.6e5))
     # None = identity at candidate dt (older jobs); lock when either side sets it
     out["C_darcy_ref_dt_s"] = (
@@ -172,7 +173,7 @@ def assert_physics_lock(
                 f"mesh.C_darcy_ref_dt_s: {bm.get('C_darcy_ref_dt_s')!r} → "
                 f"{cm.get('C_darcy_ref_dt_s')!r}"
             )
-    for k in ("use_variable_tau", "auto_dt_ma", "pool_metric", "mesh_tier"):
+    for k in ("use_variable_tau", "auto_dt_ma", "use_free_surface_lbm", "pool_metric", "mesh_tier"):
         if bm.get(k) != cm.get(k):
             diffs.append(f"mesh.{k}: {bm.get(k)!r} → {cm.get(k)!r}")
     # use_srt: only enforce when either side sets it explicitly

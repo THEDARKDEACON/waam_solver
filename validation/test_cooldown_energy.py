@@ -9,6 +9,7 @@ Catches two regressions that made liquid lifetime look unrealistically long:
 from __future__ import annotations
 
 import os
+import tempfile
 import numpy as np
 import yaml
 from pathlib import Path
@@ -101,7 +102,7 @@ def run() -> None:
     job["plate"] = {"size_mm": [12, 12], "thickness_mm": 4.0}
     job["material"] = str(root / "materials/validated/ER70S-6.v1.yaml")
     job["torch_path_csv"] = str(root / "jobs/paths/bead_line.csv")
-    tmp = Path("/tmp/test_cooldown_energy.yaml")
+    tmp = Path(tempfile.gettempdir()) / "test_cooldown_energy.yaml"
     tmp.write_text(yaml.dump(job))
 
     twin = WAAMTwin.from_job(str(tmp))

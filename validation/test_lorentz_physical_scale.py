@@ -30,11 +30,13 @@ def run() -> None:
     i_arc = g.nx // 3
     j = g.ny // 2
     k_arc = twin.nz_solid + 1
+    # Pool sits on the grounded plate; a gas gap would leave no current path.
+    k_pool = twin.nz_solid
 
     for di in range(-4, 5):
         for dj in range(-4, 5):
             for dk in range(0, 4):
-                ii, jj, kk = i_arc + di, j + dj, k_arc + dk
+                ii, jj, kk = i_arc + di, j + dj, k_pool + dk
                 if 0 <= ii < g.nx and 0 <= jj < g.ny and 0 <= kk < g.nz:
                     g.f_l[ii, jj, kk] = 0.95
                     g.T[ii, jj, kk] = twin.mat.T_liquidus + 300.0

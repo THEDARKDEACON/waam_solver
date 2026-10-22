@@ -35,6 +35,7 @@ def inject_arc_heat(
     enable_surface_weight: ti.i32,
     FLAG_SOLID: ti.i32,
     FLAG_GAS:   ti.i32,
+    fs_iface: ti.i32,
 ):
     """
     Distribute arc heat via a Gaussian weight profile, energy-normalized.
@@ -61,7 +62,7 @@ def inject_arc_heat(
         dj = ti.f32(j) - arc_j
         dk = ti.f32(k) - arc_k
         r2 = di * di + dj * dj + dk * dk * 0.25
-        ti.atomic_add(norm_buf[None], ti.math.exp(-r2 * inv2s2) * w_dep)
+        ti.atomic_add(norm_buf[None], ti.math.exp(-r2 * inv2s2) * w_dep * _fill_w(phi, flags, i, j, k, FLAG_GAS, fs_iface))
 
     # Struct-fors must sit at the kernel's outermost scope (Taichi offload
     # restriction) — guard w_total inside the loop instead of around it.
@@ -177,6 +178,7 @@ def inject_goldak_heat(
     FLAG_SOLID: ti.i32,
     FLAG_GAS: ti.i32,
     normalize_energy: ti.i32,
+    fs_iface: ti.i32,
 ):
     """
     Goldak (1984) double-ellipsoid heat source.
@@ -218,7 +220,7 @@ def inject_goldak_heat(
             di, dj, dk, dir_x, dir_y, ff, fr,
             a_front, a_rear, b_axis, c_axis,
         )
-        ti.atomic_add(norm_buf[None], w * w_dep)
+        ti.atomic_add(norm_buf[None], w * w_dep * _fill_w(phi, flags, i, j, k, FLAG_GAS, fs_iface))
 
     w_total = norm_buf[None]
     energy_per_weight = 0.0
@@ -261,7 +263,7 @@ def inject_goldak_heat(
         else:
             dH = CF * w * w_dep * dt / dx3
             H[i, j, k] += dH
-            ti.atomic_add(norm_buf[None], dH * dx3)
+            ti.atomic_add(norm_buf[None], dH * dx3 * _fill_w(phi, flags, i, j, k, FLAG_GAS, fs_iface))
 
 # ──────────────────────────────────────────────────────────────────────────────
 #  KERNEL 3 — Enthalpy-Porosity Phase Change
@@ -361,6 +363,123 @@ def _limited_upwind_grad(
     return g
 
 
+@ti.func
+def _advecting(flags: ti.template(), i: ti.i32, j: ti.i32, k: ti.i32,
+               FLAG_SOLID: ti.i32, FLAG_GAS: ti.i32, skip: ti.i32) -> ti.i32:
+    f = flags[i, j, k]
+    return ti.cast(f != FLAG_GAS and f != FLAG_SOLID and f != skip, ti.i32)
+
+
+@ti.func
+def _fill_w(phi: ti.template(), flags: ti.template(), i: ti.i32, j: ti.i32, k: ti.i32,
+            FLAG_GAS: ti.i32, fs_iface: ti.i32) -> ti.f32:
+    """Metal fraction w of a cell; its thermal energy is w·H·Δx³.
+
+    Every metal cell is full (w = 1) unless the free-surface LBM is on
+    (fs_iface ≥ 0), where w is the clamped fill φ. Gas is 0.
+    """
+    w = 1.0
+    if flags[i, j, k] == FLAG_GAS:
+        w = 0.0
+    elif fs_iface >= 0:
+        w = ti.max(0.0, ti.min(1.0, phi[i, j, k]))
+    return w
+
+
+# A partly filled surface cell still exposes its whole face: surface sinks
+# remove q·A·dt regardless of fill, i.e. ΔH = q·A·dt / (w·Δx³). Below this
+# fill the divisor is held so thin cells cannot be driven to the floor.
+_LOSS_MIN_FILL = 0.25
+
+
+@ti.func
+def _face_w(phi: ti.template(), flags: ti.template(), i: ti.i32, j: ti.i32, k: ti.i32,
+            w_c: ti.f32, FLAG_GAS: ti.i32, fs_iface: ti.i32,
+            nx: ti.i32, ny: ti.i32, nz: ti.i32) -> ti.f32:
+    """Face factor min(w_c, w_n)/w_c toward neighbour (i,j,k).
+
+    Conductance scales with the wetted face fraction min(w_c, w_n) and the
+    cell's heat capacity with w_c, so exchanged energy is antisymmetric and
+    the factor never exceeds 1 (no tighter stability limit).
+    """
+    r = 1.0
+    if fs_iface >= 0:
+        ii = ti.max(0, ti.min(i, nx - 1))
+        jj = ti.max(0, ti.min(j, ny - 1))
+        kk = ti.max(0, ti.min(k, nz - 1))
+        w_n = _fill_w(phi, flags, ii, jj, kk, FLAG_GAS, fs_iface)
+        r = ti.min(w_c, w_n) / ti.max(w_c, 1e-6)
+    return r
+
+
+@ti.func
+def _face_flux(
+    H: ti.template(),
+    vel: ti.template(),
+    flags: ti.template(),
+    li: ti.i32, lj: ti.i32, lk: ti.i32,
+    di: ti.template(), dj: ti.template(), dk: ti.template(),
+    FLAG_SOLID: ti.i32,
+    FLAG_GAS: ti.i32,
+    skip: ti.i32,
+    nx: ti.i32, ny: ti.i32, nz: ti.i32,
+) -> ti.f32:
+    """Enthalpy flux u_f·H_f through the face from cell L to its +d neighbour R.
+
+    Zero unless both cells advect (faces on gas, solid, cells flagged ``skip``
+    or the domain edge are no-penetration walls). H_f is the minmod-limited upwind (MUSCL) value.
+    Both cells sharing a face evaluate this with the same arguments, so what
+    leaves one cell enters the other exactly.
+    """
+    ri = li + di
+    rj = lj + dj
+    rk = lk + dk
+    out = 0.0
+    if (
+        li >= 0 and lj >= 0 and lk >= 0
+        and ri < nx and rj < ny and rk < nz
+    ):
+        if (
+            _advecting(flags, li, lj, lk, FLAG_SOLID, FLAG_GAS, skip) == 1
+            and _advecting(flags, ri, rj, rk, FLAG_SOLID, FLAG_GAS, skip) == 1
+        ):
+            uf = 0.5 * (vel[li, lj, lk] + vel[ri, rj, rk])
+            HL = H[li, lj, lk]
+            HR = H[ri, rj, rk]
+            face = 0.0
+            if uf > 0.0:
+                HLL = _masked_at(H, flags, li - di, lj - dj, lk - dk, HL, FLAG_GAS, nx, ny, nz)
+                face = HL + 0.5 * _minmod(HL - HLL, HR - HL)
+            else:
+                HRR = _masked_at(H, flags, ri + di, rj + dj, rk + dk, HR, FLAG_GAS, nx, ny, nz)
+                face = HR - 0.5 * _minmod(HR - HL, HRR - HR)
+            out = uf * face
+    return out
+
+
+@ti.func
+def _advection_dH(
+    H: ti.template(),
+    ux: ti.template(),
+    uy: ti.template(),
+    uz: ti.template(),
+    flags: ti.template(),
+    i: ti.i32, j: ti.i32, k: ti.i32,
+    FLAG_SOLID: ti.i32,
+    FLAG_GAS: ti.i32,
+    skip: ti.i32,
+    nx: ti.i32, ny: ti.i32, nz: ti.i32,
+) -> ti.f32:
+    """-div(u H) at cell (i,j,k) per unit time, in flux (conservative) form."""
+    net = _face_flux(H, ux, flags, i, j, k, 1, 0, 0, FLAG_SOLID, FLAG_GAS, skip, nx, ny, nz)
+    net -= _face_flux(H, ux, flags, i - 1, j, k, 1, 0, 0, FLAG_SOLID, FLAG_GAS, skip, nx, ny, nz)
+    net += _face_flux(H, uy, flags, i, j, k, 0, 1, 0, FLAG_SOLID, FLAG_GAS, skip, nx, ny, nz)
+    net -= _face_flux(H, uy, flags, i, j - 1, k, 0, 1, 0, FLAG_SOLID, FLAG_GAS, skip, nx, ny, nz)
+    net += _face_flux(H, uz, flags, i, j, k, 0, 0, 1, FLAG_SOLID, FLAG_GAS, skip, nx, ny, nz)
+    net -= _face_flux(H, uz, flags, i, j, k - 1, 0, 0, 1, FLAG_SOLID, FLAG_GAS, skip, nx, ny, nz)
+    return -net
+
+
 @ti.kernel
 def advect_diffuse_temperature(
     H:    ti.template(),    # Updated in-place (destination)
@@ -378,9 +497,15 @@ def advect_diffuse_temperature(
     nx: ti.i32,
     ny: ti.i32,
     nz: ti.i32,
+    phi: ti.template(),
+    fs_iface: ti.i32,
 ):
     """
-    Solve ∂H/∂t + u·∇H = ∇·(k∇T) in lattice units.
+    Solve ∂H/∂t + ∇·(uH) = ∇·(k∇T) in lattice units.
+
+    Under the free-surface LBM (fs_iface = FLAG_IFACE) conduction is
+    fill-weighted (see ``_face_w``) and interface cells are left out of
+    advection: their enthalpy moves with the LBM mass exchange instead.
 
     - Advection acts on H (the conserved variable): latent heat is transported
       with the melt, not just sensible heat.
@@ -388,8 +513,9 @@ def advect_diffuse_temperature(
       heat sink instead of an insulator.
     - GAS neighbours are adiabatic: previously they acted as fixed ambient-T
       conductors, an unphysical heat sink at the free surface.
-    - Advection is minmod-limited 2nd-order upwind (less numerical smearing of
-      the fusion front than the previous 1st-order scheme).
+    - Advection is in flux form with minmod-limited 2nd-order upwind face
+      values, so it only moves enthalpy between metal cells. The previous
+      u·∇H form leaked energy wherever div(u) != 0 (free surface, Mach clamp).
     """
     for i, j, k in H:
         flag = flags[i, j, k]
@@ -407,31 +533,23 @@ def advect_diffuse_temperature(
         T_km = _masked_at(T, flags, i, j, k - 1, T_c, FLAG_GAS, nx, ny, nz)
         T_kp = _masked_at(T, flags, i, j, k + 1, T_c, FLAG_GAS, nx, ny, nz)
         lap = T_ip + T_im + T_jp + T_jm + T_kp + T_km - 6.0 * T_c
+        if fs_iface >= 0:
+            w_c = _fill_w(phi, flags, i, j, k, FLAG_GAS, fs_iface)
+            lap = (
+                _face_w(phi, flags, i - 1, j, k, w_c, FLAG_GAS, fs_iface, nx, ny, nz) * (T_im - T_c)
+                + _face_w(phi, flags, i + 1, j, k, w_c, FLAG_GAS, fs_iface, nx, ny, nz) * (T_ip - T_c)
+                + _face_w(phi, flags, i, j - 1, k, w_c, FLAG_GAS, fs_iface, nx, ny, nz) * (T_jm - T_c)
+                + _face_w(phi, flags, i, j + 1, k, w_c, FLAG_GAS, fs_iface, nx, ny, nz) * (T_jp - T_c)
+                + _face_w(phi, flags, i, j, k - 1, w_c, FLAG_GAS, fs_iface, nx, ny, nz) * (T_km - T_c)
+                + _face_w(phi, flags, i, j, k + 1, w_c, FLAG_GAS, fs_iface, nx, ny, nz) * (T_kp - T_c)
+            )
 
         dH = cp_rho * alpha_lu * lap * dt
 
         if flag != FLAG_SOLID:
-            u = ux[i, j, k]
-            v = uy[i, j, k]
-            w = uz[i, j, k]
-
-            H_im = _masked_at(H_src, flags, i - 1, j, k, H_c, FLAG_GAS, nx, ny, nz)
-            H_ip = _masked_at(H_src, flags, i + 1, j, k, H_c, FLAG_GAS, nx, ny, nz)
-            H_imm = _masked_at(H_src, flags, i - 2, j, k, H_im, FLAG_GAS, nx, ny, nz)
-            H_ipp = _masked_at(H_src, flags, i + 2, j, k, H_ip, FLAG_GAS, nx, ny, nz)
-            H_jm = _masked_at(H_src, flags, i, j - 1, k, H_c, FLAG_GAS, nx, ny, nz)
-            H_jp = _masked_at(H_src, flags, i, j + 1, k, H_c, FLAG_GAS, nx, ny, nz)
-            H_jmm = _masked_at(H_src, flags, i, j - 2, k, H_jm, FLAG_GAS, nx, ny, nz)
-            H_jpp = _masked_at(H_src, flags, i, j + 2, k, H_jp, FLAG_GAS, nx, ny, nz)
-            H_km = _masked_at(H_src, flags, i, j, k - 1, H_c, FLAG_GAS, nx, ny, nz)
-            H_kp = _masked_at(H_src, flags, i, j, k + 1, H_c, FLAG_GAS, nx, ny, nz)
-            H_kmm = _masked_at(H_src, flags, i, j, k - 2, H_km, FLAG_GAS, nx, ny, nz)
-            H_kpp = _masked_at(H_src, flags, i, j, k + 2, H_kp, FLAG_GAS, nx, ny, nz)
-
-            gx = _limited_upwind_grad(u, H_imm, H_im, H_c, H_ip, H_ipp)
-            gy = _limited_upwind_grad(v, H_jmm, H_jm, H_c, H_jp, H_jpp)
-            gz = _limited_upwind_grad(w, H_kmm, H_km, H_c, H_kp, H_kpp)
-            dH -= (u * gx + v * gy + w * gz) * dt
+            dH += _advection_dH(
+                H_src, ux, uy, uz, flags, i, j, k, FLAG_SOLID, FLAG_GAS, fs_iface, nx, ny, nz,
+            ) * dt
 
         H[i, j, k] += dH
 
@@ -475,7 +593,7 @@ def refresh_thermal_properties(
     FLAG_GAS: ti.i32,
 ):
     for i, j, k in T:
-        if flags[i, j, k] == FLAG_SOLID or flags[i, j, k] == FLAG_GAS:
+        if flags[i, j, k] == FLAG_GAS:
             cp_rho_field[i, j, k] = cp_rho_ref
             alpha_lu_field[i, j, k] = alpha_lu_ref
             dgamma_lu_field[i, j, k] = dgamma_lu_ref
@@ -485,16 +603,19 @@ def refresh_thermal_properties(
         if use_tables == 1:
             cp = lookup_table_1d(T_c, cp_T, cp_V, n_cp[None], cp_fallback)
             k_val = lookup_table_1d(T_c, k_T, k_V, n_k[None], k_fallback)
-            mu_val = lookup_table_1d(T_c, mu_T, mu_V, n_mu[None], mu_fallback)
-            dgamma = lookup_table_1d(T_c, dgamma_T, dgamma_V, n_dgamma[None], dgamma_fallback)
             cp_r = rho * cp
-            alpha_phys = k_val / (rho * cp + 1e-9)
-            nu_phys = mu_val / (rho + 1e-9)
-            nu_lu = nu_phys * dt / (dx * dx)
             cp_rho_field[i, j, k] = cp_r
-            alpha_lu_field[i, j, k] = alpha_phys * dt / (dx * dx)
-            dgamma_lu_field[i, j, k] = dgamma * force_scale * marangoni_scale
-            tau_field[i, j, k] = 3.0 * nu_lu + 0.5
+            alpha_lu_field[i, j, k] = k_val / (cp_r + 1e-9) * dt / (dx * dx)
+            # Solid cells conduct with k(T), cp(T); flow properties stay at the reference.
+            if flags[i, j, k] == FLAG_SOLID:
+                dgamma_lu_field[i, j, k] = dgamma_lu_ref
+                tau_field[i, j, k] = tau_ref
+            else:
+                mu_val = lookup_table_1d(T_c, mu_T, mu_V, n_mu[None], mu_fallback)
+                dgamma = lookup_table_1d(T_c, dgamma_T, dgamma_V, n_dgamma[None], dgamma_fallback)
+                nu_lu = mu_val / (rho + 1e-9) * dt / (dx * dx)
+                dgamma_lu_field[i, j, k] = dgamma * force_scale * marangoni_scale
+                tau_field[i, j, k] = 3.0 * nu_lu + 0.5
         else:
             cp_rho_field[i, j, k] = cp_rho_ref
             alpha_lu_field[i, j, k] = alpha_lu_ref
@@ -605,6 +726,31 @@ def refresh_thermal_properties_dual(
         tau_field[i, j, k] = om * w_tau + frac * p_tau
 
 
+@ti.func
+def _conduction_exchange(
+    T: ti.template(),
+    flags: ti.template(),
+    cp_rho_field: ti.template(),
+    alpha_lu_field: ti.template(),
+    i: ti.i32, j: ti.i32, k: ti.i32,
+    T_c: ti.f32,
+    k_c: ti.f32,
+    FLAG_GAS: ti.i32,
+    nx: ti.i32, ny: ti.i32, nz: ti.i32,
+) -> ti.f32:
+    """Face exchange k_f·(T_n − T_c), k_f = mean of both cells' k·dt/dx² [J/(m³·K)].
+
+    Out-of-domain and gas neighbours are adiabatic. The same k_f is used from
+    both sides of the face, so conduction moves heat without creating it.
+    """
+    out = 0.0
+    if i >= 0 and i < nx and j >= 0 and j < ny and k >= 0 and k < nz:
+        if flags[i, j, k] != FLAG_GAS:
+            k_n = cp_rho_field[i, j, k] * alpha_lu_field[i, j, k]
+            out = 0.5 * (k_c + k_n) * (T[i, j, k] - T_c)
+    return out
+
+
 @ti.kernel
 def advect_diffuse_temperature_variable(
     H: ti.template(),
@@ -622,8 +768,15 @@ def advect_diffuse_temperature_variable(
     nx: ti.i32,
     ny: ti.i32,
     nz: ti.i32,
+    phi: ti.template(),
+    fs_iface: ti.i32,
 ):
-    """Variable-property version of advect_diffuse_temperature (same scheme)."""
+    """Variable-property advect_diffuse_temperature: ∇·(k∇T) with face-mean k.
+
+    k(T_c)·∇²T (the previous form) drops k'(T)|∇T|² and, with k falling as T
+    rises, creates heat wherever it flows from hot to cold cells. Advection is
+    the same flux form as advect_diffuse_temperature.
+    """
     for i, j, k in H:
         flag = flags[i, j, k]
         if flag == FLAG_GAS:
@@ -631,41 +784,34 @@ def advect_diffuse_temperature_variable(
 
         T_c = T[i, j, k]
         H_c = H_src[i, j, k]
-        alpha_lu = alpha_lu_field[i, j, k]
-        cp_rho = cp_rho_field[i, j, k]
+        k_c = cp_rho_field[i, j, k] * alpha_lu_field[i, j, k]
+        w_c = _fill_w(phi, flags, i, j, k, FLAG_GAS, fs_iface)
 
-        T_im = _masked_at(T, flags, i - 1, j, k, T_c, FLAG_GAS, nx, ny, nz)
-        T_ip = _masked_at(T, flags, i + 1, j, k, T_c, FLAG_GAS, nx, ny, nz)
-        T_jm = _masked_at(T, flags, i, j - 1, k, T_c, FLAG_GAS, nx, ny, nz)
-        T_jp = _masked_at(T, flags, i, j + 1, k, T_c, FLAG_GAS, nx, ny, nz)
-        T_km = _masked_at(T, flags, i, j, k - 1, T_c, FLAG_GAS, nx, ny, nz)
-        T_kp = _masked_at(T, flags, i, j, k + 1, T_c, FLAG_GAS, nx, ny, nz)
-        lap = T_ip + T_im + T_jp + T_jm + T_kp + T_km - 6.0 * T_c
+        exch = _conduction_exchange(
+            T, flags, cp_rho_field, alpha_lu_field, i - 1, j, k, T_c, k_c, FLAG_GAS, nx, ny, nz,
+        ) * _face_w(phi, flags, i - 1, j, k, w_c, FLAG_GAS, fs_iface, nx, ny, nz)
+        exch += _conduction_exchange(
+            T, flags, cp_rho_field, alpha_lu_field, i + 1, j, k, T_c, k_c, FLAG_GAS, nx, ny, nz,
+        ) * _face_w(phi, flags, i + 1, j, k, w_c, FLAG_GAS, fs_iface, nx, ny, nz)
+        exch += _conduction_exchange(
+            T, flags, cp_rho_field, alpha_lu_field, i, j - 1, k, T_c, k_c, FLAG_GAS, nx, ny, nz,
+        ) * _face_w(phi, flags, i, j - 1, k, w_c, FLAG_GAS, fs_iface, nx, ny, nz)
+        exch += _conduction_exchange(
+            T, flags, cp_rho_field, alpha_lu_field, i, j + 1, k, T_c, k_c, FLAG_GAS, nx, ny, nz,
+        ) * _face_w(phi, flags, i, j + 1, k, w_c, FLAG_GAS, fs_iface, nx, ny, nz)
+        exch += _conduction_exchange(
+            T, flags, cp_rho_field, alpha_lu_field, i, j, k - 1, T_c, k_c, FLAG_GAS, nx, ny, nz,
+        ) * _face_w(phi, flags, i, j, k - 1, w_c, FLAG_GAS, fs_iface, nx, ny, nz)
+        exch += _conduction_exchange(
+            T, flags, cp_rho_field, alpha_lu_field, i, j, k + 1, T_c, k_c, FLAG_GAS, nx, ny, nz,
+        ) * _face_w(phi, flags, i, j, k + 1, w_c, FLAG_GAS, fs_iface, nx, ny, nz)
 
-        dH = cp_rho * alpha_lu * lap * dt
+        dH = exch * dt
 
         if flag != FLAG_SOLID:
-            u = ux[i, j, k]
-            v = uy[i, j, k]
-            w = uz[i, j, k]
-
-            H_im = _masked_at(H_src, flags, i - 1, j, k, H_c, FLAG_GAS, nx, ny, nz)
-            H_ip = _masked_at(H_src, flags, i + 1, j, k, H_c, FLAG_GAS, nx, ny, nz)
-            H_imm = _masked_at(H_src, flags, i - 2, j, k, H_im, FLAG_GAS, nx, ny, nz)
-            H_ipp = _masked_at(H_src, flags, i + 2, j, k, H_ip, FLAG_GAS, nx, ny, nz)
-            H_jm = _masked_at(H_src, flags, i, j - 1, k, H_c, FLAG_GAS, nx, ny, nz)
-            H_jp = _masked_at(H_src, flags, i, j + 1, k, H_c, FLAG_GAS, nx, ny, nz)
-            H_jmm = _masked_at(H_src, flags, i, j - 2, k, H_jm, FLAG_GAS, nx, ny, nz)
-            H_jpp = _masked_at(H_src, flags, i, j + 2, k, H_jp, FLAG_GAS, nx, ny, nz)
-            H_km = _masked_at(H_src, flags, i, j, k - 1, H_c, FLAG_GAS, nx, ny, nz)
-            H_kp = _masked_at(H_src, flags, i, j, k + 1, H_c, FLAG_GAS, nx, ny, nz)
-            H_kmm = _masked_at(H_src, flags, i, j, k - 2, H_km, FLAG_GAS, nx, ny, nz)
-            H_kpp = _masked_at(H_src, flags, i, j, k + 2, H_kp, FLAG_GAS, nx, ny, nz)
-
-            gx = _limited_upwind_grad(u, H_imm, H_im, H_c, H_ip, H_ipp)
-            gy = _limited_upwind_grad(v, H_jmm, H_jm, H_c, H_jp, H_jpp)
-            gz = _limited_upwind_grad(w, H_kmm, H_km, H_c, H_kp, H_kpp)
-            dH -= (u * gx + v * gy + w * gz) * dt
+            dH += _advection_dH(
+                H_src, ux, uy, uz, flags, i, j, k, FLAG_SOLID, FLAG_GAS, fs_iface, nx, ny, nz,
+            ) * dt
 
         H[i, j, k] += dH
 
@@ -774,8 +920,13 @@ def apply_thermal_boundary_losses_variable(
     nx: ti.i32,
     ny: ti.i32,
     nz: ti.i32,
+    energy_acc: ti.template(),
+    phi: ti.template(),
+    fs_iface: ti.i32,
 ):
     """Convective/radiative loss on gas-exposed metal (fluid AND solid).
+
+    Removed joules accumulate in energy_acc[0] (convection) and [1] (radiation).
 
     Surface flux q [W/m²] over one cell face removes q·dt/dx [J/m³] of
     enthalpy. (A previous version multiplied by ρ·cp as well, overweighting
@@ -809,12 +960,18 @@ def apply_thermal_boundary_losses_variable(
         T_eff = T_c
         if T_cap_K > 0.0:
             T_eff = ti.min(T_c, T_cap_K)
-        q_loss = 0.0
+        q_conv = 0.0
+        q_rad = 0.0
         if enable_conv == 1:
-            q_loss += h_conv * (T_eff - T_amb)
+            q_conv = h_conv * (T_eff - T_amb)
         if enable_rad == 1:
-            q_loss += eps_rad * sigma_sb * (T_eff ** 4 - T_amb ** 4)
-        H[i, j, k] -= q_loss * ti.f32(n_exposed) * dt / dx
+            q_rad = eps_rad * sigma_sb * (T_eff ** 4 - T_amb ** 4)
+        w_c = _fill_w(phi, flags, i, j, k, FLAG_GAS, fs_iface)
+        w_eff = ti.select(fs_iface >= 0, ti.max(w_c, _LOSS_MIN_FILL), 1.0)
+        H[i, j, k] -= (q_conv + q_rad) * ti.f32(n_exposed) * dt / (dx * w_eff)
+        face_dt = ti.f32(n_exposed) * dx * dx * dt * w_c / w_eff
+        energy_acc[0] += ti.cast(q_conv * face_dt, ti.f64)
+        energy_acc[1] += ti.cast(q_rad * face_dt, ti.f64)
 
 
 @ti.kernel
@@ -825,14 +982,24 @@ def clamp_enthalpy_floor(
     H_amb_w: ti.f32,
     H_amb_p: ti.f32,
     FLAG_GAS: ti.i32,
+    dx: ti.f32,
+    energy_acc: ti.template(),
+    phi: ti.template(),
+    fs_iface: ti.i32,
 ):
-    """Floor metal at the ambient enthalpy rho*integral(cp), per alloy."""
+    """Floor metal at the ambient enthalpy rho*integral(cp), per alloy.
+
+    Added joules accumulate in energy_acc[2].
+    """
+    dx3 = dx * dx * dx
     for i, j, k in H:
         if flags[i, j, k] == FLAG_GAS:
             continue
         h_min = _alloy_pick(alloy_frac[i, j, k], H_amb_w, H_amb_p)
-        if H[i, j, k] < h_min:
+        h = H[i, j, k]
+        if h < h_min:
             H[i, j, k] = h_min
+            energy_acc[2] += ti.cast((h_min - h) * dx3 * _fill_w(phi, flags, i, j, k, FLAG_GAS, fs_iface), ti.f64)
 
 
 @ti.kernel
@@ -842,13 +1009,20 @@ def clamp_enthalpy_floor_scalar(
     flags: ti.template(),
     T_floor: ti.f32,
     FLAG_GAS: ti.i32,
+    dx: ti.f32,
+    energy_acc: ti.template(),
+    phi: ti.template(),
+    fs_iface: ti.i32,
 ):
     h_min = cp_rho * T_floor
+    dx3 = dx * dx * dx
     for i, j, k in H:
         if flags[i, j, k] == FLAG_GAS:
             continue
-        if H[i, j, k] < h_min:
+        h = H[i, j, k]
+        if h < h_min:
             H[i, j, k] = h_min
+            energy_acc[2] += ti.cast((h_min - h) * dx3 * _fill_w(phi, flags, i, j, k, FLAG_GAS, fs_iface), ti.f64)
 
 
 @ti.kernel
@@ -875,6 +1049,7 @@ def apply_evaporative_enthalpy_sink(
     nx: ti.i32,
     ny: ti.i32,
     nz: ti.i32,
+    fs_iface: ti.i32,
 ):
     """
     Evaporative cooling (energy sink) on free-surface metal AND hot liquid.
@@ -941,10 +1116,12 @@ def apply_evaporative_enthalpy_sink(
         if use_cp_field == 1:
             cp_r = cp_rho[i, j, k]
         dH_max = cp_r * ti.max(0.0, Tc - T_onset_K)
-        dH = ti.min(dH, dH_max)
+        w_c = _fill_w(phi, flags, i, j, k, FLAG_GAS, fs_iface)
+        w_eff = ti.select(fs_iface >= 0, ti.max(w_c, _LOSS_MIN_FILL), 1.0)
+        dH = ti.min(dH / w_eff, dH_max)
         if dH > 0.0:
             H[i, j, k] -= dH
-            ti.atomic_add(energy_J_buf[None], dH * dx3)
+            ti.atomic_add(energy_J_buf[None], dH * dx3 * w_c)
 
 
 @ti.kernel
@@ -959,6 +1136,8 @@ def clamp_enthalpy_ceiling_scalar(
     dx: ti.f32,
     energy_J_buf: ti.template(),
     FLAG_GAS: ti.i32,
+    phi: ti.template(),
+    fs_iface: ti.i32,
 ):
     """Cap enthalpy so recovered T ≤ T_vapor_cap (matches update_phase).
 
@@ -988,7 +1167,7 @@ def clamp_enthalpy_ceiling_scalar(
                 h_new = h_cap_solid
         if h_new < h:
             H[i, j, k] = h_new
-            ti.atomic_add(energy_J_buf[None], (h - h_new) * dx3)
+            ti.atomic_add(energy_J_buf[None], (h - h_new) * dx3 * _fill_w(phi, flags, i, j, k, FLAG_GAS, fs_iface))
 
 
 @ti.kernel
@@ -999,6 +1178,8 @@ def clamp_enthalpy_ceiling_variable_cp(
     dx: ti.f32,
     energy_J_buf: ti.template(),
     FLAG_GAS: ti.i32,
+    phi: ti.template(),
+    fs_iface: ti.i32,
 ):
     """Cap H at the enthalpy of T_vapor_cap on the integral curve."""
     dx3 = dx * dx * dx
@@ -1009,7 +1190,7 @@ def clamp_enthalpy_ceiling_variable_cp(
         h = H[i, j, k]
         if h > H_cap:
             H[i, j, k] = H_cap
-            ti.atomic_add(energy_J_buf[None], (h - H_cap) * dx3)
+            ti.atomic_add(energy_J_buf[None], (h - H_cap) * dx3 * _fill_w(phi, flags, i, j, k, FLAG_GAS, fs_iface))
 
 
 @ti.kernel
@@ -1022,6 +1203,8 @@ def clamp_enthalpy_ceiling_dual(
     dx: ti.f32,
     energy_J_buf: ti.template(),
     FLAG_GAS: ti.i32,
+    phi: ti.template(),
+    fs_iface: ti.i32,
 ):
     """Cap each cell at its alloy's enthalpy of T_vapor_cap."""
     dx3 = dx * dx * dx
@@ -1033,7 +1216,7 @@ def clamp_enthalpy_ceiling_dual(
         h = H[i, j, k]
         if h > h_cap:
             H[i, j, k] = h_cap
-            ti.atomic_add(energy_J_buf[None], (h - h_cap) * dx3)
+            ti.atomic_add(energy_J_buf[None], (h - h_cap) * dx3 * _fill_w(phi, flags, i, j, k, FLAG_GAS, fs_iface))
 
 
 @ti.kernel
@@ -1056,7 +1239,7 @@ def update_cooling_rate(
     inv_dt = 1.0 / (dt_phys + 1e-12)
     # ~25 K/step at dt≈50 µs ⇒ 5e5 K/s. Real GMAW HAZ cool is typically
     # 10–few×10³ K/s; anything needing a bigger jump is not continuum cooling.
-    max_jump_K = 25.0
+    max_jump_K = ti.max(25.0, 5.0e5 * dt_phys)
     for i, j, k in T:
         if flags[i, j, k] == FLAG_GAS:
             dT_dt[i, j, k] = 0.0
@@ -1090,6 +1273,9 @@ def apply_thermal_boundary_losses(
     nx: ti.i32,
     ny: ti.i32,
     nz: ti.i32,
+    energy_acc: ti.template(),
+    phi: ti.template(),
+    fs_iface: ti.i32,
 ):
     """Convective/radiative loss on gas-exposed metal (fluid AND solid).
 
@@ -1122,13 +1308,18 @@ def apply_thermal_boundary_losses(
         T_eff = T_c
         if T_cap_K > 0.0:
             T_eff = ti.min(T_c, T_cap_K)
-        q_loss = 0.0
+        q_conv = 0.0
+        q_rad = 0.0
         if enable_conv == 1:
-            q_loss += h_conv * (T_eff - T_amb)
+            q_conv = h_conv * (T_eff - T_amb)
         if enable_rad == 1:
-            q_loss += eps_rad * sigma_sb * (T_eff ** 4 - T_amb ** 4)
-
-        H[i, j, k] -= q_loss * ti.f32(n_exposed) * dt / dx
+            q_rad = eps_rad * sigma_sb * (T_eff ** 4 - T_amb ** 4)
+        w_c = _fill_w(phi, flags, i, j, k, FLAG_GAS, fs_iface)
+        w_eff = ti.select(fs_iface >= 0, ti.max(w_c, _LOSS_MIN_FILL), 1.0)
+        H[i, j, k] -= (q_conv + q_rad) * ti.f32(n_exposed) * dt / (dx * w_eff)
+        face_dt = ti.f32(n_exposed) * dx * dx * dt * w_c / w_eff
+        energy_acc[0] += ti.cast(q_conv * face_dt, ti.f64)
+        energy_acc[1] += ti.cast(q_rad * face_dt, ti.f64)
 
 
 #  KERNEL 9 — HAZ Tracker (Update T_max)

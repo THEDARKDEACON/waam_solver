@@ -99,7 +99,7 @@ def _lock_heat_loss_hot() -> None:
         1 if twin.enable_radiation else 0,
         twin.cp_rho, g.dt, g.dx, twin.sigma_sb, t_cap,
         g.FLAG_SOLID, g.FLAG_GAS,
-        g.nx, g.ny, g.nz,
+        g.nx, g.ny, g.nz, g.energy_acc_J, g.phi, -1,
     )
     dH = h0 - float(g.H.to_numpy()[i, j, k])
     q_legacy = 0.0

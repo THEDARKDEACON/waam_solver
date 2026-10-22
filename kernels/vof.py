@@ -675,13 +675,21 @@ def update_flags_from_phi(
     FLAG_SOLID: ti.i32,
     FLAG_GAS: ti.i32,
     FLAG_IFACE: ti.i32,
+    H: ti.template(),
+    dx: ti.f32,
+    energy_acc: ti.template(),
 ):
     """Derive FLUID / GAS / IFACE from φ and liquid fraction.
 
     Substrate band (k < nz_solid): melted plate metal MUST remain FLUID so
     Marangoni / Lorentz / buoyancy can act on the fusion zone (C1 fix).
     Never invent plate metal from GAS. Never force-freeze liquid substrate.
+
+    Enthalpy of cells that change between gas and metal accumulates (signed,
+    + into metal) in energy_acc[3]: the thermal solver does not move H with
+    the interface, so relabelling is where it enters or leaves the metal.
     """
+    dx3 = dx * dx * dx
     for i, j, k in phi:
         p = phi[i, j, k]
         fl = f_l[i, j, k]
@@ -696,14 +704,20 @@ def update_flags_from_phi(
                 flags[i, j, k] = FLAG_SOLID
             # else: keep previous flag (mushy transition band)
             continue
+        old = flags[i, j, k]
+        new = FLAG_IFACE
         if p > 0.85 and fl < 0.05:
-            flags[i, j, k] = FLAG_SOLID
+            new = FLAG_SOLID
         elif p > 0.55 and fl > 0.1:
-            flags[i, j, k] = FLAG_FLUID
+            new = FLAG_FLUID
         elif p < 0.05:
-            flags[i, j, k] = FLAG_GAS
-        else:
-            flags[i, j, k] = FLAG_IFACE
+            new = FLAG_GAS
+        flags[i, j, k] = new
+        if (old == FLAG_GAS) != (new == FLAG_GAS):
+            e = ti.cast(H[i, j, k] * dx3, ti.f64)
+            if new == FLAG_GAS:
+                e = -e
+            energy_acc[3] += e
 
 
 @ti.kernel

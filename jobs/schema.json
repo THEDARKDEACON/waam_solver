@@ -152,6 +152,24 @@
           "exclusiveMinimum": 0,
           "description": "Optional multiplier on WAAMGrid.dt (default 1.0). \u03c4>0.5 and \u03b1_lu\u22641/6 guards still apply. Values <1 reduce thermal\u2013flow operator-splitting lag."
         },
+        "smagorinsky_cs": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 0.3,
+          "description": "Smagorinsky constant for the LBM subgrid eddy viscosity (0 = off). The eddy viscosity scales with dx^2 and fades on finer meshes, so the constant is not mesh-tuned; 0.1-0.17 is the usual range."
+        },
+        "lbm_gas_band": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Stream LBM populations in gas only within this many cells of metal (0 = all gas, the default). Far gas never collides and only feeds the interface through the band edge; 4 keeps the full-domain result while skipping most gas on coupon jobs."
+        },
+        "thermal_dt": {
+          "oneOf": [
+            {"type": "string", "enum": ["auto", "lbm"]},
+            {"type": "number", "exclusiveMinimum": 0}
+          ],
+          "description": "physics_tier thermal without wire feed: 'auto' (default) steps at 0.8 of the explicit conduction limit dx\u00b2/(6\u03b1_max) and skips LBM/VOF/forces; a number is dt in seconds (must be under the limit); 'lbm' keeps the Mach-scaled dt and the full coupled step. Ignored when dt_scale is set."
+        },
         "warn_on_force_clamp": {
           "type": "boolean",
           "description": "Log a warning when the body-force clamp fires. Default false. strict_mode abort is unchanged."
@@ -464,8 +482,17 @@
         "sigma_solid_Sm": {
           "type": "number"
         },
+        "sigma_gas_Sm": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Lorentz potential: gas is grounded through this leakage conductivity (default 1 S/m). Keeps metal cut off from the plate well-posed."
+        },
         "lorentz_jacobi_iters": {
           "type": "integer"
+        },
+        "lorentz_solve_every_s": {
+          "type": "number",
+          "minimum": 0
         },
         "lorentz_jacobi_cold_iters": {
           "type": "integer"

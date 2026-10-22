@@ -30,6 +30,57 @@ def _trt_omega_odd(omega_e: ti.f32) -> ti.f32:
 
 
 @ti.func
+def _smagorinsky_tau(
+    f_src: ti.template(),
+    i: ti.i32, j: ti.i32, k: ti.i32,
+    r: ti.f32,
+    ux_f: ti.f32, uy_f: ti.f32, uz_f: ti.f32,
+    fx: ti.f32, fy: ti.f32, fz: ti.f32,
+    tau0: ti.f32,
+    cs_smag: ti.f32,
+) -> ti.f32:
+    """Smagorinsky-raised relaxation time from the local non-equilibrium stress.
+
+    tau = (tau0 + sqrt(tau0^2 + 18 sqrt(2) Cs^2 |Pi_neq| / rho)) / 2 (Hou et
+    al. 1996, lattice units). The added eddy viscosity scales with the cell
+    size squared, so it fades as the mesh is refined and Cs is not mesh-tuned.
+    """
+    u2 = ux_f * ux_f + uy_f * uy_f + uz_f * uz_f
+    pxx = 0.0
+    pyy = 0.0
+    pzz = 0.0
+    pxy = 0.0
+    pxz = 0.0
+    pyz = 0.0
+    for q in ti.static(range(Q)):
+        ex_q = ti.cast(EX[q], ti.f32)
+        ey_q = ti.cast(EY[q], ti.f32)
+        ez_q = ti.cast(EZ[q], ti.f32)
+        eu = ex_q * ux_f + ey_q * uy_f + ez_q * uz_f
+        fneq = f_src[q, i, j, k] - ti.cast(W[q], ti.f32) * r * (
+            1.0 + 3.0 * eu + 4.5 * eu * eu - 1.5 * u2
+        )
+        pxx += ex_q * ex_q * fneq
+        pyy += ey_q * ey_q * fneq
+        pzz += ez_q * ez_q * fneq
+        pxy += ex_q * ey_q * fneq
+        pxz += ex_q * ez_q * fneq
+        pyz += ey_q * ez_q * fneq
+    # Guo forcing shifts the moment by half a step of F u + u F.
+    pxx += fx * ux_f
+    pyy += fy * uy_f
+    pzz += fz * uz_f
+    pxy += 0.5 * (fx * uy_f + fy * ux_f)
+    pxz += 0.5 * (fx * uz_f + fz * ux_f)
+    pyz += 0.5 * (fy * uz_f + fz * uy_f)
+    pmag = ti.sqrt(
+        pxx * pxx + pyy * pyy + pzz * pzz
+        + 2.0 * (pxy * pxy + pxz * pxz + pyz * pyz)
+    )
+    return 0.5 * (tau0 + ti.sqrt(tau0 * tau0 + 18.0 * 1.41421356 * cs_smag * cs_smag * pmag / (r + 1e-6)))
+
+
+@ti.func
 def _trt_collide_cell(
     f_src: ti.template(),
     f_dst: ti.template(),
@@ -185,12 +236,14 @@ def collide_mrt_variable_tau(
     FLAG_SOLID:  ti.i32,
     FLAG_GAS:    ti.i32,
     nx: ti.i32, ny: ti.i32, nz: ti.i32,
+    cs_smag: ti.f32,
 ):
     """
     Per-cell τ_s TRT collision (API name kept as collide_mrt_variable_tau).
 
-    omega_s = 1/τ_field. Odd rate from magic Λ=1/4 when omega_b ≈ omega_s
-    (production default); otherwise omega_b is used as ω_o.
+    omega_s = 1/τ_eff with τ_eff = τ_field raised by the Smagorinsky eddy
+    viscosity when cs_smag > 0. Odd rate from magic Λ=1/4 when
+    omega_b ≈ 1/τ_field (production default); otherwise omega_b is used as ω_o.
     """
     eps = 1.0e-6
 
@@ -202,12 +255,7 @@ def collide_mrt_variable_tau(
         tau_loc = tau_field[i, j, k]
         if tau_loc < 0.5001:
             tau_loc = 0.5001
-        omega_e = 1.0 / tau_loc
-        omega_o = ti.select(
-            ti.abs(omega_b - omega_e) < 1.0e-3,
-            _trt_omega_odd(omega_e),
-            omega_b,
-        )
+        magic_odd = ti.abs(omega_b - 1.0 / tau_loc) < 1.0e-3
 
         fx = Fx[i, j, k]
         fy = Fy[i, j, k]
@@ -237,6 +285,13 @@ def collide_mrt_variable_tau(
         fx = fx - K_darcy * ux_f
         fy = fy - K_darcy * uy_f
         fz = fz - K_darcy * uz_f
+
+        if cs_smag > 0.0:
+            tau_loc = _smagorinsky_tau(
+                f_src, i, j, k, r, ux_f, uy_f, uz_f, fx, fy, fz, tau_loc, cs_smag,
+            )
+        omega_e = 1.0 / tau_loc
+        omega_o = ti.select(magic_odd, _trt_omega_odd(omega_e), omega_b)
 
         _trt_collide_cell(
             f_src, f_dst, i, j, k,

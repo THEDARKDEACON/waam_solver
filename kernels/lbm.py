@@ -271,6 +271,42 @@ def collide_srt_variable_tau(
 # ──────────────────────────────────────────────────────────────────────────────
 #  KERNEL 8 — Streaming (Pull Scheme + Bounce-Back)
 # ──────────────────────────────────────────────────────────────────────────────
+@ti.func
+def _stream_cell(
+    f_src: ti.template(),
+    f_dst: ti.template(),
+    flags: ti.template(),
+    flag, i, j, k,
+    FLAG_SOLID, FLAG_GAS, nx, ny, nz, periodic_x,
+):
+    for q in ti.static(range(19)):
+        ni = i - EX[q]
+        nj = j - EY[q]
+        nk = k - EZ[q]
+
+        # ti.select avoids if/else variable-scope issues in Taichi.
+        ni_p = ti.select(
+            periodic_x != 0,
+            (ni + nx) % nx,
+            ti.max(0, ti.min(ni, nx - 1)),
+        )
+        nj_p = ti.max(0, ti.min(nj, ny - 1))
+        nk_p = ti.max(0, ti.min(nk, nz - 1))
+
+        # Out-of-domain under non-periodic → bounce-back (closed walls)
+        oob = (
+            (periodic_x == 0 and (ni < 0 or ni >= nx))
+            or nj < 0 or nj >= ny
+            or nk < 0 or nk >= nz
+        )
+        if flag == FLAG_GAS:
+            f_dst[q, i, j, k] = f_src[q, ni_p, nj_p, nk_p]
+        elif oob or flags[ni_p, nj_p, nk_p] == FLAG_SOLID:
+            f_dst[q, i, j, k] = f_src[OPP[q], i, j, k]
+        else:
+            f_dst[q, i, j, k] = f_src[q, ni_p, nj_p, nk_p]
+
+
 @ti.kernel
 def stream(
     f_src:  ti.template(),
@@ -296,33 +332,72 @@ def stream(
         flag = flags[i, j, k]
         if flag == FLAG_SOLID:
             continue
+        _stream_cell(
+            f_src, f_dst, flags, flag, i, j, k,
+            FLAG_SOLID, FLAG_GAS, nx, ny, nz, periodic_x,
+        )
 
-        for q in ti.static(range(19)):
-            ni = i - EX[q]
-            nj = j - EY[q]
-            nk = k - EZ[q]
 
-            # ti.select avoids if/else variable-scope issues in Taichi.
-            ni_p = ti.select(
-                periodic_x != 0,
-                (ni + nx) % nx,
-                ti.max(0, ti.min(ni, nx - 1)),
-            )
-            nj_p = ti.max(0, ti.min(nj, ny - 1))
-            nk_p = ti.max(0, ti.min(nk, nz - 1))
+@ti.kernel
+def stream_banded(
+    f_src:  ti.template(),
+    f_dst:  ti.template(),
+    flags:  ti.template(),
+    active: ti.template(),
+    FLAG_SOLID: ti.i32,
+    FLAG_GAS:   ti.i32,
+    nx: ti.i32,
+    ny: ti.i32,
+    nz: ti.i32,
+):
+    """stream() with closed walls that skips gas cells outside the active band.
 
-            # Out-of-domain under non-periodic → bounce-back (closed walls)
-            oob = (
-                (periodic_x == 0 and (ni < 0 or ni >= nx))
-                or nj < 0 or nj >= ny
-                or nk < 0 or nk >= nz
-            )
-            if flag == FLAG_GAS:
-                f_dst[q, i, j, k] = f_src[q, ni_p, nj_p, nk_p]
-            elif oob or flags[ni_p, nj_p, nk_p] == FLAG_SOLID:
-                f_dst[q, i, j, k] = f_src[OPP[q], i, j, k]
-            else:
-                f_dst[q, i, j, k] = f_src[q, ni_p, nj_p, nk_p]
+    Skipped cells keep stale populations in both buffers. Only band-edge gas
+    pulls from them and droplets reinitialise their cells to equilibrium, so
+    the band only has to cover interface motion between mask rebuilds.
+    """
+    for i, j, k in flags:
+        flag = flags[i, j, k]
+        if flag == FLAG_SOLID:
+            continue
+        if flag == FLAG_GAS and active[i, j, k] == 0:
+            continue
+        _stream_cell(
+            f_src, f_dst, flags, flag, i, j, k,
+            FLAG_SOLID, FLAG_GAS, nx, ny, nz, 0,
+        )
+
+
+@ti.kernel
+def mark_non_gas(flags: ti.template(), out: ti.template(), FLAG_GAS: ti.i32):
+    for i, j, k in flags:
+        out[i, j, k] = ti.cast(flags[i, j, k] != FLAG_GAS, ti.u8)
+
+
+@ti.kernel
+def dilate_mask_axis(
+    src: ti.template(),
+    dst: ti.template(),
+    band: ti.i32,
+    axis: ti.template(),
+    n: ti.i32,
+):
+    """dst = 1 where src is set within ±band cells along one axis (box dilation)."""
+    for i, j, k in src:
+        c = i
+        if ti.static(axis == 1):
+            c = j
+        if ti.static(axis == 2):
+            c = k
+        hit = 0
+        for m in range(ti.max(c - band, 0), ti.min(c + band, n - 1) + 1):
+            if ti.static(axis == 0):
+                hit = ti.max(hit, ti.cast(src[m, j, k], ti.i32))
+            if ti.static(axis == 1):
+                hit = ti.max(hit, ti.cast(src[i, m, k], ti.i32))
+            if ti.static(axis == 2):
+                hit = ti.max(hit, ti.cast(src[i, j, m], ti.i32))
+        dst[i, j, k] = ti.cast(hit, ti.u8)
 
 
 @ti.kernel

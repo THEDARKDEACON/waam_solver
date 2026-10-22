@@ -57,9 +57,8 @@ def run(n_steps: int = 150, min_u: float = 1e-6) -> float:
         kernels.stream(
             g.f_dst, g.f_src,
             g.flags, g.FLAG_SOLID, g.FLAG_GAS,
-            g.nx, g.ny, g.nz,
-        , 0)
-        g.swap_buffers()
+            g.nx, g.ny, g.nz, 0,
+        )
 
     ux_np = g.ux.to_numpy()
     flags_np = g.flags.to_numpy()

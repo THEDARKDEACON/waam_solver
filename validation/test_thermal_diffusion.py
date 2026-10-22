@@ -53,7 +53,7 @@ def run(n_steps: int = 400, nx: int = 48, threshold: float = 1.0) -> float:
             g.H, g.H, g.T, g.ux, g.uy, g.uz, g.flags,
             twin.alpha_lu, 1.0,
             g.FLAG_SOLID, g.FLAG_GAS,
-            twin.cp_rho, g.nx, g.ny, g.nz,
+            twin.cp_rho, g.nx, g.ny, g.nz, g.phi, -1,
         )
         kernels.sync_T_from_H(g.H, g.T, twin.cp_rho)
 

@@ -112,7 +112,7 @@ def validate_material_data(data: dict, path: pathlib.Path | None = None) -> None
         import json
         import jsonschema
 
-        with open(_SCHEMA_PATH) as f:
+        with open(_SCHEMA_PATH, encoding="utf-8") as f:
             schema = json.load(f)
         jsonschema.validate(instance=data, schema=schema)
     except ImportError:
@@ -137,7 +137,7 @@ def _load_yaml_file(path: pathlib.Path) -> MaterialProps:
         import yaml
     except ImportError as exc:
         raise ImportError("PyYAML required: pip install pyyaml") from exc
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         data = yaml.safe_load(f)
     validate_material_data(data, path)
     name = data.get("name", path.stem)
@@ -218,7 +218,7 @@ def load_material(name: str, high_sulphur: bool = False) -> MaterialProps:
         )
         if key_match is None:
             if _MATERIALS_JSON.exists():
-                with open(_MATERIALS_JSON) as f:
+                with open(_MATERIALS_JSON, encoding="utf-8") as f:
                     entries = json.load(f)
                 for entry in entries:
                     if name.lower() in entry.get("name", "").lower():

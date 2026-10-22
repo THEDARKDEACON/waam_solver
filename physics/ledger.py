@@ -33,6 +33,8 @@ class LedgerSnapshot:
     E_cap_J: float = 0.0
     E_floor_J: float = 0.0
     E_freeze_J: float = 0.0
+    # Signed enthalpy carried into the metal by gas<->metal relabelling.
+    E_relabel_J: float = 0.0
     E_stored_J: float = 0.0
     E_stored_0_J: float = 0.0
     # Mass [kg]
@@ -53,9 +55,12 @@ class LedgerSnapshot:
         )
 
     def energy_closure_residual_J(self) -> float:
-        """in − out − (stored − stored0) − floor_restore. Ideal = 0."""
+        """in − out − (stored − stored0) + floor restore + relabel. Ideal = 0."""
         dH = self.E_stored_J - self.E_stored_0_J
-        return self.energy_in_J() - self.energy_out_J() - dH + self.E_floor_J
+        return (
+            self.energy_in_J() - self.energy_out_J() - dH
+            + self.E_floor_J + self.E_relabel_J
+        )
 
     def energy_closure_rel(self) -> float:
         scale = max(abs(self.energy_in_J()), abs(self.E_stored_0_J), 1.0)
@@ -86,10 +91,19 @@ class EnergyMassLedger:
     E_freeze_J: float = 0.0
     E_stored_0_J: float | None = None
     _last_stored_J: float = 0.0
+    _acc_base_J: tuple[float, float, float, float] | None = None
     notes: list[str] = field(default_factory=list)
 
     def attach(self, twin: "WAAMTwin") -> None:
         twin.ledger = self  # type: ignore[attr-defined]
+        self._acc_base_J = _device_acc_J(twin)
+
+    def _device_since_attach_J(self, twin: "WAAMTwin") -> tuple[float, float, float, float]:
+        """Convection, radiation, floor and relabel joules booked on device since attach."""
+        now = _device_acc_J(twin)
+        if self._acc_base_J is None:
+            self._acc_base_J = now
+        return tuple(n - b for n, b in zip(now, self._acc_base_J))  # type: ignore[return-value]
 
     def record_arc(self, joules: float) -> None:
         self.E_arc_J += max(0.0, float(joules))
@@ -125,17 +139,19 @@ class EnergyMassLedger:
         m_wire = float(expected_deposited_mass_kg(twin))
         m_dep = float(getattr(twin, "_deposited_volume_m3", 0.0)) * float(twin.mat.rho)
         m_phi = _phi_metal_above_kg(twin)
+        conv_J, rad_J, floor_J, relabel_J = self._device_since_attach_J(twin)
 
         return LedgerSnapshot(
             step=int(getattr(twin, "_step_n", 0)),
             sim_time_s=float(getattr(twin, "_step_n", 0)) * float(g.dt),
             E_arc_J=self.E_arc_J,
             E_droplet_J=self.E_droplet_J,
-            E_conv_J=self.E_conv_J,
-            E_rad_J=self.E_rad_J,
+            E_conv_J=self.E_conv_J + conv_J,
+            E_rad_J=self.E_rad_J + rad_J,
             E_evap_J=self.E_evap_J,
             E_cap_J=self.E_cap_J,
-            E_floor_J=self.E_floor_J,
+            E_floor_J=self.E_floor_J + floor_J,
+            E_relabel_J=relabel_J,
             E_freeze_J=self.E_freeze_J,
             E_stored_J=stored,
             E_stored_0_J=float(self.E_stored_0_J),
@@ -145,14 +161,24 @@ class EnergyMassLedger:
         )
 
 
+def _device_acc_J(twin: "WAAMTwin") -> tuple[float, float, float, float]:
+    acc = getattr(twin.grid, "energy_acc_J", None)
+    if acc is None:
+        return 0.0, 0.0, 0.0, 0.0
+    v = acc.to_numpy()
+    return float(v[0]), float(v[1]), float(v[2]), float(v[3])
+
+
 def _stored_enthalpy_J(twin: "WAAMTwin") -> float:
-    """Sum H·Δx³ over non-gas cells [J]."""
+    """Sum w·H·Δx³ over non-gas cells [J] (w = fill under the free-surface LBM)."""
     import numpy as np
 
     g = twin.grid
-    H = g.H.to_numpy()
+    H = g.H.to_numpy().astype(np.float64)
     flags = g.flags.to_numpy()
     metal = flags != g.FLAG_GAS
+    if twin.fs_iface_flag() >= 0:
+        H = H * np.clip(g.phi.to_numpy(), 0.0, 1.0)
     return float((H[metal]).sum() * (g.dx ** 3))
 
 

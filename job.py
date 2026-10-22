@@ -45,10 +45,11 @@ def validate_job_config(data: dict[str, Any], path: pathlib.Path | None = None) 
         import json
         import jsonschema
 
-        with open(_JOB_SCHEMA_PATH) as f:
+        with open(_JOB_SCHEMA_PATH, encoding="utf-8") as f:
             schema = json.load(f)
         jsonschema.validate(instance=data, schema=schema)
     except ImportError:
+        _check_closed_sections(data, label)
         sim = data.get("simulation") or {}
         tier = sim.get("physics_tier")
         if tier is not None and str(tier).strip().lower() not in (
@@ -79,6 +80,25 @@ def validate_job_config(data: dict[str, Any], path: pathlib.Path | None = None) 
                 f"Job schema validation failed for {label}: {exc.message}"
             ) from exc
         raise
+
+
+def _check_closed_sections(data: dict[str, Any], label: str) -> None:
+    """Without jsonschema, still reject unknown keys in sections the schema closes."""
+    import json
+
+    with open(_JOB_SCHEMA_PATH, encoding="utf-8") as f:
+        props = json.load(f).get("properties") or {}
+    for section, spec in props.items():
+        value = data.get(section)
+        if not isinstance(value, dict) or not isinstance(spec, dict):
+            continue
+        if spec.get("additionalProperties") is not False:
+            continue
+        unknown = sorted(k for k in value if k not in (spec.get("properties") or {}))
+        if unknown:
+            raise ValueError(
+                f"Job schema validation failed for {label}: unknown {section} keys {unknown}"
+            )
 
 
 def _maybe_yaml_float(value: Any) -> Any:
@@ -115,7 +135,7 @@ def load_job_config(path: str | pathlib.Path) -> dict[str, Any]:
         import yaml
     except ImportError as exc:
         raise ImportError("PyYAML required: pip install pyyaml") from exc
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
     if not isinstance(data, dict):
         raise ValueError(f"Job file must be a mapping: {path}")
@@ -386,7 +406,8 @@ _KNOWN_SIM_KEYS = frozenset({
     "dt_scale", "warn_on_force_clamp", "alloy_mix_rate",
     "use_variable_tau", "use_srt", "u_mach_limit_lu", "force_limit_lu",
     "force_limit_m_s2", "C_darcy", "C_darcy_ref_dt_s",
-    "auto_dt_ma", "u_design_m_s", "pool_metric",
+    "auto_dt_ma", "u_design_m_s", "pool_metric", "thermal_dt", "lbm_gas_band",
+    "smagorinsky_cs",
 })
 
 _KNOWN_PROCESS_KEYS = frozenset({
@@ -410,8 +431,9 @@ _KNOWN_ARC_PHYSICS_KEYS = frozenset({
 
 _KNOWN_ADVANCED_PHYSICS_KEYS = frozenset({
     "gas_jet_velocity_m_s", "gas_shear_coeff",
-    "sigma_liquid_Sm", "sigma_solid_Sm",
+    "sigma_liquid_Sm", "sigma_solid_Sm", "sigma_gas_Sm",
     "lorentz_jacobi_iters", "lorentz_jacobi_cold_iters", "lorentz_jacobi_tol",
+    "lorentz_solve_every_s",
     "T_boiling_K", "T_recoil_onset_K", "L_vapor_J_kg", "R_spec_vapor_J_kgK",
     "recoil_accommodation", "evap_cooling_scale",
     "bulk_tau", "marangoni_scale", "C_darcy", "C_darcy_ref_dt_s",
@@ -563,8 +585,12 @@ def apply_job_to_twin(twin, job: dict[str, Any] | JobConfig) -> None:
         twin.sigma_liquid_Sm = float(adv["sigma_liquid_Sm"])
     if "sigma_solid_Sm" in adv:
         twin.sigma_solid_Sm = float(adv["sigma_solid_Sm"])
+    if "sigma_gas_Sm" in adv:
+        twin.sigma_gas_Sm = float(adv["sigma_gas_Sm"])
     if "lorentz_jacobi_iters" in adv:
         twin.lorentz_jacobi_iters = int(adv["lorentz_jacobi_iters"])
+    if "lorentz_solve_every_s" in adv:
+        twin.lorentz_solve_every_s = float(adv["lorentz_solve_every_s"])
     if "lorentz_jacobi_cold_iters" in adv:
         twin.lorentz_jacobi_cold_iters = int(adv["lorentz_jacobi_cold_iters"])
     if "lorentz_jacobi_tol" in adv:
@@ -692,6 +718,12 @@ def apply_job_to_twin(twin, job: dict[str, Any] | JobConfig) -> None:
         twin.enable_trailing_solidify = bool(sim["enable_trailing_solidify"])
     if "periodic_x" in sim:
         twin.periodic_x = bool(sim["periodic_x"])
+    if "lbm_gas_band" in sim:
+        twin.lbm_gas_band = int(sim["lbm_gas_band"])
+    if "smagorinsky_cs" in sim:
+        twin.smagorinsky_cs = float(sim["smagorinsky_cs"])
+    if "use_free_surface_lbm" in sim:
+        twin.use_free_surface_lbm = bool(sim["use_free_surface_lbm"])
     if "enable_ctwd" in sim:
         twin.enable_ctwd = bool(sim["enable_ctwd"])
     # Attach typed config view (Phase 2)

@@ -8,6 +8,7 @@ simulation:
   - 25
   dx_mm: 0.4
   enable_vof: true
+  use_free_surface_lbm: true
   enable_csf_tension: true
   enable_wetting: true
   enable_hydrostatic_gravity: true
@@ -70,6 +71,7 @@ advanced_physics:
   R_spec_vapor_J_kgK: 149.0
   lorentz_jacobi_iters: 300
   lorentz_jacobi_tol: 0.001
+  lorentz_solve_every_s: 2.5e-4
   sigma_liquid_Sm: 1.0e6
   sigma_solid_Sm: 1.0e5
   gas_jet_velocity_m_s: 12.0
@@ -117,12 +119,14 @@ reference:
     91 A from published pulse (35/345 A); mean V estimated synergic 22 V (not tabulated).\
     \ Replaces uncited 7\xD73 YAML lock."
 model_reference:
-  n_steps: 8000
+  n_steps: 62500
   bead_height_mm_min: 0.5
   f_recoil_active: true
   mesh_tier: shop
-  note: "Simulator W/D fitted to Park on shop mesh (fusion_zone err\u22484.8% at 8000 steps).\
-    \ Mesh independence not claimed (Level A FAIL_BAND locally)."
+  note: "Free-surface LBM (Koerner/Thuerey) + Smagorinsky Cs=0.17. Steady cross-section\
+    \ at 2.5 s (62500 steps), slices x=22-26 mm: W 5.36 (-12%), D 1.83 (+2%), H 2.27 (+3%)\
+    \ vs Park with eta=0.82, Goldak 2.0/3.8/2.8/2.6 unchanged. eta=0.90 gave W -7% but\
+    \ D +10%, H +16%. Mesh independence not claimed (Level A FAIL_BAND locally)."
 claim:
   mesh_tier: shop
   absolute_wd: true

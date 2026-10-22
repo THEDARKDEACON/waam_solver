@@ -8,8 +8,60 @@ import pathlib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from waam_twin.compiler import ti
+
 if TYPE_CHECKING:
     from ..twin import WAAMTwin
+
+MAX_PROBES = 64
+
+
+@ti.kernel
+def _sample_probes(
+    T: ti.template(),
+    f_l: ti.template(),
+    flags: ti.template(),
+    pos: ti.template(),
+    out: ti.template(),
+    n: ti.i32,
+    FLAG_GAS: ti.i32,
+    nx: ti.i32,
+    ny: ti.i32,
+    nz: ti.i32,
+):
+    """Trilinear T and f_l at positions in cell units; gas corners carry no weight.
+
+    out[p, 0] < 0 when all eight corners are gas.
+    """
+    for p in range(n):
+        fx = pos[p, 0] - 0.5
+        fy = pos[p, 1] - 0.5
+        fz = pos[p, 2] - 0.5
+        i0 = ti.cast(ti.floor(fx), ti.i32)
+        j0 = ti.cast(ti.floor(fy), ti.i32)
+        k0 = ti.cast(ti.floor(fz), ti.i32)
+        wx = fx - ti.cast(i0, ti.f32)
+        wy = fy - ti.cast(j0, ti.f32)
+        wz = fz - ti.cast(k0, ti.f32)
+        w_sum = 0.0
+        T_sum = 0.0
+        fl_sum = 0.0
+        for c in ti.static(range(8)):
+            ii = ti.max(0, ti.min(i0 + (c & 1), nx - 1))
+            jj = ti.max(0, ti.min(j0 + ((c >> 1) & 1), ny - 1))
+            kk = ti.max(0, ti.min(k0 + ((c >> 2) & 1), nz - 1))
+            w = (wx if c & 1 else 1.0 - wx) * (wy if (c >> 1) & 1 else 1.0 - wy) * (
+                wz if (c >> 2) & 1 else 1.0 - wz
+            )
+            if flags[ii, jj, kk] != FLAG_GAS:
+                w_sum += w
+                T_sum += w * T[ii, jj, kk]
+                fl_sum += w * f_l[ii, jj, kk]
+        out[p, 0] = -1.0
+        out[p, 1] = 0.0
+        if w_sum > 1e-6:
+            out[p, 0] = T_sum / w_sum
+            out[p, 1] = fl_sum / w_sum
 
 _Z_REF_ALIASES = {
     "plate_bottom": "plate_bottom",
@@ -136,6 +188,7 @@ class ProbeRecorder:
     _rows: list[dict[str, float | str]] = field(default_factory=list)
     _flushed: int = 0
     _flush_names: tuple[str, ...] = ()
+    _dev: tuple | None = field(default=None, repr=False)
 
     def add_grid(
         self, i: int, j: int, k: int, twin: "WAAMTwin", name: str | None = None
@@ -260,6 +313,7 @@ class ProbeRecorder:
             "step": twin._step_n,
             "arc_on": 1 if getattr(twin, "_arc_on", True) else 0,
         }
+        live: list[tuple[str, tuple[float, float, float]]] = []
         for p in self.probes:
             world = p.world_m(twin)
             if world is None:
@@ -270,17 +324,48 @@ class ProbeRecorder:
                 row[f"{p.name}_x_mm"] = round(world[0] * 1000.0, 4)
                 row[f"{p.name}_y_mm"] = round(world[1] * 1000.0, 4)
                 row[f"{p.name}_z_mm"] = round(world[2] * 1000.0, 4)
-            idx = p.resolve(twin)
-            if idx is None:
+            if world is None or p.resolve(twin) is None:
                 row[f"{p.name}_T_K"] = math.nan
                 row[f"{p.name}_f_l"] = math.nan
                 continue
-            i, j, k = idx
-            # Scalar field reads — avoids copying the full T/f_l volumes to
-            # host every step (previously two full to_numpy() per sample).
-            row[f"{p.name}_T_K"] = round(float(g.T[i, j, k]), 2)
-            row[f"{p.name}_f_l"] = round(float(g.f_l[i, j, k]), 4)
+            live.append((p.name, (
+                (world[0] - twin._window_offset_x_m) / g.dx,
+                (world[1] - twin._window_offset_y_m) / g.dx,
+                (world[2] - twin._window_offset_z_m) / g.dx,
+            )))
+        if live:
+            vals = self._sample(twin, [c for _, c in live])
+            for (name, _), (T_K, fl) in zip(live, vals):
+                ok = T_K >= 0.0
+                row[f"{name}_T_K"] = round(float(T_K), 2) if ok else math.nan
+                row[f"{name}_f_l"] = round(float(fl), 4) if ok else math.nan
         self._rows.append(row)
+
+    def _sample(self, twin: "WAAMTwin", cells: list[tuple[float, float, float]]):
+        """One kernel launch and one device read for every live probe."""
+        import numpy as np
+
+        g = twin.grid
+        n = len(cells)
+        if n > MAX_PROBES:
+            raise ValueError(f"{n} probes exceeds MAX_PROBES={MAX_PROBES}")
+        if self._dev is None or self._dev[0] is not g:
+            self._dev = (
+                g,
+                ti.field(dtype=ti.f32, shape=(MAX_PROBES, 3)),
+                ti.field(dtype=ti.f32, shape=(MAX_PROBES, 2)),
+                None,
+            )
+        grid, pos_f, out_f, uploaded = self._dev
+        pos = np.zeros((MAX_PROBES, 3), dtype=np.float32)
+        pos[:n] = cells
+        if uploaded is None or not np.array_equal(uploaded, pos):
+            pos_f.from_numpy(pos)
+            self._dev = (grid, pos_f, out_f, pos)
+        _sample_probes(
+            g.T, g.f_l, g.flags, pos_f, out_f, n, g.FLAG_GAS, g.nx, g.ny, g.nz,
+        )
+        return out_f.to_numpy()[:n]
 
     def _fieldnames(self) -> list[str]:
         names = ["sim_time_ms", "step", "arc_on"]

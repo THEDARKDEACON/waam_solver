@@ -124,7 +124,7 @@ def run(n_steps: int = 800, threshold: float = 8.0) -> float:
             g.H, g.H, g.T, g.ux, g.uy, g.uz, g.flags,
             twin.alpha_lu, 1.0,
             g.FLAG_SOLID, g.FLAG_GAS,
-            twin.cp_rho, g.nx, g.ny, g.nz,
+            twin.cp_rho, g.nx, g.ny, g.nz, g.phi, -1,
         )
         kernels.update_phase(
             g.H, g.T, g.f_l,
