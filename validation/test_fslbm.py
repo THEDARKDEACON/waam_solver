@@ -32,6 +32,27 @@ def _setup(nx: int, ny: int, nz: int, liquid) -> WAAMTwin:
     return twin
 
 
+def _snap(g) -> dict:
+    names = (
+        "f_src", "f_dst", "flags", "phi", "f_l", "H", "T", "rho",
+        "ux", "uy", "uz", "fs_mass", "fs_energy", "fs_mark",
+    )
+    out = {name: getattr(g, name).to_numpy().copy() for name in names}
+    out["acc"] = g.energy_acc_J.to_numpy().copy()
+    out["lost"] = float(g.fs_mass_lost[None])
+    return out
+
+
+def _restore(g, snap: dict) -> None:
+    for name, values in snap.items():
+        if name == "acc":
+            g.energy_acc_J.from_numpy(values)
+        elif name == "lost":
+            g.fs_mass_lost[None] = values
+        else:
+            getattr(g, name).from_numpy(values)
+
+
 def _metal_energy(g) -> float:
     flags = g.flags.to_numpy()
     w = np.clip(g.phi.to_numpy().astype("f8"), 0.0, 1.0)
@@ -72,7 +93,14 @@ def dam_break(n: int = 600, tol: float = 2e-3) -> None:
     m0 = _metal_mass(g)
     E0 = _metal_energy(g)
     acc0 = float(g.energy_acc_J.to_numpy()[3])
+    snap = _snap(g)
     _run(twin, n, g_lu=2e-4, gamma_lu=0.0, tau=0.6)
+    flags_a = g.flags.to_numpy().copy()
+    phi_a = g.phi.to_numpy().copy()
+    _restore(g, snap)
+    _run(twin, n, g_lu=2e-4, gamma_lu=0.0, tau=0.6)
+    if not np.array_equal(flags_a, g.flags.to_numpy()) or not np.array_equal(phi_a, g.phi.to_numpy()):
+        raise AssertionError("dam break flags/phi differed between identical runs")
     m1 = _metal_mass(g)
     booked = (float(g.energy_acc_J.to_numpy()[3]) - acc0) / g.dx ** 3
     e_rel = abs(_metal_energy(g) - E0 - booked) / E0
@@ -129,9 +157,53 @@ def laplace_droplet(n: int = 1000, tol: float = 0.10) -> None:
         raise AssertionError(f"Laplace pressure off by {ratio - 1.0:+.1%}")
 
 
+def droplet_repeat() -> None:
+    """One droplet spent in index order fills the same cells twice."""
+    nx = ny = nz = 8
+    twin = _setup(nx, ny, nz, lambda i, j, k: k <= 2)
+    g = twin.grid
+    flags = g.flags.to_numpy()
+    phi = g.phi.to_numpy()
+    flags[:, :, 3] = g.FLAG_IFACE
+    phi[:, :, 3] = 0.4
+    g.flags.from_numpy(flags)
+    g.phi.from_numpy(phi)
+    cell = float(g.dx ** 3)
+
+    def once() -> None:
+        g.deposit_vol_buf[None] = 0.0
+        g.deposit_real_buf[None] = 0.0
+        kernels.fs_deposit_into_interface(
+            g.phi, g.flags, g.H,
+            3.5, 3.5, 3.0, 2.5, 1.5, 6.0 * cell, 1.0e6,
+            g.deposit_vol_buf, g.deposit_real_buf, cell,
+            g.FLAG_IFACE, nx, ny, nz,
+        )
+        kernels.feed_wire_surface(
+            g.f_src, g.flags, g.f_l, g.phi, g.H, g.T, g.rho,
+            3.5, 3.5, 3.0, 2.5, 1.5, 10.0 * cell,
+            2500.0, float(twin.cp_rho), 2.0e8, 1.0,
+            g.deposit_vol_buf, g.deposit_real_buf, cell,
+            g.FLAG_GAS, g.FLAG_FLUID, g.FLAG_SOLID, nx, ny, nz,
+        )
+
+    snap = _snap(g)
+    once()
+    flags_a = g.flags.to_numpy().copy()
+    phi_a = g.phi.to_numpy().copy()
+    _restore(g, snap)
+    once()
+    if not np.array_equal(flags_a, g.flags.to_numpy()) or not np.array_equal(phi_a, g.phi.to_numpy()):
+        raise AssertionError("droplet filled different cells on the second call")
+    if int((g.flags.to_numpy() == g.FLAG_FLUID).sum()) <= int((snap["flags"] == g.FLAG_FLUID).sum()):
+        raise AssertionError("droplet did not place any metal")
+    print("[fslbm] droplet repeat  identical fill")
+
+
 def run() -> None:
     init_taichi(backend="cpu")
     dam_break()
+    droplet_repeat()
     flat_pool()
     laplace_droplet()
 

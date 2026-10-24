@@ -16,40 +16,24 @@ from .grid_init import arc_deposition_weight
 #  KERNEL 2 — Gaussian Arc Heat Injection
 # ──────────────────────────────────────────────────────────────────────────────
 @ti.kernel
-def inject_arc_heat(
-    H:     ti.template(),
+def inject_arc_heat_weights(
     flags: ti.template(),
     phi:   ti.template(),
     f_l:   ti.template(),
-    norm_buf: ti.template(),  # 0-d scratch: Σ of Gaussian weights over heated cells
-    # Arc parameters (all in lattice units)
-    arc_i: ti.f32,   # torch x-position [cells]
-    arc_j: ti.f32,   # torch y-position [cells]
-    arc_k: ti.f32,   # torch z-position (surface level) [cells]
-    Q_w:   ti.f32,   # Effective arc power [W]
-    sigma: ti.f32,   # Gaussian beam radius [cells]
-    dt:    ti.f32,   # Physical timestep [s]
-    dx3:   ti.f32,   # Cell volume [m³]
-    eta:   ti.f32,   # Arc thermal efficiency [-]
+    scratch: ti.template(),
+    arc_i: ti.f32,
+    arc_j: ti.f32,
+    arc_k: ti.f32,
+    sigma: ti.f32,
     penetration_cells: ti.f32,
     enable_surface_weight: ti.i32,
-    FLAG_SOLID: ti.i32,
-    FLAG_GAS:   ti.i32,
+    FLAG_GAS: ti.i32,
     fs_iface: ti.i32,
 ):
-    """
-    Distribute arc heat via a Gaussian weight profile, energy-normalized.
-
-    Pass 1 accumulates the total Gaussian×deposition weight over all heated
-    cells; pass 2 injects ΔH = η·Q·dt · w_cell / (Σw · dx³). This guarantees
-    exactly η·Q·dt joules enter the domain per step regardless of how much of
-    the analytic profile is intercepted by metal (the old closed-form 2D
-    surface normalization over-injected when the weight extended into depth).
-    """
+    """Write Gaussian×deposition weights into ``scratch`` (C-order reduce later)."""
     inv2s2 = 1.0 / (2.0 * sigma * sigma)
-    norm_buf[None] = 0.0
-
-    for i, j, k in H:
+    for i, j, k in scratch:
+        scratch[i, j, k] = 0.0
         if flags[i, j, k] == FLAG_GAS:
             continue
         w_dep = arc_deposition_weight(
@@ -62,10 +46,34 @@ def inject_arc_heat(
         dj = ti.f32(j) - arc_j
         dk = ti.f32(k) - arc_k
         r2 = di * di + dj * dj + dk * dk * 0.25
-        ti.atomic_add(norm_buf[None], ti.math.exp(-r2 * inv2s2) * w_dep * _fill_w(phi, flags, i, j, k, FLAG_GAS, fs_iface))
+        scratch[i, j, k] = (
+            ti.math.exp(-r2 * inv2s2) * w_dep
+            * _fill_w(phi, flags, i, j, k, FLAG_GAS, fs_iface)
+        )
 
-    # Struct-fors must sit at the kernel's outermost scope (Taichi offload
-    # restriction) — guard w_total inside the loop instead of around it.
+
+@ti.kernel
+def inject_arc_heat_apply(
+    H:     ti.template(),
+    flags: ti.template(),
+    phi:   ti.template(),
+    f_l:   ti.template(),
+    norm_buf: ti.template(),
+    arc_i: ti.f32,
+    arc_j: ti.f32,
+    arc_k: ti.f32,
+    Q_w:   ti.f32,
+    sigma: ti.f32,
+    dt:    ti.f32,
+    dx3:   ti.f32,
+    eta:   ti.f32,
+    penetration_cells: ti.f32,
+    enable_surface_weight: ti.i32,
+    FLAG_GAS: ti.i32,
+    fs_iface: ti.i32,
+):
+    """Deposit ΔH from a precomputed ordered weight sum in ``norm_buf``."""
+    inv2s2 = 1.0 / (2.0 * sigma * sigma)
     w_total = norm_buf[None]
     energy_per_weight = 0.0
     if w_total > 1e-9:
@@ -84,6 +92,35 @@ def inject_arc_heat(
         dk = ti.f32(k) - arc_k
         r2 = di * di + dj * dj + dk * dk * 0.25
         H[i, j, k] += energy_per_weight * ti.math.exp(-r2 * inv2s2) * w_dep
+
+
+def inject_arc_heat(
+    H, flags, phi, f_l, norm_buf,
+    arc_i, arc_j, arc_k, Q_w, sigma, dt, dx3, eta,
+    penetration_cells, enable_surface_weight, FLAG_SOLID, FLAG_GAS, fs_iface,
+    *, scratch=None, grid=None,
+):
+    """Gaussian arc heat with an index-ordered weight sum.
+
+    Call with ``grid=`` (preferred) so the ordered reducer is used. Legacy
+    positional args match the old kernel; ``FLAG_SOLID`` is unused.
+    """
+    if grid is None:
+        raise TypeError("inject_arc_heat requires grid= for ordered reduction")
+    from .reduce import ordered_sum_scratch, copy_total_to_f32
+    scratch = scratch if scratch is not None else grid.reduce_scratch
+    inject_arc_heat_weights(
+        flags, phi, f_l, scratch,
+        arc_i, arc_j, arc_k, sigma,
+        penetration_cells, enable_surface_weight, FLAG_GAS, fs_iface,
+    )
+    ordered_sum_scratch(grid)
+    copy_total_to_f32(grid.reduce_total, norm_buf)
+    inject_arc_heat_apply(
+        H, flags, phi, f_l, norm_buf,
+        arc_i, arc_j, arc_k, Q_w, sigma, dt, dx3, eta,
+        penetration_cells, enable_surface_weight, FLAG_GAS, fs_iface,
+    )
 
 
 @ti.func
@@ -152,12 +189,58 @@ def _goldak_pdf_weight(
 
 
 @ti.kernel
-def inject_goldak_heat(
+def inject_goldak_heat_weights(
+    flags: ti.template(),
+    phi: ti.template(),
+    f_l: ti.template(),
+    scratch: ti.template(),
+    arc_i: ti.f32,
+    arc_j: ti.f32,
+    arc_k: ti.f32,
+    dir_x: ti.f32,
+    dir_y: ti.f32,
+    ff: ti.f32,
+    fr: ti.f32,
+    a_front: ti.f32,
+    a_rear: ti.f32,
+    b_axis: ti.f32,
+    c_axis: ti.f32,
+    penetration_cells: ti.f32,
+    enable_surface_weight: ti.i32,
+    FLAG_GAS: ti.i32,
+    fs_iface: ti.i32,
+):
+    """Write Goldak×deposition weights into ``scratch`` for an ordered sum."""
+    for i, j, k in scratch:
+        scratch[i, j, k] = 0.0
+        if flags[i, j, k] == FLAG_GAS:
+            continue
+        w_dep = arc_deposition_weight(
+            i, j, k, arc_i, arc_j, arc_k,
+            f_l[i, j, k], penetration_cells, enable_surface_weight,
+        )
+        if w_dep < 1e-6:
+            continue
+        di = ti.f32(i) + 0.5 - arc_i
+        dj = ti.f32(j) + 0.5 - arc_j
+        dk = ti.f32(k) + 0.5 - arc_k
+        w = _goldak_pdf_weight(
+            di, dj, dk, dir_x, dir_y, ff, fr,
+            a_front, a_rear, b_axis, c_axis,
+        )
+        scratch[i, j, k] = (
+            w * w_dep * _fill_w(phi, flags, i, j, k, FLAG_GAS, fs_iface)
+        )
+
+
+@ti.kernel
+def inject_goldak_heat_apply(
     H: ti.template(),
     flags: ti.template(),
     phi: ti.template(),
     f_l: ti.template(),
     norm_buf: ti.template(),
+    scratch: ti.template(),
     arc_i: ti.f32,
     arc_j: ti.f32,
     arc_k: ti.f32,
@@ -175,66 +258,19 @@ def inject_goldak_heat(
     c_axis: ti.f32,
     penetration_cells: ti.f32,
     enable_surface_weight: ti.i32,
-    FLAG_SOLID: ti.i32,
     FLAG_GAS: ti.i32,
     normalize_energy: ti.i32,
     fs_iface: ti.i32,
 ):
-    """
-    Goldak (1984) double-ellipsoid heat source.
-
-    Semi-axes a_front / a_rear (travel), b (transverse), c (depth) in cells.
-    (dir_x, dir_y) is the horizontal unit travel direction.
-    Requires f_f + f_r = 2 in the loader.
-
-    normalize_energy != 0 (default / twin historical path):
-      Pass 1 sums relative weights on metal; pass 2 deposits exactly η·Q·dt J.
-      Gas cells are skipped; their missing share is folded back into metal.
-
-    normalize_energy == 0 (Ansys / APDL absolute CF):
-      q_vol = CF * f/(a b c) * exp(-ARG) with CF = 6*sqrt(3)*(eta*Q)/(pi*sqrt(pi)),
-      using cell-unit a,b,c so q_vol = CF * w / dx3. ARG >= 9 is zeroed like
-      MAPDL. No rescale; deposited joules are whatever the mesh sums to.
-      On exit norm_buf holds sum(dH)*dx3 [J] for the ledger.
-
-    arc_* is a physical coordinate in index units (position / dx). Cell
-    values live at centers (i+0.5, j+0.5, k+0.5), the same frame as probes.
-    With the face at arc_k = nz_solid, the top metal center is half a cell
-    below the peak.
-    """
-    norm_buf[None] = 0.0
-
-    for i, j, k in H:
-        if normalize_energy == 0 or flags[i, j, k] == FLAG_GAS:
-            continue
-        w_dep = arc_deposition_weight(
-            i, j, k, arc_i, arc_j, arc_k,
-            f_l[i, j, k], penetration_cells, enable_surface_weight,
-        )
-        if w_dep < 1e-6:
-            continue
-        di = ti.f32(i) + 0.5 - arc_i
-        dj = ti.f32(j) + 0.5 - arc_j
-        dk = ti.f32(k) + 0.5 - arc_k
-        w = _goldak_pdf_weight(
-            di, dj, dk, dir_x, dir_y, ff, fr,
-            a_front, a_rear, b_axis, c_axis,
-        )
-        ti.atomic_add(norm_buf[None], w * w_dep * _fill_w(phi, flags, i, j, k, FLAG_GAS, fs_iface))
-
+    """Deposit Goldak heat. Absolute-CF mode stages joules into ``scratch``."""
     w_total = norm_buf[None]
     energy_per_weight = 0.0
     if normalize_energy != 0 and w_total > 1e-9:
         energy_per_weight = Q_w * eta * dt / (w_total * dx3)
-
-    # Absolute CF (Ansys): Q_net = η·Q_elec [W]. SI volumetric power uses
-    # CF·w/dx³ because w already has 1/(a b c) with a,b,c in cells.
     Q_net = Q_w * eta
     CF = 6.0 * ti.sqrt(3.0) * Q_net / (ti.math.pi * ti.sqrt(ti.math.pi))
-    if normalize_energy == 0:
-        norm_buf[None] = 0.0
-
-    for i, j, k in H:
+    for i, j, k in scratch:
+        scratch[i, j, k] = 0.0
         if flags[i, j, k] == FLAG_GAS:
             continue
         if normalize_energy != 0 and energy_per_weight <= 0.0:
@@ -263,7 +299,48 @@ def inject_goldak_heat(
         else:
             dH = CF * w * w_dep * dt / dx3
             H[i, j, k] += dH
-            ti.atomic_add(norm_buf[None], dH * dx3 * _fill_w(phi, flags, i, j, k, FLAG_GAS, fs_iface))
+            scratch[i, j, k] = dH * dx3 * _fill_w(
+                phi, flags, i, j, k, FLAG_GAS, fs_iface
+            )
+
+
+def inject_goldak_heat(
+    H, flags, phi, f_l, norm_buf,
+    arc_i, arc_j, arc_k, Q_w, dt, dx3, eta,
+    dir_x, dir_y, ff, fr, a_front, a_rear, b_axis, c_axis,
+    penetration_cells, enable_surface_weight,
+    FLAG_SOLID, FLAG_GAS, normalize_energy, fs_iface,
+    *, scratch=None, grid=None,
+):
+    """Goldak heat with an index-ordered weight (or ledger) sum.
+
+    Requires ``grid=`` so the ordered reducer can run between weight and apply.
+    """
+    if grid is None:
+        raise TypeError("inject_goldak_heat requires grid= for ordered reduction")
+    from .reduce import ordered_sum_scratch, copy_total_to_f32
+    scratch = scratch if scratch is not None else grid.reduce_scratch
+    if int(normalize_energy) != 0:
+        inject_goldak_heat_weights(
+            flags, phi, f_l, scratch,
+            arc_i, arc_j, arc_k, dir_x, dir_y, ff, fr,
+            a_front, a_rear, b_axis, c_axis,
+            penetration_cells, enable_surface_weight, FLAG_GAS, fs_iface,
+        )
+        ordered_sum_scratch(grid)
+        copy_total_to_f32(grid.reduce_total, norm_buf)
+    else:
+        norm_buf[None] = 0.0
+    inject_goldak_heat_apply(
+        H, flags, phi, f_l, norm_buf, scratch,
+        arc_i, arc_j, arc_k, Q_w, dt, dx3, eta,
+        dir_x, dir_y, ff, fr, a_front, a_rear, b_axis, c_axis,
+        penetration_cells, enable_surface_weight, FLAG_GAS,
+        normalize_energy, fs_iface,
+    )
+    if int(normalize_energy) == 0:
+        ordered_sum_scratch(grid)
+        copy_total_to_f32(grid.reduce_total, norm_buf)
 
 # ──────────────────────────────────────────────────────────────────────────────
 #  KERNEL 3 — Enthalpy-Porosity Phase Change

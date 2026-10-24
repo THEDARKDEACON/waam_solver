@@ -306,7 +306,8 @@ def feed_wire_surface(
         if r_ij2 > foot2 and r2 > r_drop2:
             continue
         f_l[i, j, k] = -1.0
-    # Pass 1b — convert marked cells under atomic volume budget
+    # Pass 1b — convert marked cells under the volume budget, in index order.
+    ti.loop_config(serialize=True)
     for i, j, k in ti.ndrange((i_min, i_max), (j_min, j_max), (k_lo, k_hi)):
         if vol_acc[None] >= target_vol:
             continue
@@ -339,7 +340,8 @@ def feed_wire_surface(
         if r_ij2 > foot2 * 1.44:
             continue
         f_l[i, j, k] = -1.0
-    # Pass 2b — convert
+    # Pass 2b — convert, still in index order.
+    ti.loop_config(serialize=True)
     for i, j, k in ti.ndrange((i_min, i_max), (j_min, j_max), (k_lo, k_hi)):
         if vol_acc[None] >= target_vol:
             continue

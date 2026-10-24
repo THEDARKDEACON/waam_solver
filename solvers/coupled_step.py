@@ -347,6 +347,8 @@ def _refresh_lbm_band(twin: "WAAMTwin", g: "WAAMGrid", band: int) -> None:
 
 def _free_surface_stream(twin: "WAAMTwin", g: "WAAMGrid") -> None:
     """Free-surface LBM stream and interface update (see kernels/fslbm.py)."""
+    from ..kernels.reduce import ordered_sum_field, add_total_to_acc
+
     nx, ny, nz = g.nx, g.ny, g.nz
     gamma = float(twin.gamma_lu) if twin.enable_csf_tension else 0.0
     kernels.fs_prepare(g.flags, g.FLAG_FLUID, g.FLAG_GAS, g.FLAG_IFACE, nx, ny, nz)
@@ -363,25 +365,33 @@ def _free_surface_stream(twin: "WAAMTwin", g: "WAAMGrid") -> None:
     )
     kernels.fs_promote_new_iface(g.flags, g.fs_mark, g.fs_mass, g.rho, g.FLAG_IFACE)
     kernels.fs_distribute_excess(
-        g.flags, g.fs_mark, g.fs_mass, g.rho, g.fs_energy, g.f_l, g.dx, g.energy_acc_J,
-        g.fs_mass_lost, g.FLAG_FLUID, g.FLAG_GAS, g.FLAG_IFACE, nx, ny, nz,
+        g.flags, g.fs_mark, g.fs_mass, g.rho, g.fs_energy, g.f_l, g.dx,
+        g.reduce_scratch, g.fs_ledger, g.fs_donor_cnt,
+        g.FLAG_FLUID, g.FLAG_GAS, g.FLAG_IFACE, nx, ny, nz,
     )
+    g.fs_mass_lost[None] = ordered_sum_field(g, g.reduce_scratch)
+    ordered_sum_field(g, g.fs_ledger)
+    add_total_to_acc(g.reduce_total, g.energy_acc_J, 3)
     kernels.fs_count_surface(
         g.flags, g.fs_mass_lost, g.fs_n_surface, g.fs_share,
         g.FLAG_GAS, g.FLAG_IFACE, nx, ny, nz,
     )
     kernels.fs_settle_unplaced(
-        g.flags, g.fs_mass, g.fs_energy, g.H, g.fs_share, g.dx, g.energy_acc_J,
+        g.flags, g.fs_mass, g.fs_energy, g.H, g.fs_share, g.dx, g.fs_ledger,
         g.FLAG_GAS, g.FLAG_IFACE, nx, ny, nz,
     )
+    ordered_sum_field(g, g.fs_ledger)
+    add_total_to_acc(g.reduce_total, g.energy_acc_J, 3)
     kernels.fs_update_phi(
         g.flags, g.phi, g.fs_mass, g.rho, g.fs_mark,
         g.FLAG_FLUID, g.FLAG_GAS, g.FLAG_IFACE,
     )
     kernels.fs_apply_energy(
-        g.H, g.flags, g.phi, g.fs_energy, g.dx, g.energy_acc_J,
+        g.H, g.flags, g.phi, g.fs_energy, g.dx, g.fs_ledger,
         g.FLAG_SOLID, g.FLAG_GAS,
     )
+    ordered_sum_field(g, g.fs_ledger)
+    add_total_to_acc(g.reduce_total, g.energy_acc_J, 3)
 
 
 def _update_time_above(twin: "WAAMTwin", g) -> None:

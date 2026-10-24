@@ -38,6 +38,12 @@ cloud_runs/
 run_out/
 runs/*
 !runs/.gitkeep
+# Steady-bead campaign: keep closed-out evidence only (regen the rest locally)
+!runs/steady/
+runs/steady/_*
+runs/steady/*.jsonl
+!runs/steady/dx030_darcy10.jsonl
+!runs/steady/dx030_undamped.jsonl
 logs/*
 !logs/.gitkeep
 jobs/notebook_session/

@@ -332,6 +332,7 @@ def fs_promote_new_iface(
             mass[i, j, k] = rho[i, j, k]
 
 
+
 @ti.kernel
 def fs_distribute_excess(
     flags: ti.template(),
@@ -341,8 +342,9 @@ def fs_distribute_excess(
     energy: ti.template(),
     f_l: ti.template(),
     dx: ti.f32,
-    energy_acc: ti.template(),
-    mass_lost: ti.template(),
+    scratch: ti.template(),
+    ledger: ti.template(),
+    donor_cnt: ti.template(),
     FLAG_FLUID: ti.i32,
     FLAG_GAS: ti.i32,
     FLAG_IFACE: ti.i32,
@@ -353,10 +355,58 @@ def fs_distribute_excess(
     """Filled → FLUID, emptied → GAS; excess mass split over IFACE neighbours.
 
     The excess carries its share of the cell's energy (all of it for an
-    emptied cell). Mass with no interface neighbour to receive it accumulates
-    (lattice units, signed) in ``mass_lost`` and its energy in energy_acc[3].
+    emptied cell). Mass with no interface neighbour is written to ``scratch``
+    (and its energy booking to ``ledger``) for an index-ordered host reduce
+    into ``mass_lost`` / energy_acc[3].
     """
     dx3 = dx * dx * dx
+    for i, j, k in flags:
+        donor_cnt[i, j, k] = 0
+        scratch[i, j, k] = 0.0
+        ledger[i, j, k] = 0.0
+        mk = mark[i, j, k]
+        if mk == MARK_FILL or mk == MARK_EMPTY:
+            m = mass[i, j, k]
+            r = rho[i, j, k]
+            ex = m - r if mk == MARK_FILL else m
+            c = 0
+            for q in ti.static(range(1, 19)):
+                ni = i + EX[q]
+                nj = j + EY[q]
+                nk = k + EZ[q]
+                if _inside(ni, nj, nk, nx, ny, nz):
+                    mn = mark[ni, nj, nk]
+                    if flags[ni, nj, nk] == FLAG_IFACE and mn != MARK_FILL and mn != MARK_EMPTY:
+                        c += 1
+            if mk == MARK_FILL and ex < 0.0:
+                c = 0
+            donor_cnt[i, j, k] = c
+    for i, j, k in flags:
+        mk = mark[i, j, k]
+        if flags[i, j, k] == FLAG_IFACE and mk != MARK_FILL and mk != MARK_EMPTY:
+            dm = 0.0
+            dE = 0.0
+            for q in ti.static(range(1, 19)):
+                si = i - EX[q]
+                sj = j - EY[q]
+                sk = k - EZ[q]
+                if _inside(si, sj, sk, nx, ny, nz):
+                    sm = mark[si, sj, sk]
+                    c = donor_cnt[si, sj, sk]
+                    if (sm == MARK_FILL or sm == MARK_EMPTY) and c > 0:
+                        m = mass[si, sj, sk]
+                        r = rho[si, sj, sk]
+                        E = energy[si, sj, sk]
+                        ex = m
+                        ex_E = E
+                        if sm == MARK_FILL:
+                            ex = m - r
+                            ex_E = E * ex / ti.max(m, 1e-6)
+                        inv = 1.0 / ti.cast(c, ti.f32)
+                        dm += ex * inv
+                        dE += ex_E * inv
+            mass[i, j, k] += dm
+            energy[i, j, k] += dE
     for i, j, k in flags:
         mk = mark[i, j, k]
         if mk == MARK_FILL or mk == MARK_EMPTY:
@@ -368,33 +418,9 @@ def fs_distribute_excess(
             if mk == MARK_FILL:
                 ex = m - r
                 ex_E = E * ex / ti.max(m, 1e-6)
-            cnt = 0
-            for q in ti.static(range(1, 19)):
-                ni = i + EX[q]
-                nj = j + EY[q]
-                nk = k + EZ[q]
-                if _inside(ni, nj, nk, nx, ny, nz):
-                    mn = mark[ni, nj, nk]
-                    if flags[ni, nj, nk] == FLAG_IFACE and mn != MARK_FILL and mn != MARK_EMPTY:
-                        cnt += 1
-            # A buried cell's deficit can be most of a cell; local neighbours
-            # would be driven past the ε clamp, so it goes to the surface fix-up.
-            if mk == MARK_FILL and ex < 0.0:
-                cnt = 0
-            if cnt > 0:
-                inv = 1.0 / ti.cast(cnt, ti.f32)
-                for q in ti.static(range(1, 19)):
-                    ni = i + EX[q]
-                    nj = j + EY[q]
-                    nk = k + EZ[q]
-                    if _inside(ni, nj, nk, nx, ny, nz):
-                        mn = mark[ni, nj, nk]
-                        if flags[ni, nj, nk] == FLAG_IFACE and mn != MARK_FILL and mn != MARK_EMPTY:
-                            ti.atomic_add(mass[ni, nj, nk], ex * inv)
-                            ti.atomic_add(energy[ni, nj, nk], ex_E * inv)
-            else:
-                mass_lost[None] += ti.cast(ex, ti.f64)
-                energy_acc[3] -= ti.cast(ex_E * dx3, ti.f64)
+            if donor_cnt[i, j, k] == 0:
+                scratch[i, j, k] = ex
+                ledger[i, j, k] = -ex_E * dx3
             energy[i, j, k] = E - ex_E
             if mk == MARK_FILL:
                 flags[i, j, k] = FLAG_FLUID
@@ -436,7 +462,7 @@ def fs_settle_unplaced(
     H: ti.template(),
     share: ti.template(),
     dx: ti.f32,
-    energy_acc: ti.template(),
+    ledger: ti.template(),
     FLAG_GAS: ti.i32,
     FLAG_IFACE: ti.i32,
     nx: ti.i32,
@@ -445,19 +471,20 @@ def fs_settle_unplaced(
 ):
     """Spread unplaced excess mass evenly over the free surface (global fix-up).
 
-    Metal moves at each surface cell's own enthalpy; the energy is booked to
-    energy_acc[3] so the ledger closes.
+    Metal moves at each surface cell's own enthalpy; the energy booking is
+    written to ``ledger`` for an index-ordered reduce into energy_acc[3].
     """
     dm = share[None]
     dx3 = dx * dx * dx
     for i, j, k in flags:
+        ledger[i, j, k] = 0.0
         if dm != 0.0 and flags[i, j, k] == FLAG_IFACE and _touches_gas(
             flags, i, j, k, FLAG_GAS, nx, ny, nz
         ):
             mass[i, j, k] += dm
             dE = dm * H[i, j, k]
             energy[i, j, k] += dE
-            energy_acc[3] += ti.cast(dE * dx3, ti.f64)
+            ledger[i, j, k] = dE * dx3
 
 
 @ti.kernel
@@ -499,13 +526,14 @@ def fs_apply_energy(
     phi: ti.template(),
     energy: ti.template(),
     dx: ti.f32,
-    energy_acc: ti.template(),
+    ledger: ti.template(),
     FLAG_SOLID: ti.i32,
     FLAG_GAS: ti.i32,
 ):
     """Recover the intensive H = E/ε on FLUID and IFACE cells."""
     dx3 = dx * dx * dx
     for i, j, k in flags:
+        ledger[i, j, k] = 0.0
         fl = flags[i, j, k]
         if fl == FLAG_GAS or fl == FLAG_SOLID:
             continue
@@ -514,7 +542,7 @@ def fs_apply_energy(
         if w >= _H_MIN_FILL:
             H[i, j, k] = E / w
         else:
-            energy_acc[3] += ti.cast((w * H[i, j, k] - E) * dx3, ti.f64)
+            ledger[i, j, k] = (w * H[i, j, k] - E) * dx3
 
 
 @ti.kernel
@@ -605,6 +633,9 @@ def fs_deposit_into_interface(
     k_lo = ti.max(0, ti.cast(arc_k - 1.0, ti.i32))
     k_hi = ti.min(nz, ti.cast(arc_k + ti.max(droplet_radius + 3.0, 4.0), ti.i32) + 1)
     foot2 = search_r * search_r * 1.44
+    # Spend the droplet budget in index order. A parallel reserve lets a
+    # different cell win the metal from run to run.
+    ti.loop_config(serialize=True)
     for i, j, k in ti.ndrange((i_min, i_max), (j_min, j_max), (k_lo, k_hi)):
         if flags[i, j, k] != FLAG_IFACE:
             continue

@@ -98,6 +98,7 @@ class Gaussian2D:
             pen_cells, enable,
             g.FLAG_SOLID, g.FLAG_GAS,
             twin.fs_iface_flag(),
+            grid=g,
         )
 
 
@@ -163,6 +164,7 @@ class Goldak3D:
             g.FLAG_SOLID, g.FLAG_GAS,
             normalize,
             twin.fs_iface_flag(),
+            grid=g,
         )
         if self.normalize_energy:
             twin._last_goldak_deposited_J = float(eta) * float(Q) * float(g.dt)

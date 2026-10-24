@@ -35,9 +35,13 @@ from .grid_init import (
 )
 from .thermal import (
     inject_arc_heat,
+    inject_arc_heat_weights,
+    inject_arc_heat_apply,
     _goldak_pdf_weight,
     _goldak_arg,
     inject_goldak_heat,
+    inject_goldak_heat_weights,
+    inject_goldak_heat_apply,
     update_phase,
     _minmod,
     _masked_at,
@@ -135,6 +139,17 @@ from .lbm import (
     count_near_vapor_cap,
     extract_fl_yz_slice,
     sync_phi_liquid_fraction,
+)
+from .reduce import (
+    REDUCE_BLOCK,
+    zero_reduce_scratch,
+    sum_blocks_ordered,
+    sum_partials_ordered,
+    copy_total_to_f32,
+    add_total_to_acc,
+    n_reduce_blocks,
+    ordered_sum_field,
+    ordered_sum_scratch,
 )
 from .fslbm import (
     fs_prepare,

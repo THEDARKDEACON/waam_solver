@@ -20,6 +20,15 @@ The compiler is [Quadrants](https://github.com/Genesis-Embodied-AI/quadrants) (i
 > at τ→0.5005. Clear clamps on HPC at **dx≲0.11 mm**:
 > [`docs/HPC_CLAMP_CLEARANCE.md`](docs/HPC_CLAMP_CLEARANCE.md),
 > [`jobs/examples/bead_clamp_hpc.yaml`](jobs/examples/bead_clamp_hpc.yaml).
+>
+> **FSLBM Park screen (2026-10).** On `dx = 0.3 mm` with the viscosity-floor
+> step, light mush damping **`C_darcy = 10`** gives a repeatable Park-width bead
+> under mean+spread rules (mean W ≥ 5.80 mm, ΔW ≤ 0.25 mm). Bit-identical GPU
+> hashes across processes are not required. The shop 0.4 mm lock
+> (`C_darcy = 160000`, `dt_scale = 1.0`) is unchanged. See
+> [`docs/HANDOFF_FSLBM_CALIBRATION.md`](docs/HANDOFF_FSLBM_CALIBRATION.md) and
+> [`tools/steady_bead.py`](tools/steady_bead.py); evidence in
+> [`runs/steady/dx030_darcy10.jsonl`](runs/steady/dx030_darcy10.jsonl).
 
 ---
 
@@ -72,7 +81,7 @@ waam_twin/                    ← git repository root (this folder)
 ├── Dockerfile                # GPU image + OpenGL/X11 (viewer + headless HPC)
 ├── docs/                     # HARDWARE, HPC, MATERIALS, VTK, LBM, weld-pool physics
 ├── scripts/hpc/              # SLURM templates + headless run_batch.py
-├── runs/                     # Batch outputs (gitignored contents)
+├── runs/                     # Batch outputs (gitignored); steady/ keeps closed-out jsonl
 ├── logs/                     # SLURM / local logs (gitignored contents)
 ├── physics/                  # Host-side orchestration (kernels/ is the GPU home)
 │   ├── thermal.py
@@ -103,6 +112,7 @@ waam_twin/                    ← git repository root (this folder)
 │   ├── prediction_report.py       # --tier shop|hpc held-out credibility
 │   ├── mesh_convergence_report.py # Equal-travel GCI (clamps=fail)
 │   ├── sensitivity_sweep.py       # Force / flag W/D ranking
+│   ├── steady_bead.py             # Park steady window + C_darcy / hash screens
 │   ├── fit_calibration.py
 │   ├── run_validation_matrix.py
 │   └── benchmark_performance.py
@@ -110,7 +120,8 @@ waam_twin/                    ← git repository root (this folder)
 │   ├── VERIFICATION.md
 │   ├── CALIBRATION.md
 │   ├── ENERGY_LEDGER.md
-│   └── HPC_CLAMP_CLEARANCE.md     # HPC dx≲0.11 Ma/force clearance
+│   ├── HPC_CLAMP_CLEARANCE.md     # HPC dx≲0.11 Ma/force clearance
+│   └── HANDOFF_FSLBM_CALIBRATION.md  # 0.3 mm light-damping Park screen
 ├── docs/validation/data/
 │   ├── published_macrograph_catalog.json
 │   └── pioneer_bruno_metrics.json
@@ -1170,14 +1181,17 @@ Tracked operational docs (in git):
 - [Hardware & presets](docs/HARDWARE.md) — backends, VRAM, environment variables  
 - [HPC — production bead runs](docs/HPC.md) — Docker + venv copy-paste  
 - [HPC clamp clearance](docs/HPC_CLAMP_CLEARANCE.md) — Ma/force clear at dx≲0.11 mm  
+- [FSLBM calibration handoff](docs/HANDOFF_FSLBM_CALIBRATION.md) — 0.3 mm / C_darcy=10 repeatable Park-width point  
 - [VERIFICATION](docs/VERIFICATION.md) · [CALIBRATION](docs/CALIBRATION.md) · [ENERGY_LEDGER](docs/ENERGY_LEDGER.md)
 
 Validation and reference data:
 
 - `python -m waam_twin.validation.run_all` — current pass/fail truth  
+- `python -m waam_twin.tools.steady_bead` — steady cross-section screen (`--c-darcy`, `--hash-fields`, `--no-lorentz`)  
 - [`jobs/examples/bead_calibrate.yaml`](jobs/examples/bead_calibrate.yaml) — Park 2019 grounded ER70S-6 calibrate lock (shop)  
 - [`jobs/examples/bead_calibrate_hpc.yaml`](jobs/examples/bead_calibrate_hpc.yaml) — same reference, HPC mesh fingerprint  
 - [`jobs/examples/bead_clamp_hpc.yaml`](jobs/examples/bead_clamp_hpc.yaml) — HPC clamp-clearance probe (not a Park lock)  
+- [`runs/steady/dx030_darcy10.jsonl`](runs/steady/dx030_darcy10.jsonl) — closed-out 0.3 mm light-damping pair (mean W 5.82, ΔW 0.07)  
 - [`docs/validation/data/published_macrograph_catalog.json`](docs/validation/data/published_macrograph_catalog.json) — cited macros + twin jobs  
 - [`docs/validation/reference_case_ER70S6.md`](docs/validation/reference_case_ER70S6.md) — lock write-up  
 - [`docs/validation/UNDERSTANDING_CALIBRATION_AND_DATA.md`](docs/validation/UNDERSTANDING_CALIBRATION_AND_DATA.md) — calibrate vs held-out  

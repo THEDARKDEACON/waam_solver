@@ -220,6 +220,12 @@ class WAAMGrid:
         self.deposit_vol_buf = ti.field(dtype=ti.f32, shape=())   # droplet budget accumulator [m³]
         self.deposit_real_buf = ti.field(dtype=ti.f32, shape=())  # actually-converted volume [m³]
         self.arc_norm_buf = ti.field(dtype=ti.f32, shape=())      # arc Gaussian weight sum
+        # Index-ordered reduction: f32 scratch → f64 block partials (len 256) → total.
+        _n_cells = int(nx) * int(ny) * int(nz)
+        _n_blocks = max(1, (_n_cells + 255) // 256)
+        self.reduce_scratch = ti.field(dtype=ti.f32, shape=shape3)
+        self.reduce_partials = ti.field(dtype=ti.f64, shape=(_n_blocks,))
+        self.reduce_total = ti.field(dtype=ti.f64, shape=())
         # Telemetry reduction scratch (host reads a few scalars, not volumes)
         self.telem_n = ti.field(dtype=ti.i32, shape=())
         self.telem_T_peak = ti.field(dtype=ti.f32, shape=())
@@ -348,8 +354,11 @@ class WAAMGrid:
         self.fs_mass_lost = ti.field(dtype=ti.f64, shape=())
         self.fs_n_surface = ti.field(dtype=ti.i32, shape=())
         self.fs_share = ti.field(dtype=ti.f32, shape=())
+        self.fs_donor_cnt = ti.field(dtype=ti.i32, shape=self._shape3)
+        # Per-cell ledger staging for ordered energy_acc[3] booking (fslbm).
+        self.fs_ledger = ti.field(dtype=ti.f32, shape=self._shape3)
         self._has_fslbm = True
-        self._n_optional_volume += 3
+        self._n_optional_volume += 5
 
     def ensure_export_buffers(self) -> None:
         if self._has_export:

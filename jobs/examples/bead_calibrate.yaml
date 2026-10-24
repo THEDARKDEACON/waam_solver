@@ -124,9 +124,12 @@ model_reference:
   f_recoil_active: true
   mesh_tier: shop
   note: "Free-surface LBM (Koerner/Thuerey) + Smagorinsky Cs=0.17. Steady cross-section\
-    \ at 2.5 s (62500 steps), slices x=22-26 mm: W 5.36 (-12%), D 1.83 (+2%), H 2.27 (+3%)\
-    \ vs Park with eta=0.82, Goldak 2.0/3.8/2.8/2.6 unchanged. eta=0.90 gave W -7% but\
-    \ D +10%, H +16%. Mesh independence not claimed (Level A FAIL_BAND locally)."
+    \ at 4.0 s, slices x=22-34 mm, mean of two runs: W 5.20 (-15%), D 1.74 (-3%),\
+    \ H_frozen 2.03 (-8%) vs Park. Knobs unchanged (eta 0.82, Goldak 2.0/3.8/2.8/2.6,\
+    \ contact 80, arc sigma 2.0). Width screen moved W by -0.02 mm (contact 60),\
+    \ +0.19 mm (Goldak b 4.0) and +0.27 mm (arc sigma 3.0); none reached 0.5 mm.\
+    \ Width bias recorded. At 0.4 mm the flow that matches Park does not repeat,\
+    \ and the flow that repeats does not match Park. Mesh independence not claimed."
 claim:
   mesh_tier: shop
   absolute_wd: true
@@ -187,6 +190,8 @@ claim:
   - residual_phi_fl_one_way_sync
   - deposition_footprint_and_trailing_solidify_priors
   - clamp_limited_regime_possible
+  - width_bias_minus_15pct_shop
+  - shop_mesh_speed_ceiling
   out_of_scope:
   - mushy_turbulence
   - pinch_droplet_detachment
