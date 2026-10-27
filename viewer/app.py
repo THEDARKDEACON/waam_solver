@@ -176,7 +176,6 @@ def run(argv: list[str] | None = None) -> None:
         extract_force_arrows_near,
         extract_haz,
         extract_melt_pool,
-        extract_surface_points,
         extract_torch_marker,
         extract_arc_attach_marker,
         extract_tracers,
@@ -238,6 +237,10 @@ def run(argv: list[str] | None = None) -> None:
     show_tracers = True
     show_torch = True
     show_surface_mesh = False
+    surface_mesh = None
+    surface_key = None
+    frames_since_surface = 0
+    surface_announced = False
     clip_x = False
     clip_y = False
     clip_z = False
@@ -313,8 +316,19 @@ def run(argv: list[str] | None = None) -> None:
             elif e.key in ("h", "H"):
                 filter_mode = FILTER_SOLID if filter_mode != FILTER_SOLID else FILTER_LIQUID
             elif e.key in ("n", "N"):
-                show_surface_mesh = not show_surface_mesh
-                print(f"[viewer] Surface view → {'φ shell (T-colored)' if show_surface_mesh else 'particles'}")
+                if not twin.enable_vof:
+                    show_surface_mesh = False
+                    print("[viewer] φ mesh needs enable_vof")
+                else:
+                    show_surface_mesh = not show_surface_mesh
+                    surface_mesh = None
+                    surface_key = None
+                    frames_since_surface = 5
+                    surface_announced = False
+                    print(
+                        "[viewer] Surface view → "
+                        + ("φ = 0.5 mesh" if show_surface_mesh else "particles")
+                    )
             elif e.key in ("y", "Y"):
                 clip_y = not clip_y
             elif e.key in ("z", "Z"):
@@ -329,6 +343,10 @@ def run(argv: list[str] | None = None) -> None:
                 session.reset_motion()
                 streamline_cache = []
                 probe_t_history.clear()
+                surface_mesh = None
+                surface_key = None
+                frames_since_surface = 5
+                surface_announced = False
             elif e.key == "=" or e.key == "+":
                 steps_per_frame = min(500, steps_per_frame + 5)
             elif e.key == "-" or e.key == "_":
@@ -414,15 +432,46 @@ def run(argv: list[str] | None = None) -> None:
 
         reset_count(count_field)
         if show_surface_mesh and twin.enable_vof:
-            extract_surface_points(
-                g.phi, g.T, g.f_l, g.flags,
-                render_pos, render_col, count_field,
-                dx_mm, offset_x_mm,
-                twin.mat.T_solidus, twin.mat.T_liquidus,
-                g.FLAG_GAS, max_cells,
-                clip_x_i, clip_y_i, clip_z_i, g.nx, g.ny, g.nz,
+            if not paused:
+                frames_since_surface += 1
+            key = (clip_x, clip_y, clip_z, int(twin.nz_solid))
+            due = (
+                surface_mesh is None
+                or key != surface_key
+                or (not paused and frames_since_surface >= 5)
             )
-        elif render_mode == MODE_TEMP:
+            if due:
+                frames_since_surface = 0
+                try:
+                    from .surface import phi_isosurface
+                    built = phi_isosurface(
+                        g.phi.to_numpy(),
+                        g.T.to_numpy(),
+                        dx_mm=dx_mm,
+                        offset_x_mm=offset_x_mm,
+                        nz_solid=int(twin.nz_solid),
+                        t_lo=float(twin.T_amb),
+                        t_hi=float(twin.mat.T_liquidus) + 800.0,
+                        clip_x=clip_x,
+                        clip_y=clip_y,
+                        clip_z=clip_z,
+                    )
+                except Exception as exc:
+                    built = None
+                    if not surface_announced:
+                        print(f"[viewer] φ mesh failed: {exc}")
+                        surface_announced = True
+                if built is not None:
+                    surface_mesh = built
+                    surface_key = key
+                    if not surface_announced:
+                        print(f"[viewer] φ=0.5 mesh  {built.n_cells} tris")
+                        surface_announced = True
+            scene.surface(surface_mesh)
+        else:
+            scene.surface(None)
+        draw_cells = not (show_surface_mesh and twin.enable_vof)
+        if draw_cells and render_mode == MODE_TEMP:
             extract_melt_pool(
                 g.f_l, g.T, g.T_max, g.phi, g.flags,
                 render_pos, render_col, count_field,
@@ -433,7 +482,7 @@ def run(argv: list[str] | None = None) -> None:
                 filter_mode, use_phi, max_cells,
                 clip_x_i, clip_y_i, clip_z_i, g.nx, g.ny, g.nz,
             )
-        elif render_mode == MODE_HAZ:
+        elif draw_cells and render_mode == MODE_HAZ:
             extract_haz(
                 g.T_max, g.f_l, g.phi, g.flags,
                 render_pos, render_col, count_field,
@@ -442,7 +491,7 @@ def run(argv: list[str] | None = None) -> None:
                 filter_mode, use_phi, max_cells,
                 clip_x_i, clip_y_i, clip_z_i, g.nx, g.ny, g.nz,
             )
-        elif render_mode == MODE_VEL:
+        elif draw_cells and render_mode == MODE_VEL:
             extract_velocity(
                 g.ux, g.uy, g.uz, g.f_l, g.phi, g.flags,
                 render_pos, render_col, count_field,
@@ -451,7 +500,7 @@ def run(argv: list[str] | None = None) -> None:
                 filter_mode, use_phi, max_cells,
                 clip_x_i, clip_y_i, clip_z_i, g.nx, g.ny, g.nz,
             )
-        elif render_mode == MODE_VORT:
+        elif draw_cells and render_mode == MODE_VORT:
             # Adaptive scale: fixed 5000/s made real pool vorticity (~10–300/s) invisible.
             vort_np = g.vorticity_mag.to_numpy()
             fl_np = g.f_l.to_numpy()
@@ -476,7 +525,7 @@ def run(argv: list[str] | None = None) -> None:
                 vort_filter, use_phi, max_cells,
                 clip_x_i, clip_y_i, clip_z_i, g.nx, g.ny, g.nz,
             )
-        else:
+        elif draw_cells:
             extract_body_force(
                 g.Fx_snap, g.Fy_snap, g.Fz_snap,
                 g.f_l, g.phi, g.flags,
@@ -717,7 +766,9 @@ def run(argv: list[str] | None = None) -> None:
         if flow_mode != FLOW_OFF and num_flow_arrows == 0:
             window.GUI.text("  (no flow arrows at torch — try B=liquid, Z=off)")
         window.GUI.text(f"Filter : {filter_labels.get(filter_mode, '?')}  (B/H/F)")
-        window.GUI.text(f"Surface: {'φ shell' if show_surface_mesh else 'particles'}  (N)")
+        window.GUI.text(
+            f"Surface: {'φ = 0.5 mesh' if show_surface_mesh else 'particles'}  (N)"
+        )
         window.GUI.text(
             f"Clip   : X={'ON' if clip_x else 'off'}(X)  "
             f"Y={'ON' if clip_y else 'off'}(Y)  "
@@ -857,7 +908,7 @@ def _print_controls() -> None:
     print("  M         Cycle view (T / HAZ / Velocity / Vorticity / Body force)")
     print("  V         Cycle flow overlay (off / arrows / streamlines)")
     print("  B / H / F Filter: all / solid / surface")
-    print("  N         Toggle φ surface shell (T-colored)")
+    print("  N         Toggle φ = 0.5 mesh (T-colored) / particles")
     print("  X / Y / Z Mid-plane thermal slice (contour-style cut)")
     print("  T / O     Toggle tracers / torch marker")
     print("  G         VTK bundle snapshot. Live probe trace is probes.csv")

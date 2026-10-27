@@ -487,6 +487,35 @@ Gap-screen summary (0.3 mm, dt_scale viscosity floor):
 Working light-damping point at 0.3 mm is C_darcy = 10. Shop 0.4 mm lock unchanged
 (C_darcy 160000, dt_scale 1.0).
 
+## 25. Held-out validation on C_darcy 10 (2026-10-24)
+
+Spec: `docs/SPEC_DX030_DARCY10_HELD_OUT.md`. Protocol: dx 0.3 mm, C_darcy 10,
+viscosity-floor step, baseline knobs (eta 0.82, Goldak 2.0/3.8/2.8/2.6). Shop
+job untouched. Calibrate baseline remains `runs/steady/dx030_darcy10.jsonl`
+(mean W 5.82, D 1.66, H_frozen 1.96, dW 0.07).
+
+### Held-outs (no retune)
+
+| case | mean W | mean D | mean H_frozen | dW | steady | vs calibrate |
+|------|--------|--------|---------------|-----|--------|--------------|
+| fast 15 mm/s (`dx030_darcy10_heldout_fast.jsonl`, x 30-36) | 4.95 | 1.25 | 1.60 | 0.15 | both | shrinks W and D |
+| hot 120 A (`dx030_darcy10_heldout_hot.jsonl`) | 6.21 | 2.08 | 2.20 | 0.09 | both | grows W and D |
+| macro2 overhead soft (`dx030_darcy10_heldout_macro2.jsonl`) | 5.62 | 1.75 | 2.10 | 0.07 | both | cite 5.7/1.9/2.5; W close, D and H soft-low |
+
+**Trends hold.** Fast shrinks, hot grows, each pair dW <= 0.25 mm.
+
+### One-knob residual screen (calibrate job only)
+
+| screen | mean W | mean D | mean H_frozen | dW | note |
+|--------|--------|--------|---------------|-----|------|
+| eta 0.86 (`dx030_darcy10_eta086.jsonl`) | 5.60 | 1.76 | 1.99 | 0.01 | D closer to Park; **W worse** |
+| Goldak c 2.4 (`dx030_darcy10_c24.jsonl`) | 5.78 | 1.65 | 1.76 | 0.08 | W not improved; H worse. Run 2 relaunched after CUDA memcpy fault mid-pair |
+
+**Decision: do not lock.** Keep eta 0.82 and Goldak c 2.6. Neither residual
+improved width. Working point stays C_darcy 10 on 0.3 mm with baseline knobs.
+Shop 0.4 mm lock unchanged (C_darcy 160000, dt_scale 1.0). Ansys Tier A remains
+a separate thermal check and was not run in this section.
+
 ## 23. Known risks / gotchas
 
 - `strict_mode: true` in the jobs: the Lorentz solver showed nondeterministic

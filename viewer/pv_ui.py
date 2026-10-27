@@ -105,6 +105,15 @@ class _Scene:
     def lines(self, vert_field, *, per_vertex_color, width: float, vertex_count: int) -> None:
         self._window._lines.append((vert_field, per_vertex_color, int(vertex_count), float(width)))
 
+    def surface(self, mesh) -> None:
+        # Same mesh object stays on the plotter. A new object replaces it.
+        # None removes the sheet.
+        win = self._window
+        if mesh is win._surface_mesh:
+            return
+        win._surface_mesh = mesh
+        win._surface_dirty = True
+
 
 class _GUI:
     def __init__(self, window: "Window") -> None:
@@ -145,6 +154,8 @@ class Window:
         self._camera = Camera()
         self._particles: list[tuple[Any, Any, int, float]] = []
         self._lines: list[tuple[Any, Any, int, float]] = []
+        self._surface_mesh: Any = None
+        self._surface_dirty = False
         self._ambient = (0.4, 0.4, 0.4)
         self._light_pos = (0.0, 0.0, 1.0)
         self._light_color = (1.0, 1.0, 1.0)
@@ -463,6 +474,25 @@ class Window:
                     rgb=True,
                     line_width=max(1.0, width),
                     name="lines",
+                    reset_camera=False,
+                    render=False,
+                )
+        if self._surface_dirty:
+            self._surface_dirty = False
+            mesh = self._surface_mesh
+            if mesh is None or getattr(mesh, "n_cells", 0) == 0:
+                if "bead_surface" in pl.actors:
+                    pl.remove_actor("bead_surface", reset_camera=False, render=False)
+            else:
+                pl.add_mesh(
+                    mesh,
+                    scalars="RGB",
+                    rgb=True,
+                    smooth_shading=True,
+                    ambient=0.4,
+                    specular=0.25,
+                    show_scalar_bar=False,
+                    name="bead_surface",
                     reset_camera=False,
                     render=False,
                 )
