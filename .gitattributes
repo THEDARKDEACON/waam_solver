@@ -1,0 +1,7 @@
+# Store text with LF in the repo; editors on Windows may check out CRLF.
+* text=auto
+*.wbpj binary
+*.pdf binary
+*.png binary
+*.npz binary
+*.vtk binary
