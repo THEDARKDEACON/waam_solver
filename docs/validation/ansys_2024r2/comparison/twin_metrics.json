@@ -1,0 +1,40 @@
+{
+  "code": "waam_twin",
+  "tier": "thermal",
+  "source_job": "jobs/examples/bead_calibrate_thermal.yaml",
+  "n_steps": 1370,
+  "dx_mm": 0.4,
+  "grid": "175\u00d7175\u00d735",
+  "material": "materials/validated/ER70S-6.v1.yaml",
+  "material_override": true,
+  "process": {
+    "current_A": 91,
+    "voltage_V": 22.0,
+    "arc_efficiency": 0.82,
+    "travel_speed_mm_s": 10.0
+  },
+  "macro": {
+    "pool_width_mm": 3.3995730853689796,
+    "pool_depth_mm": 1.6327700757074,
+    "bead_height_mm": 0.0,
+    "n_fusion_cells": 1208,
+    "T_threshold_K": 1793.15,
+    "peak_temp_C": 2759.9388671875,
+    "definition": "T_max >= T_liquidus fusion envelope (Ansys Tier A comparable)",
+    "pool_width_live_mm": 6.4,
+    "pool_depth_live_mm": 1.6,
+    "n_liquid": 294
+  },
+  "micro": {
+    "probe_peak_temp_C": null,
+    "t85_s": null,
+    "time_above_800C_s": null,
+    "time_above_1100C_s": null,
+    "note": "Fill from probe recorder / VTK HAZ if needed"
+  },
+  "experiment": {
+    "pool_width_mm": 6.1,
+    "pool_depth_mm": 1.8,
+    "source": "park_appl_sci_2019_doi_10.3390/app9214626_flat"
+  }
+}

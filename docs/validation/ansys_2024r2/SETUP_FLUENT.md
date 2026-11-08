@@ -1,47 +1,45 @@
-# Tier B — Ansys Fluent 2024 R2 (optional melt-pool CFD)
+# Tier B — Ansys Fluent 2024 R2 (VOF + deposition)
 
-Use only if Tier A isotherms already look reasonable and you need **closer**
-physics to `waam_twin` (buoyancy / optional Marangoni / melting).  
-This is a **multi-day** setup, not the primary go/no-go path.
+## Where the guide is
 
-## Scope vs twin
+**Hands-on operator guide (use this):**
 
-| Feature | Fluent Tier B (typical) | waam_twin |
-|---------|-------------------------|-----------|
-| Melting / solidification (enthalpy-porosity) | Yes | Yes |
-| Buoyancy (Boussinesq) | Yes | Yes |
-| Marangoni (surface tension gradient BC) | Possible | Yes |
-| Free-surface VOF + wire deposition | Hard / research-grade | Built-in |
-| Lorentz / recoil / Lin–Eagar pressure | Custom UDF | Built-in |
-| Goldak volumetric heating | UDF or source term | Built-in |
+`D:\ansys_2024r2\fluent_tierB\README.md`
 
-**Fair Fluent vs twin compare:** same plate, path, \(Q_\mathrm{net}\), \(T_\mathrm{liq}\),  
-report W/D from liquid fraction \(f_l \ge 0.5\) or \(T \ge T_\mathrm{liq}\).  
-Do **not** require Fluent to reproduce twin bead crown unless you invest in VOF+mass source.
+That guide assumes the **same Workbench project as Tier A**:
 
-## Suggested Fluent workflow (outline)
+`D:\ansys_2024r2\Deposit_Study.wbpj`
 
-1. **Workbench** → Fluent (with Fluent Meshing) or standalone Fluent 2024 R2.
-2. Geometry: same 60×60×10 mm plate; fluid zone = metal domain (solid region treated via mushy zone).
-3. Mesh: 0.3–0.5 mm in pool; inflation not required for first pass.
-4. Models:
-   - Energy on  
-   - Solidification/Melting on (\(T_\mathrm{sol}\), \(T_\mathrm{liq}\), \(L\), mushy zone parameter)  
-   - Optional: Viscous laminar + Boussinesq  
-   - Optional: Multiphase VOF (only if modeling free surface)
-5. Materials: steel props from `params_bead_on_plate.json`.
-6. Cell zone source: Goldak heat generation via **UDF** (adapt Mechanical macros’ formula to C UDF `DEFINE_SOURCE`).
-7. BCs: wall convection \(h=35\); top surface Marangoni shear if enabled.
-8. Transient: 2 s weld @ 10 mm/s; monitor max T and liquid volume.
-9. Export: liquid-region bounding box → W/D; probe T(t).
+Add a Fluent system beside Transient Thermal; keep Mechanical results.
+Custom UDFs, params, journals, and compare scripts stay under `fluent_tierB\`.
 
-## Effort vs value
+---
 
-| Question | Use |
-|----------|-----|
-| Can commercial thermal FEM replace the twin for W/D? | **Tier A only** |
-| Does continuum melt flow change W/D vs pure conduction? | Tier B without VOF |
-| Do we need free-surface bead + deposition? | Twin or Fluent+VOF+UDFs (expensive) |
+## Win condition
 
-For the decision “is pursuing waam_twin necessary?”, finish **Tier A + macrograph** first.
-Only open Tier B if Tier A fails for the right reasons (penetration physics), not bead cosmetics.
+- Fluent vs waam_twin CFD within +/-15% W/D (H if crown is scoreable).
+- Park etch is **not** a gate; **no** Goldak/eta retune.
+- Twin reference = dx 0.3 / C_darcy 10 CFD, **not** Tier A thermal (~3.4 mm).
+
+Tier A (Mechanical ↔ twin thermal) is finished and separate.
+
+---
+
+## Same-project note
+
+| System in Deposit_Study | Role |
+|-------------------------|------|
+| Transient Thermal (existing) | Tier A — do not delete |
+| Fluid Flow / Fluent (new) | Tier B — own geometry with air gap for VOF |
+
+Do not edit the Mechanical plate geometry in place to add the gas box; give Fluent its own Geometry cell (see README Step 2).
+
+---
+
+## Repo vs D: disk
+
+| On D: | In this repo |
+|-------|----------------|
+| Full guide, UDFs, metrics | This short pointer + Tier A Mechanical guide |
+
+Mechanical Tier A steps remain in [`SETUP_MECHANICAL.md`](SETUP_MECHANICAL.md).

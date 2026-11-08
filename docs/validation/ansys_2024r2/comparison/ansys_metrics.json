@@ -3,39 +3,44 @@
   "tier": "A_thermal_goldak",
   "source_job": "jobs/examples/bead_calibrate.yaml",
   "ansys_version": "2024 R2",
-  "time_s": 2.0,
-  "status": "awaiting_rerun_park_lock",
-  "mesh": {
-    "n_elements": null,
-    "weld_band_dx_mm": 0.5,
-    "notes": "Previous Deposit_Study run used stale 131A×10.4V + bead crown; discarded for Park lock."
+  "time_s": "max_over_time",
+  "status": "park_lock_maxOT_metrics_filled",
+  "process": {
+    "current_A": 91.0,
+    "voltage_V": 22.0,
+    "arc_efficiency": 0.82,
+    "Q_net_W": 1641.64,
+    "Q_net_note": "eta*I*V = 0.82*91*22 \u2014 locked to jobs/examples/bead_calibrate.yaml",
+    "travel_speed_mm_s": 10.0,
+    "weld_time_s": 2.0,
+    "wire_feed_m_min": 7.0,
+    "wire_diameter_mm": 1.0,
+    "ctwd_mm": 15.0,
+    "transfer": "P-GMAW (twin uses constant-I Goldak; pulse not resolved)",
+    "T_ambient_K": 293.0,
+    "T_ambient_C": 19.85
   },
   "macro": {
-    "pool_width_mm": null,
-    "pool_depth_mm": null,
-    "peak_temp_C": null,
-    "definition": "T >= T_liquidus isotherm",
-    "n_fused_nodes": null
-  },
-  "micro": {
-    "probe_name": "substrate_behind_arc",
-    "probe_xyz_mm": [20.0, 10.0, 2.0],
-    "probe_peak_temp_C": null,
-    "t85_s": null,
-    "time_above_800C_s": null,
-    "time_above_1100C_s": null
+    "pool_width_mm": 3.262,
+    "pool_depth_mm": 1.601,
+    "n_fused_nodes": 1300,
+    "section": "y=30.0",
+    "peak_temp_C": 2802.2,
+    "T_liq_C": 1519.85,
+    "definition": "max-over-time T >= T_liquidus (fusion envelope)",
+    "source_export": "Max_Over_Time.txt joined to ds.dat nblock"
   },
   "experiment": {
     "pool_width_mm": 6.1,
     "pool_depth_mm": 1.8,
     "bead_height_mm": 2.2,
-    "source": "Park et al. Appl. Sci. 2019 DOI 10.3390/app9214626 (flat P-GMAW)",
-    "process_window": "91 A × 22 V × η=0.82, 10 mm/s, ER70S-6 Ø1.0 mm, WFS 7 m/min"
+    "source": "Park et al., Appl. Sci. 2019 \u2014 flat P-GMAW etched fusion",
+    "doi": "10.3390/app9214626"
   },
   "checks": {
     "Q_net_W_verified": 1641.64,
-    "latent_heat_enabled": false,
-    "radiation_enabled": true,
-    "h_conv": 35.0
+    "h_conv": 35.0,
+    "scripts": "Park lock goldak macros",
+    "note": "Max Over Time envelope; primary section mid-path Y=30 when available"
   }
 }

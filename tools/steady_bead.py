@@ -76,6 +76,7 @@ def _write_override_job(
     dx_mm: float | None,
     sulphur_ppm: float | None,
     dt_scale: float | None = None,
+    wire_feed_m_min: float | None = None,
 ) -> pathlib.Path:
     """Copy the job (and, for sulphur, its material) under runs/steady/."""
     _STEADY.mkdir(parents=True, exist_ok=True)
@@ -85,6 +86,9 @@ def _write_override_job(
         sim["dx_mm"] = float(dx_mm)
     if dt_scale is not None:
         sim["dt_scale"] = float(dt_scale)
+    if wire_feed_m_min is not None:
+        proc = job.setdefault("process", {})
+        proc["wire_feed_m_min"] = float(wire_feed_m_min)
     if sulphur_ppm is not None:
         src = pathlib.Path(str(job.get("material", "")))
         if not src.is_absolute():
@@ -135,6 +139,10 @@ def _apply_twin_overrides(twin, args: argparse.Namespace) -> None:
         twin.C_darcy = float(args.c_darcy)
     if getattr(args, "no_lorentz", False):
         twin.enable_lorentz = False
+    if getattr(args, "trailing_solidify", False):
+        twin.enable_trailing_solidify = True
+    if getattr(args, "no_bead_freeze", False):
+        twin.enable_bead_freeze = False
 
 
 def _knobs(twin, n_steps: int) -> dict[str, Any]:
@@ -163,6 +171,9 @@ def _knobs(twin, n_steps: int) -> dict[str, Any]:
         "n_steps": int(n_steps),
         "lorentz_solve_every_s": float(twin.lorentz_solve_every_s),
         "enable_lorentz": bool(twin.enable_lorentz),
+        "wire_feed_m_min": float(getattr(twin, "wire_feed_m_s", 0.0) or 0.0) * 60.0,
+        "enable_bead_freeze": bool(getattr(twin, "enable_bead_freeze", False)),
+        "enable_trailing_solidify": bool(getattr(twin, "enable_trailing_solidify", False)),
         "strict_mode": bool(twin.strict_mode),
     }
 
@@ -212,7 +223,7 @@ def run_once(args: argparse.Namespace, job_path: pathlib.Path) -> dict[str, Any]
     wall = time.time() - t0
     section = steady_cross_section(
         twin, float(args.x0), float(args.x1), section_job.get("reference") or {},
-        area_expected_mm2=_expected_area_mm2(section_job),
+        area_expected_mm2=_expected_area_mm2(job),
     )
     record = {
         "git": _git_hash(),
@@ -331,6 +342,12 @@ def main(argv: list[str] | None = None) -> int:
                     help="Print sha256 of phi, flags, and H after the weld (determinism gate).")
     ap.add_argument("--no-lorentz", action="store_true",
                     help="Disable Lorentz on the twin (does not edit the job).")
+    ap.add_argument("--wire-feed-m-min", type=float, default=None,
+                    help="Override process.wire_feed_m_min in a temp job (0 = no droplets).")
+    ap.add_argument("--trailing-solidify", action="store_true",
+                    help="Enable trailing solidify on the twin (does not edit the shop job).")
+    ap.add_argument("--no-bead-freeze", action="store_true",
+                    help="Disable bead freeze on the twin (does not edit the shop job).")
     args = ap.parse_args(argv)
 
     job_path = pathlib.Path(args.job)
@@ -341,9 +358,18 @@ def main(argv: list[str] | None = None) -> int:
                 f"--time-s {args.time_s} passes the path end at {limit_s:.3f} s; "
                 f"a parked torch would keep heating the window"
             )
-    if args.dx is not None or args.sulphur is not None or args.dt_scale is not None:
+    if (
+        args.dx is not None
+        or args.sulphur is not None
+        or args.dt_scale is not None
+        or args.wire_feed_m_min is not None
+    ):
         job_path = _write_override_job(
-            job_path, dx_mm=args.dx, sulphur_ppm=args.sulphur, dt_scale=args.dt_scale,
+            job_path,
+            dx_mm=args.dx,
+            sulphur_ppm=args.sulphur,
+            dt_scale=args.dt_scale,
+            wire_feed_m_min=args.wire_feed_m_min,
         )
 
     out_path = pathlib.Path(args.out) if args.out else None

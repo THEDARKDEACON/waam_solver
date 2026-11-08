@@ -1,0 +1,152 @@
+# =============================================================================
+# Park flat — conduction-only Goldak, STEPPED torch path (Ansys-like stations)
+# =============================================================================
+# Borrowed from bead_calibrate_thermal.yaml. Same Q, Goldak, plate, probes.
+#
+# Difference: torch_path_csv lists discrete stations every 1 mm along
+# (30,20,0) → (30,40,0) instead of a two-point continuous line.
+#
+# Intended motion (Ansys Transient Thermal style):
+#   dwell at each station for pitch/travel_speed = 0.1 s, then jump to the next.
+#   Mean travel remains 10 mm/s; weld time remains 2.0 s (20 intervals).
+#
+# Runtime note (2026-10-29): TorchPathDriver still linearly interpolates between
+# waypoints at constant speed. This job encodes the station list and stepped
+# intent under torch_motion for a stepped runner / future driver. Do not expect
+# Ansys-identical peaks from continuous interpolation alone.
+# =============================================================================
+
+name: bead_calibrate_thermal_stepped
+
+torch_motion:
+  mode: stepped
+  station_pitch_mm: 1.0
+  dwell_s: 0.1
+  note: >
+    Stations match jobs/paths/bead_line_stepped_1mm.csv.
+    dwell_s = station_pitch_mm / travel_speed_mm_s.
+    Stepped hold-then-jump is the Ansys load-step analogue; continuous
+    TorchPathDriver ignores mode until a stepped driver is used.
+
+simulation:
+  preset: standard
+  backend: cuda
+  physics_tier: thermal
+  domain_mm: [70, 70, 14]
+  dx_mm: 0.4
+  strict_mode: true
+  use_torch_z: true
+
+  enable_vof: false
+  enable_csf_tension: false
+  enable_wetting: false
+  enable_hydrostatic_gravity: false
+  enable_bead_freeze: false
+  enable_trailing_solidify: false
+  enable_droplet_impact_pressure: false
+  enable_recoil: false
+  use_recoil_clausius_clapeyron: false
+  enable_lorentz: false
+  enable_gas_shear: false
+  enable_marangoni: false
+  enable_buoyancy: false
+  enable_arc_pressure: false
+
+  enable_enthalpy_cap: false
+  enable_evaporative_cooling: false
+  arc_surface_weighting: false
+
+plate:
+  thickness_mm: 9.0
+  size_mm: [60, 60]
+  origin_mm: [0, 0]
+  material: materials/validated/MildSteel.ansys.v1.yaml
+
+material: materials/validated/ER70S-6.v1.yaml
+calibration: null
+torch_path_csv: jobs/paths/bead_line_stepped_1mm.csv
+
+heat_source: goldak
+goldak:
+  ff: 0.6
+  fr: 1.4
+  a_front_mm: 2.0
+  a_rear_mm: 3.8
+  b_mm: 2.8
+  c_mm: 2.6
+
+arc_physics:
+  sigma_mm: 2.0
+  penetration_mm: 2.1
+  T_vapor_cap_K: 3200.0
+  surface_weighting: false
+  pressure_model: constant
+  pressure_pa: 0.0
+  pressure_sigma_mm: 2.0
+
+advanced_physics:
+  evap_cooling_scale: 1.0
+  T_boiling_K: 3000.0
+  recoil_accommodation: 0.25
+  L_vapor_J_kg: 6.0e6
+  R_spec_vapor_J_kgK: 149.0
+  lorentz_jacobi_iters: 300
+  lorentz_jacobi_tol: 0.001
+  sigma_liquid_Sm: 1.0e6
+  sigma_solid_Sm: 1.0e5
+  gas_jet_velocity_m_s: 0.0
+  gas_shear_coeff: 0.0
+  marangoni_scale: 0.0
+
+process:
+  current_A: 91
+  voltage_V: 22.0
+  arc_efficiency: 0.82
+  power_factor: 1.0
+  duty_cycle: 1.0
+  travel_speed_mm_s: 10.0
+  wire_feed_m_min: 0.0
+  wire_diameter_mm: 1.0
+  droplet_length_mm: 2.5
+  T_ambient_K: 293
+  stickout_mm: 12.0
+  ctwd_mm: 15.0
+  transfer_mode: auto
+  droplet_size_jitter: 0.0
+  impact_lead_angle_deg: 0.0
+
+deposition:
+  superheat_K: 0.0
+  footprint_sigma_scale: 1.0
+  trailing_solidify_lookback_mm: 6.0
+  trailing_solidify_temp_margin_K: 10.0
+
+surface_wetting:
+  contact_angle_deg: 90.0
+
+heat_loss:
+  convection: true
+  radiation: true
+  h_conv: 35.0
+  eps_rad: 0.4
+
+probes:
+  - name: POI_1
+    x_mm: 30.0
+    y_mm: 30.0
+    z_mm: 7.0
+  - name: POI_4
+    x_mm: 30.0
+    y_mm: 30.0
+    z_mm: 7.7
+
+reference:
+  awaiting_measurement: false
+  gate: macro_wd
+  pool_width_mm: 6.1
+  pool_depth_mm: 1.8
+  bead_height_mm: 2.2
+  source: park_appl_sci_2019_doi_10.3390/app9214626_flat
+  note: >
+    Stepped-path variant of bead_calibrate_thermal for Ansys load-step style
+    torch motion. Same plate/Goldak/probes. Not a Park fit.

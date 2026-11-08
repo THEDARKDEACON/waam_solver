@@ -516,6 +516,94 @@ improved width. Working point stays C_darcy 10 on 0.3 mm with baseline knobs.
 Shop 0.4 mm lock unchanged (C_darcy 160000, dt_scale 1.0). Ansys Tier A remains
 a separate thermal check and was not run in this section.
 
+## 26. Ansys Tier A Park-lock compare (2026-10-28)
+
+Park-lock Ansys Transient Thermal completed (QNET 1641.64 W in solve.out). Fusion
+envelope from Max Over Time nodal T joined to ds.dat XYZ:
+D:/ansys_2024r2/comparison/ansys_metrics.json — W×D = **3.26×1.60 mm** at Y=30
+(T≥1519.85 °C).
+
+Twin Tier A aligned to the same definition: ansys_compare_export on
+jobs/examples/bead_calibrate_thermal.yaml (physics_tier thermal, MildSteel.ansys
+plate, path bead_line.csv, TorchPathDriver, **1370** steps) scoring
+measure_fusion_zone_mm (T_max ≥ T_liq) → W×D = **3.40×1.63 mm**
+(twin_metrics.json). Live liquid pool kept as secondary fields only.
+
+**Ansys ↔ twin-thermal:** W 4.0%, D 1.9% — **within ±15%**. Report:
+D:/ansys_2024r2/comparison/report.md (synced under
+docs/validation/ansys_2024r2/comparison/).
+
+Both miss Park **6.1×1.8** on width (~−45%); depth closer. Rubric **(4)**: shared
+Goldak/thermal bottleneck — do **not** retune η/Goldak from Ansys. Prior full-CFD
+live-pool export (4.80×1.20) was a different metric and is not the Tier A score.
+
+## 27. CFD physics-lever screen at C_darcy 10 (2026-10-28)
+
+Protocol frozen: dx 0.3 mm, C_darcy 10, viscosity-floor step, calibrate job only
+(--time-s 4.0 --x0 22 --x1 34 --repeat 2). No eta/Goldak retune. Shop 0.4 mm
+lock untouched. Tool: steady_bead.py (added --wire-feed-m-min override).
+
+Baseline remains runs/steady/dx030_darcy10.jsonl (mean W 5.82, D 1.66,
+H_frozen 1.96; Park 6.1 / 1.8 / 2.2).
+
+| lever | jsonl | mean W | dW | mean D | mean H_frozen | steady | vs baseline W |
+|-------|-------|--------|-----|--------|---------------|--------|---------------|
+| baseline (mara 1, Lorentz on, WFS 7) | dx030_darcy10 | 5.82 | 0.07 | 1.66 | 1.96 | both | -- |
+| L1 Marangoni 0 | dx030_darcy10_mara0 | 5.75 | 0.15 | 1.63 | 1.87 | both | worse (-0.07) |
+| L2 no Lorentz | dx030_darcy10_nolorentz | 5.65 | 0.03 | 1.60 | 1.88 | both | worse (-0.17) |
+| L3 wire_feed 0 | dx030_darcy10_wfs0 | 3.88 | 0.01 | 1.84 | n/a | **fail** | collapse (-1.94); no crown |
+
+**Decision: do not lock any ablation.** Marangoni and Lorentz both *support*
+width at the working point (turning either off moves W away from Park). Zero
+wire feed removes the bead and is not a fusion-width lever. Residual gap to
+Park (~-5% W, ~-11% H_frozen) stays with the baseline knobs; next candidates
+would be freeze/trailing screens or Fluent Tier B later -- not thermal
+recalibration and not promoting C_darcy 10 into the shop lock.
+
+## 28. Freeze / trailing screen at C_darcy 10 (2026-10-28)
+
+Same protocol as section 27: dx 0.3 mm, C_darcy 10, viscosity-floor step,
+calibrate job, time 4.0 s, x 22-34, repeat 2. Tool overrides only
+(--trailing-solidify, --no-bead-freeze on steady_bead). No eta/Goldak retune.
+Shop 0.4 mm lock untouched.
+
+Baseline: runs/steady/dx030_darcy10.jsonl (mean W 5.82, D 1.66, H_frozen 1.96).
+
+| lever | jsonl | mean W | dW | mean D | mean H_frozen | steady | note |
+|-------|-------|--------|-----|--------|---------------|--------|------|
+| baseline (freeze on, trail off) | dx030_darcy10 | 5.82 | 0.07 | 1.66 | 1.96 | both | Park 6.1 / 1.8 / 2.2 |
+| trailing solidify ON | dx030_darcy10_trail | 5.75 | 0.19 | 1.62 | 1.96 | both | W worse; H mean flat; mach_frac up |
+| bead freeze OFF | dx030_darcy10_nofreeze | 5.83 | 0.14 | 1.64 | 2.04 | both | W flat; H mean closer but H spread large (1.83 vs 2.25) |
+
+**Decision: do not lock.** Trailing on does not fix height and softens width.
+Freeze off does not cleanly close Park H (noisy crown score) and is not promoted.
+Keep baseline freeze on / trailing off. Residual geometry gap stays with the
+C_darcy 10 working point (~-5% W, ~-11% H). Next would be accept-and-document
+or Fluent Tier B later — not another thermal fit.
+
+## 29. Fluent Tier B opened (VOF + deposition scaffold, 2026-10-29)
+
+Tier A Mechanical thermal remains closed (Ansys <-> twin thermal within band).
+Park residual is not a Fluent gate; no Goldak/eta retune.
+
+Scaffold on disk (not git-heavy):
+
+`D:/ansys_2024r2/fluent_tierB/`
+
+- `params_tierB.json` — Park-lock Q=1641.64 W, Goldak 2.0/3.8/2.8/2.6, path +Y 20 mm / 2 s
+- `udf/goldak_source.c`, `udf/wire_deposit.c`, `udf/common.h` (wire off until Phase 2)
+- `README.md` — mesh / VOF / melting / transient operator checklist
+- `comparison/twin_metrics_cfd.json` — from `runs/steady/dx030_darcy10.jsonl`
+  (mean W 5.82, D 1.66, H_frozen 1.96)
+- `comparison/fluent_metrics.json` — status `awaiting_fluent_solve`
+- `scripts/compare_tierB.py` — +/-15% Fluent vs twin CFD
+
+Repo pointer: `docs/validation/ansys_2024r2/SETUP_FLUENT.md`.
+
+**Next operator step:** build mesh, compile Goldak UDF, Phase 1 solve (wire off),
+fill Fluent W/D, re-run compare. Phase 2 enables wire deposit. Calendar estimate
+in the Tier B plan (~1.5-6 weeks to stable compare).
+
 ## 23. Known risks / gotchas
 
 - `strict_mode: true` in the jobs: the Lorentz solver showed nondeterministic
