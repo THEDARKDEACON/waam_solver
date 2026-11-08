@@ -234,11 +234,11 @@ def init_taichi(backend: str | None = None) -> PlatformProfile:
     if requested in _ARCH_BY_NAME:
         arch = _ARCH_BY_NAME[requested]
         backend_used = requested
-        ti.init(arch=arch, log_level=ti.WARN)
+        ti.init(arch=arch, log_level=ti.WARN, **_init_memory_kwargs())
     else:
         for name, candidate in _AUTO_ORDER:
             try:
-                ti.init(arch=candidate, log_level=ti.WARN)
+                ti.init(arch=candidate, log_level=ti.WARN, **_init_memory_kwargs())
                 arch = candidate
                 backend_used = name
                 break
@@ -269,6 +269,18 @@ def ensure_taichi() -> PlatformProfile:
     if not _taichi_initialized:
         return init_taichi()
     return _profile  # type: ignore[return-value]
+
+
+def _init_memory_kwargs() -> dict:
+    """GPU memory pool for sparse fields: WAAM_DEVICE_MEMORY_GB (default: Quadrants' 1 GB).
+
+    Dense fields do not use this pool; a sparse grid (simulation.sparse_grid)
+    allocates its active blocks from it and stops cleanly before it fills.
+    """
+    v = os.environ.get("WAAM_DEVICE_MEMORY_GB")
+    if v:
+        return {"device_memory_GB": float(v)}
+    return {}
 
 
 def reset_taichi() -> None:

@@ -71,6 +71,20 @@
         "use_free_surface_lbm": {
           "type": "boolean"
         },
+        "sparse_grid": {
+          "type": "boolean",
+          "description": "Store and compute only 8^3-cell blocks near metal (FSLBM or thermal tier); default false"
+        },
+        "sparse_halo_blocks": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Blocks kept around metal on a sparse grid (default 1 = 8 cells)"
+        },
+        "sparse_refresh_every": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Steps between sparse active-set refreshes (default 16)"
+        },
         "surface_query_every": {
           "type": "integer",
           "minimum": 1,

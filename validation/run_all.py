@@ -57,6 +57,7 @@ def core_tests() -> list[tuple[str, str]]:
         ("viewer_extract", "waam_twin.validation.test_viewer_extract"),
         ("viewer_flow_arrows", "waam_twin.validation.test_viewer_flow_arrows"),
         ("viewer_streamlines", "waam_twin.validation.test_viewer_streamlines"),
+        ("sparse_grid", "waam_twin.validation.test_sparse_grid"),
         ("export_full_vtk", "waam_twin.validation.test_export_full_vtk"),
         ("export_bundle", "waam_twin.validation.test_export_bundle"),
         ("probe_recorder", "waam_twin.validation.test_probe_recorder"),

@@ -9,6 +9,8 @@ without the arc.
 
 from __future__ import annotations
 
+from ..kernels.sparse import copy_active as _ks_copy
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -149,7 +151,7 @@ def thermal_only_step(twin: "WAAMTwin") -> None:
 
     g = twin.grid
     use_fields = _refresh_thermal(twin, g)
-    g.H_tmp.copy_from(g.H)
+    _ks_copy(g.H_tmp, g.H)
     T_cap = float(getattr(twin, "T_vapor_cap", 3200.0))
     en_c = 1 if getattr(twin, "enable_convection", True) else 0
     en_r = 1 if getattr(twin, "enable_radiation", True) else 0

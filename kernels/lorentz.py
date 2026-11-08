@@ -279,11 +279,12 @@ def elec_pcg_iterate(
     for _ in ti.static(range(n_iter)):
         scal[2] = 0.0
         for i, j, k in ti.ndrange((i0, i1), (j0, j1), (k0, k1)):
-            v = 0.0
+            # Ap is read only for unknown cells; writing it elsewhere in the
+            # box would also create blocks on a sparse grid.
             if _elec_unknown(flags, i, j, k, nz_solid, FLAG_GAS, FLAG_SOLID) == 1:
                 v = _elec_apply(p, sigma, flags, i, j, k, nz_solid, FLAG_GAS, FLAG_SOLID, nx, ny, nz)[0]
                 scal[2] += ti.cast(p[i, j, k] * v, ti.f64)
-            Ap[i, j, k] = v
+                Ap[i, j, k] = v
         scal[1] = 0.0
         scal[3] = 0.0
         for i, j, k in ti.ndrange((i0, i1), (j0, j1), (k0, k1)):

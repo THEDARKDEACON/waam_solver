@@ -80,7 +80,31 @@ class WAAMGrid:
         u_mach_limit_lu: float = 0.08,
         u_design_m_s: float = 0.5,
         tau_min: float = 0.5005,
+        sparse: bool = False,
+        sparse_block: int = 8,
     ):
+        # Requested domain in cells. Sparse mode pads each axis up to a
+        # multiple of the block size (extra gas on the +x/+y/+z faces); domain
+        # centring (plate placement, default paths) uses the requested size.
+        self.nx_req, self.ny_req, self.nz_req = int(nx), int(ny), int(nz)
+        self.sparse = bool(sparse)
+        self.sparse_block = int(sparse_block)
+        if self.sparse and not self._sparse_backend_ok():
+            # Quadrants 1.3.3 CPU struct-for over pointer blocks skips cells
+            # (96 of 24576 in validation/test_sparse_grid); every kernel uses
+            # struct-for, so the sparse grid is GPU-only.
+            from . import logging_util as _log
+            _log.warning(
+                "[WAAMGrid] sparse_grid needs a GPU backend (Quadrants CPU sparse "
+                "loops skip cells); using the dense grid"
+            )
+            self.sparse = False
+        if self.sparse:
+            B = self.sparse_block
+            nx, ny, nz = (-(-int(n) // B) * B for n in (nx, ny, nz))
+            # Cells in missing blocks read as 0, so 0 must mean gas.
+            self.FLAG_GAS = 0
+            self.FLAG_FLUID = 2
         self.nx, self.ny, self.nz = nx, ny, nz
         self.dx = dx
         self.mat = mat
@@ -190,32 +214,39 @@ class WAAMGrid:
         # construction).
         shape3 = (nx, ny, nz)
         self._shape3 = shape3
+        if self.sparse:
+            B = self.sparse_block
+            self.nb = (nx // B, ny // B, nz // B)
+            # Volume fields are created unplaced and placed together in one
+            # FieldsBuilder at the end of allocation: Quadrants 1.3.3 crashes
+            # if a shaped (root) field is created while a builder is open.
+            self._sparse_pending: list[tuple[str, object]] | None = []
 
         # Distribution functions — two full sets for ping-pong streaming
-        self.f_a = ti.field(dtype=ti.f32, shape=(Q, nx, ny, nz))
-        self.f_b = ti.field(dtype=ti.f32, shape=(Q, nx, ny, nz))
+        self.f_a = self._pop()
+        self.f_b = self._pop()
 
         # Macroscopic scalars
-        self.rho   = ti.field(dtype=ti.f32, shape=shape3)
-        self.T     = ti.field(dtype=ti.f32, shape=shape3)   # Temperature [K]
-        self.T_max = ti.field(dtype=ti.f32, shape=shape3)   # Peak Temperature [K] (HAZ)
-        self.H     = ti.field(dtype=ti.f32, shape=shape3)   # Enthalpy [J/m³]
-        self.H_tmp = ti.field(dtype=ti.f32, shape=shape3)  # M1: advection ping-pong
-        self.f_l   = ti.field(dtype=ti.f32, shape=shape3)   # Liquid fraction
-        self.phi   = ti.field(dtype=ti.f32, shape=shape3)   # VOF phase field
-        self.cp_rho_field = ti.field(dtype=ti.f32, shape=shape3)   # ρ·cp(T) [J/(m³·K)]
-        self.alpha_lu_field = ti.field(dtype=ti.f32, shape=shape3) # α_lu per cell
-        self.dgamma_lu_field = ti.field(dtype=ti.f32, shape=shape3)  # dγ/dT in LBM units
-        self.tau_field = ti.field(dtype=ti.f32, shape=shape3)        # per-cell SRT τ
-        self.alloy_id = ti.field(dtype=ti.i32, shape=shape3)         # 0=wire, 1=plate (birth)
-        self.alloy_frac = ti.field(dtype=ti.f32, shape=shape3)       # 0=wire … 1=plate
-        self.alloy_frac_buf = ti.field(dtype=ti.f32, shape=shape3)   # Jacobi scratch for mixing
-        self.dT_dt = ti.field(dtype=ti.f32, shape=shape3)   # Cooling rate [K/s]
-        self.T_prev = ti.field(dtype=ti.f32, shape=shape3)  # Previous-step T
+        self.rho   = self._vol(ti.f32)
+        self.T     = self._vol(ti.f32)   # Temperature [K]
+        self.T_max = self._vol(ti.f32)   # Peak Temperature [K] (HAZ)
+        self.H     = self._vol(ti.f32)   # Enthalpy [J/m³]
+        self.H_tmp = self._vol(ti.f32)  # M1: advection ping-pong
+        self.f_l   = self._vol(ti.f32)   # Liquid fraction
+        self.phi   = self._vol(ti.f32)   # VOF phase field
+        self.cp_rho_field = self._vol(ti.f32)   # ρ·cp(T) [J/(m³·K)]
+        self.alpha_lu_field = self._vol(ti.f32) # α_lu per cell
+        self.dgamma_lu_field = self._vol(ti.f32)  # dγ/dT in LBM units
+        self.tau_field = self._vol(ti.f32)        # per-cell SRT τ
+        self.alloy_id = self._vol(ti.i32)         # 0=wire, 1=plate (birth)
+        self.alloy_frac = self._vol(ti.f32)       # 0=wire … 1=plate
+        self.alloy_frac_buf = self._vol(ti.f32)   # Jacobi scratch for mixing
+        self.dT_dt = self._vol(ti.f32)   # Cooling rate [K/s]
+        self.T_prev = self._vol(ti.f32)  # Previous-step T
         # Time-at-temperature integrals [s] (HAZ research)
-        self.time_above_800_s = ti.field(dtype=ti.f32, shape=shape3)
-        self.time_above_1100_s = ti.field(dtype=ti.f32, shape=shape3)
-        self.time_above_solidus_s = ti.field(dtype=ti.f32, shape=shape3)
+        self.time_above_800_s = self._vol(ti.f32)
+        self.time_above_1100_s = self._vol(ti.f32)
+        self.time_above_solidus_s = self._vol(ti.f32)
         self.surface_k_buf = ti.field(dtype=ti.f32, shape=())  # arc height query
         self.deposit_vol_buf = ti.field(dtype=ti.f32, shape=())   # droplet budget accumulator [m³]
         self.deposit_real_buf = ti.field(dtype=ti.f32, shape=())  # actually-converted volume [m³]
@@ -223,7 +254,7 @@ class WAAMGrid:
         # Index-ordered reduction: f32 scratch → f64 block partials (len 256) → total.
         _n_cells = int(nx) * int(ny) * int(nz)
         _n_blocks = max(1, (_n_cells + 255) // 256)
-        self.reduce_scratch = ti.field(dtype=ti.f32, shape=shape3)
+        self.reduce_scratch = self._vol(ti.f32)
         self.reduce_partials = ti.field(dtype=ti.f64, shape=(_n_blocks,))
         self.reduce_total = ti.field(dtype=ti.f64, shape=())
         # Coalesced ordered reduction: (j,k) plane over i, then j lines over k.
@@ -259,20 +290,20 @@ class WAAMGrid:
         self.tracer_head     = ti.field(dtype=ti.i32, shape=())
 
         # Macroscopic velocity components (SoA: separate fields per axis)
-        self.ux = ti.field(dtype=ti.f32, shape=shape3)
-        self.uy = ti.field(dtype=ti.f32, shape=shape3)
-        self.uz = ti.field(dtype=ti.f32, shape=shape3)
+        self.ux = self._vol(ti.f32)
+        self.uy = self._vol(ti.f32)
+        self.uz = self._vol(ti.f32)
 
         # Body force components
-        self.Fx = ti.field(dtype=ti.f32, shape=shape3)
-        self.Fy = ti.field(dtype=ti.f32, shape=shape3)
-        self.Fz = ti.field(dtype=ti.f32, shape=shape3)
+        self.Fx = self._vol(ti.f32)
+        self.Fy = self._vol(ti.f32)
+        self.Fz = self._vol(ti.f32)
         # Body forces are cleared at the start of a step and untouched after
         # collision, so between steps F already is the end-of-step snapshot.
         self.Fx_snap, self.Fy_snap, self.Fz_snap = self.Fx, self.Fy, self.Fz
 
         # Cell type flags
-        self.flags = ti.field(dtype=ti.i32, shape=shape3)
+        self.flags = self._vol(ti.i32)
 
         # Expose velocity set constants as Taichi fields for kernel access
         self.ex = ti.field(dtype=ti.i32, shape=(Q,))
@@ -281,6 +312,31 @@ class WAAMGrid:
         self.w  = ti.field(dtype=ti.f32, shape=(Q,))
         self.opp = ti.field(dtype=ti.i32, shape=(Q,))
 
+
+        # Core volume count: see lattice.N_CORE_VOLUME
+        self._n_core_volume = N_CORE_VOLUME
+
+        if self.sparse:
+            # One block tree for every volume field: allocate the optional
+            # ones now (they cost nothing until a block is active), then
+            # finalize. Block masks for the activation pass are dense.
+            self.ensure_vof_buffers()
+            self.ensure_lorentz_fields()
+            self.ensure_export_buffers()
+            self.ensure_lbm_band_fields()
+            self.ensure_fslbm_fields()
+            self._sparse_finalize()
+            self.blk_need = ti.field(dtype=ti.u8, shape=self.nb)
+            self.blk_keep = ti.field(dtype=ti.u8, shape=self.nb)
+        else:
+            if allocate_vof:
+                self.ensure_vof_buffers()
+            if allocate_lorentz:
+                self.ensure_lorentz_fields()
+            if allocate_export:
+                self.ensure_export_buffers()
+
+        # Uploads launch kernels, so they follow the (sparse) tree finalize.
         import numpy as np
         self.ex.from_numpy(np.array(_EX, dtype=np.int32))
         self.ey.from_numpy(np.array(_EY, dtype=np.int32))
@@ -288,20 +344,69 @@ class WAAMGrid:
         self.w.from_numpy(np.array(_W,   dtype=np.float32))
         self.opp.from_numpy(np.array(_OPP, dtype=np.int32))
 
-        # Core volume count: see lattice.N_CORE_VOLUME
-        self._n_core_volume = N_CORE_VOLUME
-
-        if allocate_vof:
-            self.ensure_vof_buffers()
-        if allocate_lorentz:
-            self.ensure_lorentz_fields()
-        if allocate_export:
-            self.ensure_export_buffers()
-
         # ── Pointer swap state ───────────────────────────────────────────
         # We swap src/dst each step to avoid copying distribution data.
         self._read_buf  = self.f_a
         self._write_buf = self.f_b
+
+    def _vol(self, dtype):
+        """Full-volume field: dense, or a block of the sparse tree."""
+        if not self.sparse:
+            return ti.field(dtype=dtype, shape=self._shape3)
+        if self._sparse_pending is None:
+            raise RuntimeError("sparse grid: all volume fields must exist before finalize")
+        f = ti.field(dtype=dtype)
+        self._sparse_pending.append(("vol", f))
+        return f
+
+    def _sparse_finalize(self) -> None:
+        """Place every pending volume field under the two block pointers."""
+        B = self.sparse_block
+        fb = ti.FieldsBuilder()
+        # Identical block coordinates: 3-D fields (axes i,j,k) and the
+        # populations f[q,i,j,k] (axes 1,2,3).
+        self._ptr3 = fb.pointer(ti.ijk, self.nb)
+        self._ptr4 = fb.pointer(ti.axes(1, 2, 3), self.nb)
+        soa = self._sparse_pop_soa()
+        for kind, f in self._sparse_pending:
+            if kind == "vol":
+                self._ptr3.dense(ti.ijk, B).place(f)
+            elif soa:
+                self._ptr4.dense(ti.axes(0), Q).dense(ti.axes(1, 2, 3), B).place(f)
+            else:
+                self._ptr4.dense(ti.axes(1, 2, 3), B).dense(ti.axes(0), Q).place(f)
+        self._sparse_tree = fb.finalize()
+        # Bytes one active block occupies across every field (memory guard).
+        nbytes = {ti.f32: 4, ti.i32: 4, ti.u8: 1, ti.f64: 8}
+        per_cell = 0
+        for kind, f in self._sparse_pending:
+            per_cell += Q * 4 if kind == "pop" else nbytes.get(f.dtype, 4)
+        self.sparse_bytes_per_block = per_cell * B ** 3
+        self._sparse_pending = None
+
+    def _pop(self):
+        """Distribution set f[q, i, j, k].
+
+        Sparse layout inside a block: SoA (one 8³ run per q, coalesced) on
+        GPUs; AoS (19 values per cell) on CPU, because Quadrants 1.3.3's CPU
+        struct-for over the SoA-in-pointer layout visits the wrong cells
+        (9234 of 9728 in a one-block test) — see validation/test_sparse_grid.
+        """
+        if not self.sparse:
+            return ti.field(dtype=ti.f32, shape=(Q, self.nx, self.ny, self.nz))
+        f = ti.field(dtype=ti.f32)
+        self._sparse_pending.append(("pop", f))
+        return f
+
+    @staticmethod
+    def _sparse_backend_ok() -> bool:
+        from quadrants.lang import impl
+        return impl.current_cfg().arch not in (ti.cpu, ti.x64, ti.arm64)
+
+    @staticmethod
+    def _sparse_pop_soa() -> bool:
+        from quadrants.lang import impl
+        return impl.current_cfg().arch not in (ti.cpu, ti.x64, ti.arm64)
 
     # ──────────────────────────────────────────────────────────────────────
     #  Optional field allocation (lazy; jobs may enable features post-init)
@@ -310,7 +415,7 @@ class WAAMGrid:
     def ensure_vof_buffers(self) -> None:
         if self._has_vof_buf:
             return
-        self.phi_tmp = ti.field(dtype=ti.f32, shape=self._shape3)
+        self.phi_tmp = self._vol(ti.f32)
         self._has_vof_buf = True
         self._n_optional_volume += 1
 
@@ -318,24 +423,24 @@ class WAAMGrid:
         if self._has_lorentz:
             return
         shape3 = self._shape3
-        self.phi_elec = ti.field(dtype=ti.f32, shape=shape3)
-        self.phi_elec_tmp = ti.field(dtype=ti.f32, shape=shape3)
-        self.sigma_elec = ti.field(dtype=ti.f32, shape=shape3)
-        self.elec_source = ti.field(dtype=ti.f32, shape=shape3)
-        self.Jx = ti.field(dtype=ti.f32, shape=shape3)
-        self.Jy = ti.field(dtype=ti.f32, shape=shape3)
-        self.Jz = ti.field(dtype=ti.f32, shape=shape3)
-        self.Bx = ti.field(dtype=ti.f32, shape=shape3)
-        self.By = ti.field(dtype=ti.f32, shape=shape3)
-        self.Bz = ti.field(dtype=ti.f32, shape=shape3)
+        self.phi_elec = self._vol(ti.f32)
+        self.phi_elec_tmp = self._vol(ti.f32)
+        self.sigma_elec = self._vol(ti.f32)
+        self.elec_source = self._vol(ti.f32)
+        self.Jx = self._vol(ti.f32)
+        self.Jy = self._vol(ti.f32)
+        self.Jz = self._vol(ti.f32)
+        self.Bx = self._vol(ti.f32)
+        self.By = self._vol(ti.f32)
+        self.Bz = self._vol(ti.f32)
         self.n_elec_bins = N_ELEC_BINS
         self.elec_rad_bins = ti.field(dtype=ti.f32, shape=(self.nz, self.n_elec_bins))
         self.elec_res_buf = ti.field(dtype=ti.f32, shape=())
         self.elec_norm_buf = ti.field(dtype=ti.f32, shape=())
         # CG residual / direction / A·p; phi_elec_tmp holds the Jacobi preconditioner.
-        self.elec_r = ti.field(dtype=ti.f32, shape=shape3)
-        self.elec_p = ti.field(dtype=ti.f32, shape=shape3)
-        self.elec_Ap = ti.field(dtype=ti.f32, shape=shape3)
+        self.elec_r = self._vol(ti.f32)
+        self.elec_p = self._vol(ti.f32)
+        self.elec_Ap = self._vol(ti.f32)
         self.elec_scal = ti.field(dtype=ti.f64, shape=8)
         self.elec_box = ti.field(dtype=ti.i32, shape=6)
         self._elec_rel_residual = float("inf")
@@ -345,31 +450,31 @@ class WAAMGrid:
     def ensure_lbm_band_fields(self) -> None:
         if self._has_lbm_band:
             return
-        self.lbm_active = ti.field(dtype=ti.u8, shape=self._shape3)
-        self.lbm_band_tmp = ti.field(dtype=ti.u8, shape=self._shape3)
+        self.lbm_active = self._vol(ti.u8)
+        self.lbm_band_tmp = self._vol(ti.u8)
         self._has_lbm_band = True
         self._n_optional_volume += 1  # two u8 volumes ≈ half an f32 volume
 
     def ensure_fslbm_fields(self) -> None:
         if self._has_fslbm:
             return
-        self.fs_mass = ti.field(dtype=ti.f32, shape=self._shape3)
-        self.fs_mark = ti.field(dtype=ti.i32, shape=self._shape3)
-        self.fs_energy = ti.field(dtype=ti.f32, shape=self._shape3)
+        self.fs_mass = self._vol(ti.f32)
+        self.fs_mark = self._vol(ti.i32)
+        self.fs_energy = self._vol(ti.f32)
         self.fs_mass_lost = ti.field(dtype=ti.f64, shape=())
         self.fs_n_surface = ti.field(dtype=ti.i32, shape=())
         self.fs_share = ti.field(dtype=ti.f32, shape=())
-        self.fs_donor_cnt = ti.field(dtype=ti.i32, shape=self._shape3)
+        self.fs_donor_cnt = self._vol(ti.i32)
         # Per-cell ledger staging for ordered energy_acc[3] booking (fslbm).
-        self.fs_ledger = ti.field(dtype=ti.f32, shape=self._shape3)
+        self.fs_ledger = self._vol(ti.f32)
         self._has_fslbm = True
         self._n_optional_volume += 5
 
     def ensure_export_buffers(self) -> None:
         if self._has_export:
             return
-        self.kappa_field = ti.field(dtype=ti.f32, shape=self._shape3)
-        self.vorticity_mag = ti.field(dtype=ti.f32, shape=self._shape3)
+        self.kappa_field = self._vol(ti.f32)
+        self.vorticity_mag = self._vol(ti.f32)
         self._has_export = True
         self._n_optional_volume += 2
 

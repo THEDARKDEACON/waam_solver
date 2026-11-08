@@ -4,6 +4,8 @@ twin.py — WAAMTwin v2 orchestrator
 
 from __future__ import annotations
 
+from .kernels.sparse import copy_active as _ks_copy
+
 import math
 import pathlib
 from typing import Any
@@ -153,6 +155,7 @@ class WAAMTwin:
         wire_diameter_mm: float = 1.2,
         arc_sigma_mm: float = 2.0,
         bulk_tau: float | None = None,
+        sparse_grid: bool = False,
         dt_scale: float = 1.0,
         warn_on_force_clamp: bool = False,
         auto_dt_ma: bool = False,
@@ -252,7 +255,11 @@ class WAAMTwin:
             u_design_m_s=self.u_design_m_s,
             # SRT needs a higher floor; MRT is the production path near 0.5005.
             tau_min=0.505 if use_srt else 0.5005,
+            sparse=bool(sparse_grid),
         )
+        # Sparse grid: blocks of 8³ cells exist only near metal (physics/sparse_grid.py).
+        self.sparse_halo_blocks = 1
+        self.sparse_refresh_every = 16
         self.warn_on_force_clamp = bool(warn_on_force_clamp)
         self.enable_droplet_impact_pressure = enable_droplet_impact_pressure
         self.use_recoil_clausius_clapeyron = use_recoil_clausius_clapeyron
@@ -556,22 +563,25 @@ class WAAMTwin:
         """
         g = self.grid
         dx_mm = g.dx * 1000.0
+        # Centre on the requested domain: a sparse grid pads nx/ny with gas.
+        nx_c = int(getattr(g, "nx_req", g.nx))
+        ny_c = int(getattr(g, "ny_req", g.ny))
         if not getattr(self, "plate_size_mm", None):
-            return 0, g.nx, 0, g.ny
+            return 0, nx_c, 0, ny_c
 
         lx, ly = float(self.plate_size_mm[0]), float(self.plate_size_mm[1])
         ni = max(1, int(round(lx / dx_mm)))
         nj = max(1, int(round(ly / dx_mm)))
-        ni = min(ni, g.nx)
-        nj = min(nj, g.ny)
+        ni = min(ni, nx_c)
+        nj = min(nj, ny_c)
 
         if getattr(self, "plate_origin_mm", None) is not None:
             x0, y0 = float(self.plate_origin_mm[0]), float(self.plate_origin_mm[1])
             i0 = int(round(x0 / dx_mm))
             j0 = int(round(y0 / dx_mm))
         else:
-            i0 = (g.nx - ni) // 2
-            j0 = (g.ny - nj) // 2
+            i0 = (nx_c - ni) // 2
+            j0 = (ny_c - nj) // 2
 
         i0 = max(0, min(i0, g.nx - ni))
         j0 = max(0, min(j0, g.ny - nj))
@@ -781,6 +791,11 @@ class WAAMTwin:
             ctor_kw["force_limit_m_s2"] = float(v)
         if "bulk_tau" in adv_job and adv_job["bulk_tau"] is not None:
             ctor_kw["bulk_tau"] = float(adv_job["bulk_tau"])
+        v = _sim_or_adv("sparse_grid")
+        if "sparse_grid" in kwargs:  # caller override (viewer --sparse)
+            v = kwargs.pop("sparse_grid")
+        if v is not None:
+            ctor_kw["sparse_grid"] = bool(v)
 
         twin = cls.from_preset(
             preset=preset,
@@ -862,6 +877,16 @@ class WAAMTwin:
             i0, i1, j0, j1 = self.resolve_plate_ij()
 
         pmat = self.plate_mat or self.mat
+        if getattr(g, "sparse", False):
+            from .physics import sparse_grid
+            sparse_grid.check_supported(self)
+            self._sparse_gas_state = (
+                float(T0), float(RHO_LATTICE), float(_enthalpy_factor(self.mat, T0)) * float(T0),
+            )
+            full = test_fluid_domain or (i0 == 0 and j0 == 0 and i1 >= g.nx_req and j1 >= g.ny_req)
+            sparse_grid.activate_for_reset(
+                self, full, (i0, i1, j0, j1, int(plate_k0), max(int(nz_solid), 0)),
+            )
         kernels.init_grid(
             g.f_a, g.rho, g.ux, g.uy, g.uz,
             g.T, g.H, g.f_l, g.phi, g.flags, g.alloy_id, g.alloy_frac,
@@ -918,9 +943,16 @@ class WAAMTwin:
         # enthalpy-ceiling clamp does not see zero cp_rho_field.
         from .solvers.coupled_step import _refresh_thermal
         _refresh_thermal(self, g)
-        g.H_tmp.copy_from(g.H)
+        _ks_copy(g.H_tmp, g.H)
         from .physics.ledger import ensure_ledger
         ensure_ledger(self)
+        if getattr(g, "sparse", False):
+            from .physics import sparse_grid
+            sparse_grid.refresh(self)
+            log.info(
+                f"[WAAMTwin] sparse grid: {sparse_grid.active_fraction(self) * 100:.1f}% of "
+                f"{g.nb[0]}×{g.nb[1]}×{g.nb[2]} blocks active"
+            )
         log.info(f"[WAAMTwin] Grid reset. T_ambient={T0:.1f}K  test_fluid={test_fluid_domain}")
 
     def step(

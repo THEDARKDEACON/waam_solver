@@ -923,7 +923,7 @@ def mix_alloy_fusion_zone(
     Solid / mush cells (f_l < 0.5) freeze their fraction. Gas is skipped.
     Birth ``alloy_id`` is unchanged — this only updates ``alloy_frac``.
     """
-    for i, j, k in ti.ndrange(nx, ny, nz):
+    for i, j, k in alloy_frac:
         alloy_frac_buf[i, j, k] = alloy_frac[i, j, k]
         if flags[i, j, k] == FLAG_GAS:
             continue
@@ -946,7 +946,7 @@ def mix_alloy_fusion_zone(
         avg = acc / n
         mixed = alloy_frac[i, j, k] * (1.0 - mix_rate) + avg * mix_rate
         alloy_frac_buf[i, j, k] = ti.min(1.0, ti.max(0.0, mixed))
-    for i, j, k in ti.ndrange(nx, ny, nz):
+    for i, j, k in alloy_frac:
         alloy_frac[i, j, k] = alloy_frac_buf[i, j, k]
 
 # ──────────────────────────────────────────────────────────────────────────────

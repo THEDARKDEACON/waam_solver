@@ -4,6 +4,8 @@ coupled_step.py — v2 simulation orchestration (single physics timestep order).
 
 from __future__ import annotations
 
+from ..kernels.sparse import copy_active as _ks_copy
+
 from typing import TYPE_CHECKING
 
 from ..physics import thermal, phase_change, forces, free_surface, lbm, deposition, weld_forces
@@ -260,7 +262,7 @@ def _inject_arc(twin: "WAAMTwin", g, arc_i: float, arc_j: float, arc_k: float) -
 def _conduct_and_recover(twin: "WAAMTwin", g, use_fields: bool) -> None:
     """Advection–diffusion, surface losses, evaporation and T/f_l recovery."""
     # M1: snapshot H before advection so neighbour reads are race-free.
-    g.H_tmp.copy_from(g.H)
+    _ks_copy(g.H_tmp, g.H)
     fs_iface = twin.fs_iface_flag()
     if use_fields:
         thermal.advect_diffuse_variable(
@@ -387,7 +389,7 @@ def _refresh_lbm_band(twin: "WAAMTwin", g: "WAAMGrid", band: int) -> None:
     kernels.dilate_mask_axis(g.lbm_active, g.lbm_band_tmp, band, 0, g.nx)
     kernels.dilate_mask_axis(g.lbm_band_tmp, g.lbm_active, band, 1, g.ny)
     kernels.dilate_mask_axis(g.lbm_active, g.lbm_band_tmp, band, 2, g.nz)
-    g.lbm_active.copy_from(g.lbm_band_tmp)
+    _ks_copy(g.lbm_active, g.lbm_band_tmp)
     twin._lbm_band_state = (key, twin._step_n)
 
 
@@ -478,6 +480,9 @@ def coupled_step(
     discretization error, but it is a systematic phase lag — halve dt to
     check sensitivity if you operate at extreme surface-tension gradients.
     """
+    if getattr(twin.grid, "sparse", False):
+        from ..physics import sparse_grid
+        sparse_grid.maybe_refresh(twin)
     if twin.thermal_fast_path:
         from .thermal_only import thermal_tier_step
         thermal_tier_step(twin, torch_x_m, torch_y_m, is_welding, torch_z_m)
@@ -548,6 +553,16 @@ def coupled_step(
                 from ..physics.heat_source import wire_volumetric_enthalpy_J_m3
                 H_drop = float(wire_volumetric_enthalpy_J_m3(twin, T_drop))
                 L_eff = H_drop - float(twin.cp_rho) * float(T_drop)
+                if getattr(g, "sparse", False):
+                    # The search box may reach blocks that do not exist yet.
+                    from ..physics import sparse_grid
+                    rb = int(max_r_cells * 1.2 + drop_r) + 3
+                    kb = int(drop_r + 8)
+                    sparse_grid.activate_cell_box(
+                        twin, int(arc_i) - rb, int(arc_i) + rb + 1,
+                        int(arc_j) - rb, int(arc_j) + rb + 1,
+                        int(arc_k) - 2, int(arc_k) + kb,
+                    )
                 for _ in range(16):
                     # Resume budget from metal already placed so retries expand
                     # the footprint instead of re-filling with thermal no-ops.
@@ -634,7 +649,7 @@ def coupled_step(
             g.FLAG_SOLID, g.FLAG_GAS,
             g.nx, g.ny, g.nz,
         )
-        g.phi.copy_from(g.phi_tmp)
+        _ks_copy(g.phi, g.phi_tmp)
         free_surface.reinitialize_phi(
             g.phi, g.flags, g.FLAG_SOLID, g.FLAG_GAS, g.FLAG_FLUID,
         )
