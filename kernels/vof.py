@@ -521,6 +521,35 @@ def apply_contact_angle_phi_bc(
 # ──────────────────────────────────────────────────────────────────────────────
 #  KERNEL 5 — Marangoni CSF Force Assembly
 # ──────────────────────────────────────────────────────────────────────────────
+@ti.func
+def _surface_dT(
+    T: ti.template(),
+    flags: ti.template(),
+    i: ti.i32, j: ti.i32, k: ti.i32,
+    FLAG_GAS: ti.i32,
+    nx: ti.i32, ny: ti.i32, nz: ti.i32,
+):
+    """Central ∇T on the metal side: a GAS neighbour takes the centre T.
+
+    Gas temperatures are not part of the melt; with fractional fill they
+    leak a tangential component through the (I − n̂n̂) projection.
+    """
+    Tc = T[i, j, k]
+    ip = ti.min(i + 1, nx - 1)
+    im = ti.max(i - 1, 0)
+    jp = ti.min(j + 1, ny - 1)
+    jm = ti.max(j - 1, 0)
+    kp = ti.min(k + 1, nz - 1)
+    km = ti.max(k - 1, 0)
+    Txp = ti.select(flags[ip, j, k] == FLAG_GAS, Tc, T[ip, j, k])
+    Txm = ti.select(flags[im, j, k] == FLAG_GAS, Tc, T[im, j, k])
+    Typ = ti.select(flags[i, jp, k] == FLAG_GAS, Tc, T[i, jp, k])
+    Tym = ti.select(flags[i, jm, k] == FLAG_GAS, Tc, T[i, jm, k])
+    Tzp = ti.select(flags[i, j, kp] == FLAG_GAS, Tc, T[i, j, kp])
+    Tzm = ti.select(flags[i, j, km] == FLAG_GAS, Tc, T[i, j, km])
+    return 0.5 * (Txp - Txm), 0.5 * (Typ - Tym), 0.5 * (Tzp - Tzm)
+
+
 @ti.kernel
 def compute_marangoni_force(
     T:    ti.template(),
@@ -568,9 +597,7 @@ def compute_marangoni_force(
         ny_n = dphi_y / grad_phi_mag
         nz_n = dphi_z / grad_phi_mag
 
-        dT_x = 0.5 * (T[ti.min(i+1,nx-1), j, k] - T[ti.max(i-1,0), j, k])
-        dT_y = 0.5 * (T[i, ti.min(j+1,ny-1), k] - T[i, ti.max(j-1,0), k])
-        dT_z = 0.5 * (T[i, j, ti.min(k+1,nz-1)] - T[i, j, ti.max(k-1,0)])
+        dT_x, dT_y, dT_z = _surface_dT(T, flags, i, j, k, FLAG_GAS, nx, ny, nz)
 
         n_dot_gradT = nx_n*dT_x + ny_n*dT_y + nz_n*dT_z
         dTs_x = dT_x - n_dot_gradT * nx_n
@@ -620,9 +647,7 @@ def compute_marangoni_force_variable(
         ny_n = dphi_y / grad_phi_mag
         nz_n = dphi_z / grad_phi_mag
 
-        dT_x = 0.5 * (T[ti.min(i + 1, nx - 1), j, k] - T[ti.max(i - 1, 0), j, k])
-        dT_y = 0.5 * (T[i, ti.min(j + 1, ny - 1), k] - T[i, ti.max(j - 1, 0), k])
-        dT_z = 0.5 * (T[i, j, ti.min(k + 1, nz - 1)] - T[i, j, ti.max(k - 1, 0)])
+        dT_x, dT_y, dT_z = _surface_dT(T, flags, i, j, k, FLAG_GAS, nx, ny, nz)
 
         n_dot_gradT = nx_n * dT_x + ny_n * dT_y + nz_n * dT_z
         dTs_x = dT_x - n_dot_gradT * nx_n
