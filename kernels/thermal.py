@@ -149,6 +149,12 @@ def _goldak_arg(
 
 
 @ti.func
+def _goldak_dk(k: ti.i32, arc_k: ti.f32) -> ti.f32:
+    """Cell-centre height relative to the surface face (arc_k + 1); ≤ 0 is metal side."""
+    return ti.f32(k) + 0.5 - (arc_k + 1.0)
+
+
+@ti.func
 def _goldak_pdf_weight(
     di: ti.f32,
     dj: ti.f32,
@@ -223,7 +229,12 @@ def inject_goldak_heat_weights(
             continue
         di = ti.f32(i) + 0.5 - arc_i
         dj = ti.f32(j) + 0.5 - arc_j
-        dk = ti.f32(k) + 0.5 - arc_k
+        # Depth below the surface face. arc_k is the top metal cell, so the
+        # face is arc_k + 1. Goldak is a half-space source: the 6√3/(π√π)
+        # CF integrates to ηQ over z ≤ face only.
+        dk = _goldak_dk(k, arc_k)
+        if dk > 0.0:
+            continue
         w = _goldak_pdf_weight(
             di, dj, dk, dir_x, dir_y, ff, fr,
             a_front, a_rear, b_axis, c_axis,
@@ -275,15 +286,22 @@ def inject_goldak_heat_apply(
             continue
         if normalize_energy != 0 and energy_per_weight <= 0.0:
             continue
-        w_dep = arc_deposition_weight(
-            i, j, k, arc_i, arc_j, arc_k,
-            f_l[i, j, k], penetration_cells, enable_surface_weight,
-        )
-        if w_dep < 1e-6:
-            continue
+        w_dep = 1.0
+        if normalize_energy != 0:
+            w_dep = arc_deposition_weight(
+                i, j, k, arc_i, arc_j, arc_k,
+                f_l[i, j, k], penetration_cells, enable_surface_weight,
+            )
+            if w_dep < 1e-6:
+                continue
         di = ti.f32(i) + 0.5 - arc_i
         dj = ti.f32(j) + 0.5 - arc_j
-        dk = ti.f32(k) + 0.5 - arc_k
+        # Depth below the surface face. arc_k is the top metal cell, so the
+        # face is arc_k + 1. Goldak is a half-space source: the 6√3/(π√π)
+        # CF integrates to ηQ over z ≤ face only.
+        dk = _goldak_dk(k, arc_k)
+        if dk > 0.0:
+            continue
         if normalize_energy == 0:
             arg = _goldak_arg(
                 di, dj, dk, dir_x, dir_y, a_front, a_rear, b_axis, c_axis,
@@ -297,7 +315,9 @@ def inject_goldak_heat_apply(
         if normalize_energy != 0:
             H[i, j, k] += energy_per_weight * w * w_dep
         else:
-            dH = CF * w * w_dep * dt / dx3
+            # Absolute CF (APDL parity): pure Goldak, no surface attenuation;
+            # c already sets the depth profile.
+            dH = CF * w * dt / dx3
             H[i, j, k] += dH
             scratch[i, j, k] = dH * dx3 * _fill_w(
                 phi, flags, i, j, k, FLAG_GAS, fs_iface

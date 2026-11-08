@@ -96,10 +96,13 @@ def _resolve_arc_k(
         else:
             z_bead_m = float(torch_z_m)
         z_bead_m = max(float(getattr(twin, "substrate_z_m", 0.0)), z_bead_m)
-        # z = 0 is the plate-top face (index nz_solid), not the last metal cell.
-        # A positive layer height lifts the arc by that many cells above the face.
-        k_robot = twin.nz_solid + (z_bead_m - twin.substrate_z_m) / g.dx
-        k_robot = max(float(twin.nz_solid), min(k_robot, float(g.nz) - 2.0))
+        # arc_k is the index of the top metal cell (surface face at arc_k + 1),
+        # the convention surface_height_at returns. z = 0 is the plate-top face
+        # (index nz_solid), so the top cell under it is nz_solid − 1; a layer
+        # height lifts the face by that many cells.
+        k_face = twin.nz_solid + (z_bead_m - twin.substrate_z_m) / g.dx
+        k_robot = k_face - 1.0
+        k_robot = max(float(twin.nz_solid) - 1.0, min(k_robot, float(g.nz) - 3.0))
         return max(k_surface, k_robot)
 
     return k_surface

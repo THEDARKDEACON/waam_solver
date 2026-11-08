@@ -1,6 +1,9 @@
 """
 test_goldak_energy.py — Goldak inject deposits η Q Δt (±1%) and ff+fr→2.
 
+Absolute-CF mode is a half-space source below the surface face (arc_k + 1)
+and must land within 5% of ηQΔt with nothing above the face.
+
 PHYSICS_FORCE_CORRECTNESS_SPEC §5.4 / WP-F.
 Also checks travel-aligned front/rear for +x and +y torch directions.
 """
@@ -152,9 +155,18 @@ def run(tol_frac: float = 0.01) -> float:
         f"[goldak_energy] absolute CF  ΔH={H_abs:.6e} J  ηQΔt={expected:.6e} J  "
         f"rel_err={abs_err:.4f}  booked={booked:.6e}  book_err={book_err:.4f}"
     )
-    if abs_err > 0.15:
+    # Goldak's CF integrates to ηQ over the half-space below the surface face
+    # (arc_k + 1). Applying it on both sides (metal above arc_k) gave ~1.9×.
+    if abs_err > 0.05:
         raise AssertionError(
             f"Absolute Goldak far from ηQΔt on full-metal domain: rel_err={abs_err:.4f}"
+        )
+    H_abs_np = g.H.to_numpy()
+    k_face = int(arc_k) + 1
+    above = float(H_abs_np[:, :, k_face:].sum())
+    if above > 0.0:
+        raise AssertionError(
+            f"Goldak deposited above the surface face k={k_face}: ΣH={above:.3e}"
         )
     if book_err > 1e-5:
         raise AssertionError(
