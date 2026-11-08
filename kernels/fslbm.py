@@ -37,6 +37,7 @@ from __future__ import annotations
 from waam_twin.compiler import ti
 from ..lattice import EX, EY, EZ, W, OPP
 from .vof import _brackbill_curvature_at, _brackbill_curvature_wet_at
+from .grid_init import _deposit_shell
 
 MARK_NONE = 0
 MARK_FILL = 1
@@ -645,27 +646,33 @@ def fs_deposit_into_interface(
     k_lo = ti.max(0, ti.cast(arc_k - 1.0, ti.i32))
     k_hi = ti.min(nz, ti.cast(arc_k + ti.max(droplet_radius + 3.0, 4.0), ti.i32) + 1)
     foot2 = search_r * search_r * 1.44
-    # Spend the droplet budget in index order. A parallel reserve lets a
-    # different cell win the metal from run to run.
+    n_shells = ti.cast(1.2 * search_r + ti.max(droplet_radius + 3.0, 4.0), ti.i32) + 3
+    # Spend the droplet budget serially, nearest the arc first (distance
+    # shells, index order within a shell). A parallel reserve lets a
+    # different cell win the metal from run to run; plain index order
+    # placed a short budget from the −x/−y corner of the search box.
     ti.loop_config(serialize=True)
-    for i, j, k in ti.ndrange((i_min, i_max), (j_min, j_max), (k_lo, k_hi)):
-        if flags[i, j, k] != FLAG_IFACE:
-            continue
-        di = ti.f32(i) - arc_i
-        dj = ti.f32(j) - arc_j
-        if di * di + dj * dj > foot2:
-            continue
-        e = ti.max(0.0, ti.min(1.0, phi[i, j, k]))
-        need = (1.0 - e) * cell_vol
-        if need <= 0.0 or vol_acc[None] >= target_vol:
-            continue
-        reserved = ti.atomic_add(vol_acc[None], need)
-        if reserved + need > target_vol:
-            ti.atomic_sub(vol_acc[None], need)
-        else:
-            H[i, j, k] = e * H[i, j, k] + (1.0 - e) * H_drop
-            phi[i, j, k] = 1.0
-            ti.atomic_add(real_acc[None], need)
+    for s in range(n_shells):
+        for i, j, k in ti.ndrange((i_min, i_max), (j_min, j_max), (k_lo, k_hi)):
+            if flags[i, j, k] != FLAG_IFACE:
+                continue
+            if _deposit_shell(i, j, k, arc_i, arc_j, arc_k) != s:
+                continue
+            di = ti.f32(i) - arc_i
+            dj = ti.f32(j) - arc_j
+            if di * di + dj * dj > foot2:
+                continue
+            e = ti.max(0.0, ti.min(1.0, phi[i, j, k]))
+            need = (1.0 - e) * cell_vol
+            if need <= 0.0 or vol_acc[None] >= target_vol:
+                continue
+            reserved = ti.atomic_add(vol_acc[None], need)
+            if reserved + need > target_vol:
+                ti.atomic_sub(vol_acc[None], need)
+            else:
+                H[i, j, k] = e * H[i, j, k] + (1.0 - e) * H_drop
+                phi[i, j, k] = 1.0
+                ti.atomic_add(real_acc[None], need)
 
 
 @ti.kernel
