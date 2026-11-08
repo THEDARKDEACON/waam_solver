@@ -361,6 +361,7 @@ def _free_surface_stream(twin: "WAAMTwin", g: "WAAMGrid") -> None:
         g.f_dst, g.f_src, g.rho, g.ux, g.uy, g.uz, g.phi, g.flags,
         g.fs_mass, g.fs_mark, g.H, g.fs_energy, gamma, FS_KAPPA_MAX,
         g.FLAG_SOLID, g.FLAG_GAS, g.FLAG_IFACE, nx, ny, nz,
+        int(bool(twin.enable_wetting)), float(twin.theta_rad),
     )
     kernels.fs_mark_neighbors(g.flags, g.fs_mark, g.FLAG_GAS, nx, ny, nz)
     kernels.fs_init_new_iface(

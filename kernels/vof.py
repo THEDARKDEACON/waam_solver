@@ -265,6 +265,122 @@ def _brackbill_curvature_at(
     return kappa, g0
 
 
+@ti.func
+def _wet_normal(
+    nx_n: ti.f32, ny_n: ti.f32, nz_n: ti.f32,
+    wx: ti.f32, wy: ti.f32, wz: ti.f32,
+    theta_rad: ti.f32,
+):
+    """Contact-angle normal for n̂ = ∇φ/|∇φ| (points into the liquid).
+
+    Young: the outward (gas-side) normal m satisfies m·w = cos θ with w out of
+    the wall, so n̂ = −m gives n̂·w = −cos θ:  n̂ = −cos θ w + sin θ t̂, where
+    t̂ is the in-wall direction of n̂. A normal (anti)parallel to w (flat film
+    lying on the wall, |t| small) is not a contact line and is left unchanged.
+    """
+    dot = nx_n * wx + ny_n * wy + nz_n * wz
+    tx = nx_n - dot * wx
+    ty = ny_n - dot * wy
+    tz = nz_n - dot * wz
+    tmag = ti.sqrt(tx * tx + ty * ty + tz * tz)
+    ox = nx_n
+    oy = ny_n
+    oz = nz_n
+    if tmag > 0.05:
+        c = -ti.cos(theta_rad)
+        sn = ti.sin(theta_rad)
+        ox = c * wx + sn * tx / tmag
+        oy = c * wy + sn * ty / tmag
+        oz = c * wz + sn * tz / tmag
+    return ox, oy, oz
+
+
+@ti.func
+def _wet_normal_at(
+    phi: ti.template(),
+    flags: ti.template(),
+    i: ti.i32, j: ti.i32, k: ti.i32,
+    ci: ti.i32, cj: ti.i32, ck: ti.i32,
+    FLAG_SOLID: ti.i32,
+    nx: ti.i32, ny: ti.i32, nz: ti.i32,
+    eps: ti.f32,
+    theta_rad: ti.f32,
+):
+    """Normal entering the κ divergence at stencil cell (i,j,k) of centre (ci,cj,ck).
+
+    Fluid/interface cells touching a wall use the contact-angle normal; a
+    solid stencil cell takes the centre's contact-angle normal (ghost normal
+    at the wall face), which is how θ enters κ = −∇·n̂ (Brackbill 1992).
+    """
+    ii = ti.min(ti.max(i, 0), nx - 1)
+    jj = ti.min(ti.max(j, 0), ny - 1)
+    kk = ti.min(ti.max(k, 0), nz - 1)
+    si = ii
+    sj = jj
+    sk = kk
+    if flags[ii, jj, kk] == FLAG_SOLID:
+        si = ci
+        sj = cj
+        sk = ck
+    n_x, n_y, n_z, g = _phi_unit_normal_wall_aware(
+        phi, flags, si, sj, sk, FLAG_SOLID, nx, ny, nz, eps,
+    )
+    wx, wy, wz, has_wall = _solid_wall_normal(flags, si, sj, sk, FLAG_SOLID, nx, ny, nz)
+    if has_wall != 0 and g >= eps:
+        n_x, n_y, n_z = _wet_normal(n_x, n_y, n_z, wx, wy, wz, theta_rad)
+    return n_x, n_y, n_z, g
+
+
+@ti.func
+def _brackbill_curvature_wet_at(
+    phi: ti.template(),
+    flags: ti.template(),
+    i: ti.i32, j: ti.i32, k: ti.i32,
+    FLAG_SOLID: ti.i32,
+    nx: ti.i32, ny: ti.i32, nz: ti.i32,
+    eps: ti.f32,
+    theta_rad: ti.f32,
+):
+    """κ = −∇·n̂ with the static contact angle θ imposed on wall-adjacent normals."""
+    n0x, n0y, n0z, g0 = _wet_normal_at(
+        phi, flags, i, j, k, i, j, k, FLAG_SOLID, nx, ny, nz, eps, theta_rad,
+    )
+    kappa = 0.0
+    if g0 >= eps:
+        nxp, _a0, _a1, gp = _wet_normal_at(
+            phi, flags, i + 1, j, k, i, j, k, FLAG_SOLID, nx, ny, nz, eps, theta_rad,
+        )
+        nxm, _b0, _b1, gm = _wet_normal_at(
+            phi, flags, i - 1, j, k, i, j, k, FLAG_SOLID, nx, ny, nz, eps, theta_rad,
+        )
+        _c0, nyp, _c1, gp2 = _wet_normal_at(
+            phi, flags, i, j + 1, k, i, j, k, FLAG_SOLID, nx, ny, nz, eps, theta_rad,
+        )
+        _d0, nym, _d1, gm2 = _wet_normal_at(
+            phi, flags, i, j - 1, k, i, j, k, FLAG_SOLID, nx, ny, nz, eps, theta_rad,
+        )
+        _e0, _e1, nzp, gp3 = _wet_normal_at(
+            phi, flags, i, j, k + 1, i, j, k, FLAG_SOLID, nx, ny, nz, eps, theta_rad,
+        )
+        _f0, _f1, nzm, gm3 = _wet_normal_at(
+            phi, flags, i, j, k - 1, i, j, k, FLAG_SOLID, nx, ny, nz, eps, theta_rad,
+        )
+        if gp < eps:
+            nxp = n0x
+        if gm < eps:
+            nxm = n0x
+        if gp2 < eps:
+            nyp = n0y
+        if gm2 < eps:
+            nym = n0y
+        if gp3 < eps:
+            nzp = n0z
+        if gm3 < eps:
+            nzm = n0z
+        kappa = -(0.5 * (nxp - nxm) + 0.5 * (nyp - nym) + 0.5 * (nzp - nzm))
+    return kappa, g0
+
+
 @ti.kernel
 def compute_csf_tension(
     phi: ti.template(),
@@ -352,8 +468,10 @@ def compute_csf_tension(
             nx_n = dpx / gmag
             ny_n = dpy / gmag
             nz_n = dpz / gmag
+            # n̂ = ∇φ/|∇φ| points into the liquid, so Young is n̂·w = −cos θ;
+            # the helper imposes +cos, hence π − θ (it applied 180° − θ before).
             nx_c, ny_c, nz_c = _correct_normal_contact_angle(
-                nx_n, ny_n, nz_n, wx, wy, wz, theta_rad,
+                nx_n, ny_n, nz_n, wx, wy, wz, ti.math.pi - theta_rad,
             )
             # F = γ κ n̂_corr |∇φ|  (same magnitude, Young-consistent direction)
             fx = gamma_lu * kappa * nx_c * gmag

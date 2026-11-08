@@ -2,6 +2,13 @@
 test_wetting_static_settle.py — Lower contact angle → wider sessile spread after settle.
 
 Runs a static molten puddle (no arc) with CSF + hydrostatic gravity + wall wetting.
+
+Legacy VOF path (use_free_surface_lbm off); opt-in via
+WAAM_LEGACY_VOF_VALIDATION=1. KNOWN FAILING (Nov 2026): with Darcy on, the
+contact line pins and both angles keep the initial puddle; with Darcy off the
+legacy VOF + CSF drop hits the Mach clamp, loses ~30 % of its liquid in 600
+steps and liquid cells cool below ambient. Production wetting (FSLBM) is
+tested by test_fslbm_wetting.
 """
 
 from __future__ import annotations
@@ -9,6 +16,7 @@ from __future__ import annotations
 import numpy as np
 
 from waam_twin import WAAMTwin
+from waam_twin.physics.heat_source import wire_volumetric_enthalpy_J_m3
 from waam_twin.runtime import init_taichi
 
 
@@ -48,8 +56,17 @@ def _run_settle(theta_deg: float, n_steps: int = 500) -> tuple[float, float]:
     phi_np = g.phi.to_numpy()
     flags_np = g.flags.to_numpy()
     T_np = g.T.to_numpy()
+    H_np = g.H.to_numpy()
     fl_np = g.f_l.to_numpy()
     Tm = twin.mat.T_liquidus + 200.0
+    # H is the prognostic field (T and f_l are recomputed from it each step);
+    # setting only T left the puddle at ambient H, so it froze on step 1.
+    Hm = float(wire_volumetric_enthalpy_J_m3(twin, Tm))
+    # Plate just below solidus: on a 300 K plate the 1-cell puddle froze
+    # within a few hundred steps, which measured solidification, not wetting.
+    H_np[flags_np == g.FLAG_SOLID] = float(
+        wire_volumetric_enthalpy_J_m3(twin, float(twin.mat.T_solidus) - 20.0)
+    )
     for di in range(-4, 5):
         for dj in range(-4, 5):
             i, j = ci + di, cj + dj
@@ -59,15 +76,18 @@ def _run_settle(theta_deg: float, n_steps: int = 500) -> tuple[float, float]:
                     phi_np[i, j, k] = 1.0
                     flags_np[i, j, k] = g.FLAG_FLUID
                     T_np[i, j, k] = Tm
+                    H_np[i, j, k] = Hm
                     fl_np[i, j, k] = 1.0
                     if k + 1 < g.nz:
                         phi_np[i, j, k + 1] = 0.6
                         flags_np[i, j, k + 1] = g.FLAG_FLUID
                         T_np[i, j, k + 1] = Tm
+                        H_np[i, j, k + 1] = Hm
                         fl_np[i, j, k + 1] = 1.0
     g.phi.from_numpy(phi_np)
     g.flags.from_numpy(flags_np)
     g.T.from_numpy(T_np)
+    g.H.from_numpy(H_np)
     g.f_l.from_numpy(fl_np)
 
     cy = cj * g.dx

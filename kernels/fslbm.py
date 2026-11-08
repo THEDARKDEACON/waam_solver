@@ -36,7 +36,7 @@ from __future__ import annotations
 
 from waam_twin.compiler import ti
 from ..lattice import EX, EY, EZ, W, OPP
-from .vof import _brackbill_curvature_at
+from .vof import _brackbill_curvature_at, _brackbill_curvature_wet_at
 
 MARK_NONE = 0
 MARK_FILL = 1
@@ -120,8 +120,14 @@ def fs_stream(
     nx: ti.i32,
     ny: ti.i32,
     nz: ti.i32,
+    enable_wetting: ti.i32,
+    theta_rad: ti.f32,
 ):
     """Pull stream with gas reconstruction and interface mass/energy exchange.
+
+    With ``enable_wetting`` the interface curvature imposes the static
+    contact angle θ on wall-adjacent normals; otherwise the wall is neutral
+    (mirrored φ, 90°).
 
     ``f_post`` is the post-collision buffer, ``rho`` still holds the
     pre-stream density from collision, ``phi`` the pre-stream fill.
@@ -134,9 +140,15 @@ def fs_stream(
         is_if = fl == FLAG_IFACE
         rho_g = 1.0
         if is_if and gamma_lu != 0.0:
-            kappa, _g = _brackbill_curvature_at(
-                phi, flags, i, j, k, FLAG_SOLID, nx, ny, nz, 1e-6,
-            )
+            kappa = 0.0
+            if enable_wetting != 0:
+                kappa, _g = _brackbill_curvature_wet_at(
+                    phi, flags, i, j, k, FLAG_SOLID, nx, ny, nz, 1e-6, theta_rad,
+                )
+            else:
+                kappa, _g = _brackbill_curvature_at(
+                    phi, flags, i, j, k, FLAG_SOLID, nx, ny, nz, 1e-6,
+                )
             kappa = ti.max(-kappa_max, ti.min(kappa_max, kappa))
             rho_g = 1.0 + 3.0 * gamma_lu * kappa
         u_x = ux[i, j, k]

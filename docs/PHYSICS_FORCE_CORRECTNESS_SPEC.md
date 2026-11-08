@@ -207,7 +207,7 @@ Remove the branches that set `F=0` for solid/gas (those cells are already skippe
 **Acceptance:**
 
 1. **Laplace law:** spherical drop in zero-g, \(\Delta P = 2\gamma/R\) (3D) or \(\gamma/R\) (2D cylinder) within 15% at \(dx/R\le 1/8\).
-2. **Static sessile drop:** equilibrium contact angle within \(10^\circ\) of prescribed \(\theta\) (`test_wetting_droplet` tighten).
+2. **Static sessile drop:** equilibrium contact angle within \(10^\circ\) of prescribed \(\theta\) (`test_fslbm_wetting`; contact radius within 10 % of the spherical cap at θ = 45°).
 3. Spurious current \(\mathrm{Re}_{spurious}\) documented; must not grow unbounded over 5k steps.
 
 ---
@@ -372,7 +372,7 @@ Loader installs a dense \(d\gamma/dT\) table for `use_material_tables` (local in
 | `test_arc_pressure` | Lin–Eagar \(I^2\); downward interface load |
 | `test_lorentz_physical_scale` | Order-of-magnitude \(J\times B\) |
 | `test_hydrostatic_gravity` | Crown sag / Bond |
-| `test_wetting_droplet` | \(\theta\) within 10° |
+| `test_fslbm_wetting` | cap radius within 10 % (θ = 45°); θ = 135° narrower |
 | `test_mass_balance` | Wire mass vs deposited |
 | `test_goldak_energy` (**new**) | \(\Delta H=\eta Q\Delta t\) |
 | Ablation job (tool) | Cho & Na style: droplet / Marangoni / EMF / buoyancy on-off velocity report |
