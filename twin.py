@@ -919,6 +919,8 @@ class WAAMTwin:
         self._bead_height_m = 0.0
         self._last_torch_pos_m = None
         self._torch_dir_xyz = (1.0, 0.0, 0.0)
+        self._blown_up_step = None
+        self._nonfinite_cells = 0
         self._warned_zero_wire_feed = False
         self._warned_overflow = False
         self._lorentz_warm = False
@@ -1005,6 +1007,34 @@ class WAAMTwin:
             )
         coupled_step(self, sim_x, sim_y, is_welding, z_sim)
         self._check_strict_mode()
+        self._check_health()
+
+    def _check_health(self) -> None:
+        """Every ``nan_check_every`` steps (0 = off): stop pretending after a blow-up.
+
+        Peak-T reductions skip NaN, so a blown-up run otherwise looks like a
+        cold plate. Logs once; raises under strict_mode.
+        """
+        every = int(getattr(self, "nan_check_every", 200) or 0)
+        if every <= 0 or self._step_n % every != 0:
+            return
+        from .kernels.health import count_nonfinite
+        n = int(count_nonfinite(self.grid.T, self.grid.H))
+        self._nonfinite_cells = n
+        if n == 0 or getattr(self, "_blown_up_step", None) is not None:
+            return
+        self._blown_up_step = self._step_n
+        g = self.grid
+        msg = (
+            f"[WAAMTwin] BLOW-UP: {n} cells have NaN/inf T or H at step {self._step_n} "
+            f"({self._step_n * g.dt * 1000:.1f} ms). Everything after this is invalid. "
+            f"tau={float(getattr(g, 'tau', float('nan'))):.4f}"
+            + ("" if getattr(self, "use_free_surface_lbm", False) or not self.enable_vof
+               else "; legacy VOF free surface (use_free_surface_lbm: false) is the usual cause")
+        )
+        log.warning(msg)
+        if self.strict_mode:
+            raise RuntimeError(msg)
 
     def _check_strict_mode(self) -> None:
         """Abort on silent physics drift when strict_mode / WAAM_STRICT is set."""
@@ -1448,6 +1478,10 @@ class WAAMTwin:
 
         return {
             "step": self._step_n,
+            # From the periodic health check (nan_check_every): peak T below
+            # skips NaN cells, so read these to know whether it means anything.
+            "nonfinite_cells": int(getattr(self, "_nonfinite_cells", 0) or 0),
+            "blown_up_step": getattr(self, "_blown_up_step", None),
             "sim_time_ms": round(self._step_n * g.dt * 1000, 4),
             "peak_temp_K": round(T_peak, 1),
             "peak_temp_C": round(T_peak - 273.15, 1),

@@ -82,6 +82,13 @@ def run() -> None:
 
     root = Path(__file__).resolve().parents[1]
     job = yaml.safe_load((root / "jobs/examples/bead_on_plate.yaml").read_text())
+    # Energy bookkeeping test: keep its own numerics, independent of what the
+    # example job sets for stability (auto_dt_ma cannot hold Ma at dx 1 mm).
+    for key in ("use_free_surface_lbm", "sparse_grid", "auto_dt_ma", "u_design_m_s",
+                "u_mach_limit_lu", "force_limit_lu", "force_limit_m_s2", "use_variable_tau",
+                "use_srt", "C_darcy", "C_darcy_ref_dt_s", "strict_mode", "dt_scale",
+                "enable_trailing_solidify", "warn_on_force_clamp"):
+        job["simulation"].pop(key, None)
     job["simulation"].update(
         {
             "preset": "minimal",

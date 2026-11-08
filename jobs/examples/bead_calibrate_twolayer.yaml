@@ -8,6 +8,7 @@ simulation:
   - 25
   dx_mm: 0.4
   enable_vof: true
+  use_free_surface_lbm: true  # legacy VOF blows up under full TRT forcing (Nov 2026)
   enable_csf_tension: true
   enable_wetting: true
   enable_hydrostatic_gravity: true
@@ -24,11 +25,11 @@ simulation:
   arc_surface_weighting: true
   dt_scale: 1.0
   use_variable_tau: true
-  use_srt: true
-  auto_dt_ma: false
+  use_srt: false
+  auto_dt_ma: true
   C_darcy: 160000.0
   C_darcy_ref_dt_s: 4.0e-05
-  u_mach_limit_lu: 0.2
+  u_mach_limit_lu: 0.08
   force_limit_lu: 0.05
   force_limit_m_s2: 12500.0
   u_design_m_s: 0.5

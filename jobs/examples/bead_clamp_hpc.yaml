@@ -8,6 +8,7 @@ simulation:
   domain_mm: [60, 30, 20]
   dx_mm: 0.10
   enable_vof: true
+  use_free_surface_lbm: true  # legacy VOF blows up under full TRT forcing (Nov 2026)
   enable_csf_tension: true
   enable_wetting: true
   enable_hydrostatic_gravity: true

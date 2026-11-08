@@ -2,6 +2,8 @@
 
 from waam_twin.compiler import ti
 
+from ..kernels.health import count_nonfinite  # noqa: F401  (re-exported for the viewer)
+
 # Cell filter for extract kernels
 FILTER_ALL = 0
 FILTER_LIQUID = 1

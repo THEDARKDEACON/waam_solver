@@ -12,6 +12,7 @@ from waam_twin import WAAMTwin
 from waam_twin.runtime import init_taichi
 from waam_twin.viewer.extract import (
     FILTER_ALL,
+    count_nonfinite,
     extract_deposit,
     extract_melt_pool,
     extract_section,
@@ -79,6 +80,13 @@ def run() -> None:
     a = sec.to_numpy()[: g.ny]
     assert a[6, kw] == 1.0 and a[3, kw] == 0.0 and a[3, kw - 1] == 1.0
     print(f"[viewer_extract] deposit slab cells={n}  section ok")
+
+    # Blow-up detection: max-reductions skip NaN, this count must not.
+    assert int(count_nonfinite(g.T, g.H)) == 0
+    g.T[3, 3, 3] = float("nan")
+    g.H[4, 4, 4] = float("inf")
+    assert int(count_nonfinite(g.T, g.H)) == 2
+    print("[viewer_extract] non-finite count ok")
 
 
 if __name__ == "__main__":

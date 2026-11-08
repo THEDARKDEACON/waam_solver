@@ -218,6 +218,7 @@ def run(argv: list[str] | None = None) -> None:
         FILTER_LIQUID,
         FILTER_SOLID,
         FILTER_SURFACE,
+        count_nonfinite,
         extract_body_force,
         extract_deposit,
         extract_section,
@@ -321,6 +322,7 @@ def run(argv: list[str] | None = None) -> None:
     telem_wall = -1e9
     telem_step = -1
     telem_cost = 0.0
+    blowup: tuple[int, int] | None = None  # (step first seen, non-finite cells)
     bead: tuple[float, float, float] | None = None
     bead_station = ""
 
@@ -876,8 +878,21 @@ def run(argv: list[str] | None = None) -> None:
             and now_wall - telem_wall >= max(TELEMETRY_EVERY_S, 4.0 * telem_cost)
         ):
             telem = twin.get_telemetry(force_diagnostics=False)
+            n_bad = int(count_nonfinite(g.T, g.H))
             telem_cost = time.perf_counter() - now_wall
             telem_wall, telem_step = now_wall, twin._step_n
+            if n_bad and blowup is None:
+                blowup = (twin._step_n, n_bad)
+                paused = True
+                print(
+                    f"[viewer] PHYSICS BLEW UP: {n_bad} cells have NaN/inf T or H at step "
+                    f"{twin._step_n} ({twin._step_n * g.dt * 1000:.1f} ms). Paused. "
+                    f"Peak T and the surface are meaningless from here; press R to reset."
+                )
+            elif n_bad and blowup is not None:
+                blowup = (blowup[0], n_bad)
+            elif not n_bad:
+                blowup = None
             # Behind the arc, in the trailing part of the pool where the bead
             # has its shape (liquid counts toward the height).
             lag_mm = _section_lag_mm()
@@ -985,7 +1000,12 @@ def run(argv: list[str] | None = None) -> None:
         )
         cool = telem.get("peak_cooling_rate_Ks", 0.0)
         window.GUI.text(f"dT/dt  : peak cool {cool:.0f} K/s  (metal)")
-        if not np.isfinite(telem.get("peak_temp_C", 0.0)):
+        if blowup is not None:
+            window.GUI.text(
+                f"  BLEW UP: {blowup[1]} cells NaN/inf (first seen step {blowup[0]}); "
+                f"values below are meaningless. R = reset"
+            )
+        elif not np.isfinite(telem.get("peak_temp_C", 0.0)):
             window.GUI.text("  WARN: T_peak is NaN — physics blew up; pause / R reset")
         t_cap_c = twin.T_vapor_cap_K - 273.15
         if telem.get("vapor_cap_saturated"):
