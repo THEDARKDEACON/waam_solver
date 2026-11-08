@@ -1,23 +1,25 @@
 """
-test_fslbm_wetting.py — static contact angle on the free-surface LBM path.
+test_fslbm_wetting.py — static contact angle on the free-surface LBM.
 
-A hemispherical liquid drop (R = 6 cells, the 90° cap) sits on a plate held
-just below solidus, with Marangoni and gravity off, so only capillarity acts.
-Under the free-surface LBM the contact angle enters through the interface
-curvature (θ-corrected wall normals in κ = −∇·n̂). Checks after 600 steps:
+Isothermal sessile drop on an inert wall (no thermal step, so the wall
+cannot melt), driven by collide + _free_surface_stream as in test_fslbm.
+The contact angle enters through the interface curvature (θ-corrected wall
+normals); contact-line slip (fs_contact_slip) lets the line move.
 
-  1. θ = 45° spreads to the spherical-cap contact radius (±10 %).
-  2. θ = 135° stays clearly narrower and taller than θ = 45°.
-  3. With surface tension off the drop does not move and keeps its mass.
+Each target θ is approached from a flatter and a steeper spherical cap.
+Checks:
+  1. θ = 90° (the starting hemisphere) is held within 4°.
+  2. For θ = 45° and 135° the two end states bracket the target
+     (apparent angle from the cap h/r), with a band no wider than 20°.
+  3. Metal mass Σφρ drifts < 1e-3.
 
-Regression: fs_stream used the mirrored-φ (90°) wall curvature only, so
-``contact_angle_deg`` had no effect on production (FSLBM) jobs.
+Regressions caught:
+  - fs_stream used the mirrored-φ (90°) wall: every θ ended near 90°.
+  - no-slip contact line: 45° approached from 90° pinned at ~61°
+    (band 36–61°), 135° from 90° at ~112°.
 
-Known limitation (not asserted): with surface tension on, every θ drifts
-slowly toward spreading over thousands of steps (θ = 90° goes from the
-hemisphere's r = 6 to r ≈ 7 cells by step 3000) and the drop loses ~2 % of
-its mass at the contact line. With surface tension off neither happens, so
-the source is the staircase contact-line curvature, not the mass exchange.
+Known limitation: a ±8–9° hysteresis band remains (contact-line cell
+conversion thresholds).
 """
 
 from __future__ import annotations
@@ -27,113 +29,107 @@ import sys
 
 import numpy as np
 
-from waam_twin import WAAMTwin
-from waam_twin.physics.heat_source import wire_volumetric_enthalpy_J_m3
+from waam_twin import WAAMTwin, kernels
 from waam_twin.runtime import init_taichi
+from waam_twin.solvers.coupled_step import _free_surface_stream
 
-R0 = 6.0
-STEPS = 600
-
-
-def _cap_radius(volume: float, theta_deg: float) -> float:
-    """Contact radius of a spherical cap of the given volume and angle."""
-    th = math.radians(theta_deg)
-    c = math.cos(th)
-    R = (3.0 * volume / (math.pi * (2.0 + c) * (1.0 - c) ** 2)) ** (1.0 / 3.0)
-    return R * math.sin(th)
+N, NZ, KF = 40, 22, 2
+VOLUME = 718.0  # cells (hemisphere R = 7)
+TAU = 0.6
+GAMMA = 0.01
+STEPS = 1500
 
 
-def _drop(theta_deg: float, csf: bool = True, steps: int = STEPS):
-    twin = WAAMTwin(
-        nx=40, ny=40, nz=24, dx=2.5e-4,
-        enable_vof=True, enable_csf_tension=csf, enable_wetting=True,
-        contact_angle_deg=theta_deg, enable_hydrostatic_gravity=False,
-        enable_bead_freeze=False, max_tracers=10,
-    )
-    twin.use_free_surface_lbm = True
-    twin.enable_marangoni = False
-    twin.reset()
+def _cap_R(theta_deg: float) -> float:
+    c = math.cos(math.radians(theta_deg))
+    return (3.0 * VOLUME / (math.pi * (2.0 + c) * (1.0 - c) ** 2)) ** (1.0 / 3.0)
+
+
+def _drop(theta: float, theta_init: float) -> tuple[float, float]:
+    """Return (apparent contact angle, relative mass drift)."""
+    twin = WAAMTwin(nx=N, ny=N, nz=NZ, dx=3e-4, max_tracers=10)
+    twin.reset(T_ambient=float(twin.mat.T_liquidus) + 200.0, test_fluid_domain=True)
     g = twin.grid
     g.ensure_fslbm_fields()
-    k0 = twin.nz_solid
+    twin.enable_wetting = True
+    twin.theta_rad = math.radians(theta)
+    twin.enable_csf_tension = True
+    twin.gamma_lu = GAMMA
+    twin.fs_contact_slip = True
 
-    flags = g.flags.to_numpy()
-    phi = g.phi.to_numpy()
-    H = g.H.to_numpy()
-    T = g.T.to_numpy()
-    f_l = g.f_l.to_numpy()
-    T_drop = float(twin.mat.T_liquidus) + 200.0
-    # Plate just below solidus so the drop stays liquid for the whole run.
-    H[flags == g.FLAG_SOLID] = wire_volumetric_enthalpy_J_m3(twin, float(twin.mat.T_solidus) - 20.0)
-
-    ci, cj = g.nx / 2.0, g.ny / 2.0
     I, J, K = np.meshgrid(
-        np.arange(g.nx) + 0.5, np.arange(g.ny) + 0.5, np.arange(g.nz) + 0.5, indexing="ij",
+        np.arange(N) + 0.5, np.arange(N) + 0.5, np.arange(NZ) + 0.5, indexing="ij",
     )
-    d = np.sqrt((I - ci) ** 2 + (J - cj) ** 2 + (K - k0) ** 2)
-    fill = np.clip(R0 + 0.5 - d, 0.0, 1.0) * (K > k0)
-    solid = flags == g.FLAG_SOLID
+    R0 = _cap_R(theta_init)
+    zc = KF - R0 * math.cos(math.radians(theta_init))
+    d = np.sqrt((I - N / 2) ** 2 + (J - N / 2) ** 2 + (K - zc) ** 2)
+    fill = np.clip(R0 + 0.5 - d, 0.0, 1.0) * (K > KF)
+    solid = K < KF
     fluid = (fill >= 0.999) & ~solid
     iface = (fill > 0.0) & ~fluid & ~solid
-    gas = ~solid & ~fluid & ~iface
-    flags[gas] = g.FLAG_GAS
-    phi[gas] = 0.0
+    flags = np.full(fill.shape, g.FLAG_GAS, np.int32)
+    flags[solid] = g.FLAG_SOLID
     flags[fluid] = g.FLAG_FLUID
-    phi[fluid] = 1.0
     flags[iface] = g.FLAG_IFACE
-    phi[iface] = fill[iface]
-    liq = fluid | iface
-    H[liq] = wire_volumetric_enthalpy_J_m3(twin, T_drop)
-    T[liq] = T_drop
-    f_l[liq] = 1.0
-    g.flags.from_numpy(flags.astype(np.int32))
-    g.phi.from_numpy(phi.astype(np.float32))
-    g.H.from_numpy(H.astype(np.float32))
-    g.T.from_numpy(T.astype(np.float32))
-    g.f_l.from_numpy(f_l.astype(np.float32))
+    g.flags.from_numpy(flags)
+    g.phi.from_numpy(np.where(solid | fluid, 1.0, fill).astype(np.float32))
+    g.f_l.from_numpy(np.ones(fill.shape, np.float32))
 
-    def metrics() -> tuple[float, float, float]:
-        p = g.phi.to_numpy()
-        fl = g.flags.to_numpy()
-        m = np.where(fl != g.FLAG_SOLID, p, 0.0)
-        r_base = float(np.sqrt((m[:, :, k0] > 0.5).sum() / np.pi))
-        h = float(m[int(ci), int(cj), k0:].sum())
-        return r_base, h, float(m[:, :, k0:].sum())
+    def state() -> tuple[float, float, float]:
+        f = g.flags.to_numpy()
+        p = g.phi.to_numpy().astype(np.float64)
+        rho = g.rho.to_numpy().astype(np.float64)
+        liq = (f != g.FLAG_GAS) & (f != g.FLAG_SOLID)
+        m = np.where(liq, p, 0.0)
+        r_base = math.sqrt(float(m[:, :, KF].sum()) / math.pi)
+        h = float(m[N // 2, N // 2, :].sum())
+        return r_base, h, float((p * rho)[liq].sum())
 
-    r_start, h_start, v0 = metrics()
-    for _ in range(steps):
-        twin.step(ci * g.dx, cj * g.dx, is_welding=False)
-    r, h, v = metrics()
-    return r_start, r, h, v0, v
+    _r, _h, m0 = state()
+    for _ in range(STEPS):
+        kernels.clear_forces(g.Fx, g.Fy, g.Fz)
+        kernels.collide_srt(
+            g.f_src, g.f_dst, g.rho, g.ux, g.uy, g.uz, g.Fx, g.Fy, g.Fz,
+            g.f_l, g.flags, TAU, 1.0 / TAU, 1.0, 0.0,
+            g.FLAG_SOLID, g.FLAG_GAS, g.nx, g.ny, g.nz,
+        )
+        _free_surface_stream(twin, g)
+    r, h, m1 = state()
+    apparent = 2.0 * math.degrees(math.atan(h / max(r, 1e-9)))
+    return apparent, abs(m1 - m0) / m0
 
 
-def run() -> None:
+def run() -> float:
     init_taichi(backend="cpu")
+    worst_mass = 0.0
 
-    _rs, r45, h45, v0, _v = _drop(45.0)
-    r_cap = _cap_radius(v0, 45.0)
-    print(f"[fslbm_wetting] θ=45°  r={r45:.2f} h={h45:.2f} cells  cap r={r_cap:.2f}")
-    if abs(r45 - r_cap) > 0.10 * r_cap:
-        raise AssertionError(
-            f"θ=45° contact radius {r45:.2f} not within 10% of the cap {r_cap:.2f}"
-        )
+    a90, dm = _drop(90.0, 90.0)
+    worst_mass = max(worst_mass, dm)
+    print(f"[fslbm_wetting] θ=90°  apparent {a90:.1f}°  mass drift {dm:.1e}")
+    if abs(a90 - 90.0) > 4.0:
+        raise AssertionError(f"θ=90° hemisphere drifted to {a90:.1f}°")
 
-    _rs, r135, h135, _v0, _v = _drop(135.0)
-    print(f"[fslbm_wetting] θ=135° r={r135:.2f} h={h135:.2f} cells  (cap r={_cap_radius(v0, 135.0):.2f})")
-    if not (r135 < 0.75 * r45 and h135 > 1.5 * h45):
-        raise AssertionError(
-            f"contact angle inert on FSLBM: θ=135° r={r135:.2f} h={h135:.2f} "
-            f"vs θ=45° r={r45:.2f} h={h45:.2f}"
+    for theta, flat, steep in ((45.0, 30.0, 90.0), (135.0, 90.0, 160.0)):
+        a_lo, dm1 = _drop(theta, flat)
+        a_hi, dm2 = _drop(theta, steep)
+        worst_mass = max(worst_mass, dm1, dm2)
+        print(
+            f"[fslbm_wetting] θ={theta:.0f}°  from {flat:.0f}° → {a_lo:.1f}°, "
+            f"from {steep:.0f}° → {a_hi:.1f}°  (band {a_hi - a_lo:.1f}°)  "
+            f"mass drift {max(dm1, dm2):.1e}"
         )
-
-    r_start, r0, h0, m0, m1 = _drop(90.0, csf=False)
-    drift = abs(m1 - m0) / m0
-    print(f"[fslbm_wetting] γ=0   r {r_start:.2f}→{r0:.2f}  mass drift {drift:.1e}")
-    if abs(r0 - r_start) > 1.0 or drift > 1e-3:
-        raise AssertionError(
-            f"force-free drop moved or lost mass: r {r_start:.2f}→{r0:.2f}, drift {drift:.1e}"
-        )
+        if not (a_lo - 2.0 <= theta <= a_hi + 2.0):
+            raise AssertionError(
+                f"θ={theta}° not bracketed by the end states {a_lo:.1f}°–{a_hi:.1f}°"
+            )
+        if a_hi - a_lo > 20.0:
+            raise AssertionError(
+                f"θ={theta}° hysteresis band {a_hi - a_lo:.1f}° > 20° (contact line pinned)"
+            )
+    if worst_mass > 1e-3:
+        raise AssertionError(f"metal mass drift {worst_mass:.1e} > 1e-3")
     print("[fslbm_wetting] PASS")
+    return worst_mass
 
 
 if __name__ == "__main__":

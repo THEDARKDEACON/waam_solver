@@ -71,6 +71,10 @@
         "use_free_surface_lbm": {
           "type": "boolean"
         },
+        "fs_contact_slip": {
+          "type": "boolean",
+          "description": "FSLBM: specular slip on wall links at the contact line (default true)"
+        },
         "C_darcy_phys": {
           "type": "number"
         },

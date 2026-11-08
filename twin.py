@@ -174,6 +174,8 @@ class WAAMTwin:
         # Job-facing lattice Darcy at reference dt; kernels use effective_C_darcy().
         self._C_darcy_ref_dt_s = 0.0
         self.use_free_surface_lbm = False
+        # FSLBM: specular slip on wall links at the contact line (unpins it).
+        self.fs_contact_slip = True
         # Phase 4: only enable once droplet enthalpy is booked via real
         # gas→fluid conversion (see physics/arc._arc_power_W). Default off so
         # theoretical wire enthalpy is not subtracted from the arc.

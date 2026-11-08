@@ -39,6 +39,22 @@ from ..lattice import EX, EY, EZ, W, OPP
 from .vof import _brackbill_curvature_at, _brackbill_curvature_wet_at
 from .grid_init import _deposit_shell
 
+def _mirror_index(q: int, axis: int) -> int:
+    """Lattice index of direction q with its ``axis`` component negated."""
+    e = [int(EX[q]), int(EY[q]), int(EZ[q])]
+    e[axis] = -e[axis]
+    for r in range(19):
+        if (int(EX[r]), int(EY[r]), int(EZ[r])) == tuple(e):
+            return r
+    return q
+
+
+# Specular partners for wall-tangent slip (x, y, z wall).
+_MIR_X = tuple(_mirror_index(q, 0) for q in range(19))
+_MIR_Y = tuple(_mirror_index(q, 1) for q in range(19))
+_MIR_Z = tuple(_mirror_index(q, 2) for q in range(19))
+_IS_DIAG = tuple(abs(int(EX[q])) + abs(int(EY[q])) + abs(int(EZ[q])) == 2 for q in range(19))
+
 MARK_NONE = 0
 MARK_FILL = 1
 MARK_EMPTY = 2
@@ -123,8 +139,14 @@ def fs_stream(
     nz: ti.i32,
     enable_wetting: ti.i32,
     theta_rad: ti.f32,
+    contact_slip: ti.i32,
 ):
     """Pull stream with gas reconstruction and interface mass/energy exchange.
+
+    ``contact_slip``: diagonal wall links between two wall-adjacent liquid
+    cells, at least one of them IFACE, reflect specularly instead of
+    bouncing back. That swaps one population between the pair (mass exact)
+    and frees the contact line, which otherwise pins (±20° hysteresis).
 
     With ``enable_wetting`` the interface curvature imposes the static
     contact angle θ on wall-adjacent normals; otherwise the wall is neutral
@@ -178,7 +200,53 @@ def fs_stream(
                         + _feq(OPP[q], rho_g, u_x, u_y, u_z)
                         - f_out
                     )
-                elif fn != FLAG_SOLID:
+                elif fn == FLAG_SOLID:
+                    if ti.static(_IS_DIAG[q]) and contact_slip != 0:
+                        sx = 0
+                        sy = 0
+                        sz = 0
+                        if ti.static(EX[q] != 0):
+                            if _inside(i - EX[q], j, k, nx, ny, nz):
+                                if flags[i - EX[q], j, k] == FLAG_SOLID:
+                                    sx = 1
+                        if ti.static(EY[q] != 0):
+                            if _inside(i, j - EY[q], k, nx, ny, nz):
+                                if flags[i, j - EY[q], k] == FLAG_SOLID:
+                                    sy = 1
+                        if ti.static(EZ[q] != 0):
+                            if _inside(i, j, k - EZ[q], nx, ny, nz):
+                                if flags[i, j, k - EZ[q]] == FLAG_SOLID:
+                                    sz = 1
+                        if sx + sy + sz == 1:
+                            # Partner P: step back along the wall tangent only.
+                            pi_ = i - EX[q] * (1 - sx)
+                            pj = j - EY[q] * (1 - sy)
+                            pk = k - EZ[q] * (1 - sz)
+                            # Runtime expression (exactly one s* is 1): a
+                            # ti.static() binding here would be a Python
+                            # constant that branch reassignments do not change.
+                            qm = (
+                                sx * ti.static(_MIR_X[q])
+                                + sy * ti.static(_MIR_Y[q])
+                                + sz * ti.static(_MIR_Z[q])
+                            )
+                            fp = flags[pi_, pj, pk]
+                            if fp != FLAG_SOLID and fp != FLAG_GAS and (
+                                is_if or fp == FLAG_IFACE
+                            ):
+                                f_in = f_post[qm, pi_, pj, pk]
+                                val = f_in
+                                s = 1.0
+                                if is_if and fp == FLAG_IFACE:
+                                    s = 0.5 * (eps_c + phi[pi_, pj, pk])
+                                flux = s * (f_in - f_out)
+                                if is_if:
+                                    dm += flux
+                                h_up = H_c
+                                if flux > 0.0:
+                                    h_up = H[pi_, pj, pk]
+                                dE += flux * h_up
+                else:
                     f_in = f_post[q, ni, nj, nk]
                     val = f_in
                     if fn != FLAG_IFACE:
