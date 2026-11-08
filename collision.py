@@ -13,6 +13,15 @@ WHAT THIS IS (be precise in publications):
 
 Mass and momentum are conserved by construction (no f₀ dump).
 Guo forcing + semi-implicit Guo–Darcy for body forces / mushy drag.
+
+Guo forcing under TRT: the source splits into an odd part (3 F·e) and an
+even part (9 (e·u)(e·F) − 3 u·F). Each is scaled by its own rate, odd by
+(1 − ω_o/2) and even by (1 − ω_e/2). Scaling both by (1 − ω_e/2) adds only
+F·(1 + (ω_o − ω_e)/2) of momentum per step — about 0.2 % of F at τ_s = 0.5005
+with Λ = 1/4.
+
+Odd-rate selection (``omega_b`` argument): ``omega_b <= 0`` selects the magic
+Λ = 1/4 rate from the local τ_s; ``omega_b > 0`` is used as ω_o directly.
 """
 
 from waam_twin.compiler import ti
@@ -91,7 +100,9 @@ def _trt_collide_cell(
     omega_e: ti.f32, omega_o: ti.f32,
 ):
     u2 = ux_f * ux_f + uy_f * uy_f + uz_f * uz_f
-    guo_pre = 1.0 - 0.5 * omega_e
+    pre_e = 1.0 - 0.5 * omega_e
+    pre_o = 1.0 - 0.5 * omega_o
+    uF = ux_f * fx + uy_f * fy + uz_f * fz
 
     for q in ti.static(range(Q)):
         ex_q = ti.cast(EX[q], ti.f32)
@@ -101,10 +112,10 @@ def _trt_collide_cell(
         eu = ex_q * ux_f + ey_q * uy_f + ez_q * uz_f
         feq_q = w_q * r * (1.0 + 3.0 * eu + 4.5 * eu * eu - 1.5 * u2)
         F_dot_e = ex_q * fx + ey_q * fy + ez_q * fz
-        S_q = w_q * guo_pre * (
-            3.0 * F_dot_e
-            + 9.0 * (eu * F_dot_e)
-            - 3.0 * (ux_f * fx + uy_f * fy + uz_f * fz)
+        # Odd (antisymmetric) source relaxes with ω_o, even with ω_e.
+        S_q = w_q * (
+            pre_o * 3.0 * F_dot_e
+            + pre_e * (9.0 * (eu * F_dot_e) - 3.0 * uF)
         )
         opp = ti.static(OPP[q])
         if ti.static(q == 0):
@@ -158,17 +169,15 @@ def collide_mrt(
     """
     Constant-τ TRT collision (API name kept as collide_mrt).
 
-    omega_s → even (shear) rate. If omega_b ≈ omega_s, odd rate uses
-    magic Λ=1/4; otherwise omega_b is honoured as the odd rate.
+    omega_s → even (shear) rate. omega_b <= 0 → odd rate from magic
+    Λ=1/4; omega_b > 0 → used as the odd rate.
     Field velocity-set args kept for call-site compatibility.
     """
     eps = 1.0e-6
     omega_e = omega_s
-    omega_o = ti.select(
-        ti.abs(omega_b - omega_s) < 1.0e-3,
-        _trt_omega_odd(omega_e),
-        omega_b,
-    )
+    omega_o = omega_b
+    if omega_b <= 0.0:
+        omega_o = _trt_omega_odd(omega_e)
 
     for i, j, k in rho:
         if flags[i, j, k] == FLAG_SOLID or flags[i, j, k] == FLAG_GAS:
@@ -242,8 +251,8 @@ def collide_mrt_variable_tau(
     Per-cell τ_s TRT collision (API name kept as collide_mrt_variable_tau).
 
     omega_s = 1/τ_eff with τ_eff = τ_field raised by the Smagorinsky eddy
-    viscosity when cs_smag > 0. Odd rate from magic Λ=1/4 when
-    omega_b ≈ 1/τ_field (production default); otherwise omega_b is used as ω_o.
+    viscosity when cs_smag > 0. omega_b <= 0 → odd rate from magic Λ=1/4
+    on the local τ_eff (production default); omega_b > 0 → used as ω_o.
     """
     eps = 1.0e-6
 
@@ -255,7 +264,6 @@ def collide_mrt_variable_tau(
         tau_loc = tau_field[i, j, k]
         if tau_loc < 0.5001:
             tau_loc = 0.5001
-        magic_odd = ti.abs(omega_b - 1.0 / tau_loc) < 1.0e-3
 
         fx = Fx[i, j, k]
         fy = Fy[i, j, k]
@@ -291,7 +299,9 @@ def collide_mrt_variable_tau(
                 f_src, i, j, k, r, ux_f, uy_f, uz_f, fx, fy, fz, tau_loc, cs_smag,
             )
         omega_e = 1.0 / tau_loc
-        omega_o = ti.select(magic_odd, _trt_omega_odd(omega_e), omega_b)
+        omega_o = omega_b
+        if omega_b <= 0.0:
+            omega_o = _trt_omega_odd(omega_e)
 
         _trt_collide_cell(
             f_src, f_dst, i, j, k,

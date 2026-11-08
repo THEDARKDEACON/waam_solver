@@ -115,6 +115,7 @@ def _solidify_if_enabled(twin: "WAAMTwin", g) -> None:
             twin.plate_H_sol, twin.plate_mat.T_solidus,
             twin.enable_bead_freeze or twin.enable_substrate_growth,
             g.FLAG_SOLID, g.FLAG_FLUID, g.FLAG_GAS,
+            fs_iface=twin.fs_iface_flag(),
         )
         return
     free_surface.solidify_cooled_metal(
@@ -122,6 +123,7 @@ def _solidify_if_enabled(twin: "WAAMTwin", g) -> None:
         twin.H_sol, twin.mat.T_solidus,
         twin.enable_bead_freeze or twin.enable_substrate_growth,
         g.FLAG_SOLID, g.FLAG_FLUID, g.FLAG_GAS,
+        fs_iface=twin.fs_iface_flag(),
     )
 
 
@@ -493,10 +495,12 @@ def coupled_step(
                 )
                 max_r_cells = max(16.0, max_foot_mm / max(g.dx * 1000.0, 1e-9))
                 placed_real = 0.0
-                # M7: H = cp·T_sol + L + cp·(T_drop − T_liq). The kernel uses
-                # H = cp·T_drop + L_eff, so L_eff = L − cp·(T_liq − T_sol).
-                dT_mush = float(twin.mat.T_liquidus - twin.mat.T_solidus)
-                L_eff = float(twin.L_rho) - float(twin.cp_rho) * dT_mush
+                # Droplet enthalpy on the curve update_phase inverts, so the
+                # metal is recovered at T_drop (variable cp: ρ∫cp + ρL; scalar:
+                # ρcp·T + ρL). The kernel writes H = cp·T_drop + L_eff.
+                from ..physics.heat_source import wire_volumetric_enthalpy_J_m3
+                H_drop = float(wire_volumetric_enthalpy_J_m3(twin, T_drop))
+                L_eff = H_drop - float(twin.cp_rho) * float(T_drop)
                 for _ in range(16):
                     # Resume budget from metal already placed so retries expand
                     # the footprint instead of re-filling with thermal no-ops.
@@ -506,7 +510,7 @@ def coupled_step(
                         kernels.fs_deposit_into_interface(
                             g.phi, g.flags, g.H,
                             arc_i, arc_j, arc_k, r_try, drop_r, drop_vol,
-                            float(twin.cp_rho) * T_drop + L_eff,
+                            H_drop,
                             g.deposit_vol_buf, g.deposit_real_buf, g.dx ** 3,
                             g.FLAG_IFACE, g.nx, g.ny, g.nz,
                         )
@@ -543,11 +547,6 @@ def coupled_step(
                 deposited_this_step = True
                 # Ledger droplet enthalpy for converted volume
                 from ..physics.ledger import ensure_ledger
-                H_drop = (
-                    float(twin.cp_rho) * float(twin.mat.T_solidus)
-                    + float(twin.L_rho)
-                    + float(twin.cp_rho) * (float(T_drop) - float(twin.mat.T_liquidus))
-                )
                 drop_H_J = H_drop * placed_real
                 twin._droplet_enthalpy_booked_J_step = float(drop_H_J)
                 ensure_ledger(twin).record_droplet_enthalpy(drop_H_J)
@@ -812,6 +811,7 @@ def coupled_step(
                 twin.L_rho, twin.H_sol, twin.H_liq,
                 twin.plate_L_rho, twin.plate_H_sol, twin.plate_H_liq,
                 g.FLAG_SOLID, g.FLAG_FLUID,
+                fs_iface=twin.fs_iface_flag(),
             )
         elif twin.use_material_tables:
             free_surface.remelt_hot_solid(
@@ -819,6 +819,7 @@ def coupled_step(
                 g.f_src, g.rho, g.ux, g.uy, g.uz, g.w,
                 twin.L_rho, twin.H_sol, twin.H_liq,
                 g.FLAG_SOLID, g.FLAG_FLUID,
+                fs_iface=twin.fs_iface_flag(),
             )
         else:
             free_surface.remelt_hot_solid_scalar(
@@ -826,6 +827,7 @@ def coupled_step(
                 g.f_src, g.rho, g.ux, g.uy, g.uz, g.w,
                 twin.L_rho, twin.H_sol, twin.H_liq,
                 g.FLAG_SOLID, g.FLAG_FLUID,
+                fs_iface=twin.fs_iface_flag(),
             )
         # H3: trailing solidify is a geometric prior that destroys energy.
         # Disabled by default; enable only for Tier-C heuristic legacy runs.

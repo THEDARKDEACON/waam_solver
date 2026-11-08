@@ -720,6 +720,25 @@ def update_flags_from_phi(
             energy_acc[3] += e
 
 
+@ti.func
+def _reopen_solid_cell(phi: ti.template(), flags: ti.template(),
+                       i: ti.i32, j: ti.i32, k: ti.i32,
+                       FLAG_FLUID: ti.i32, fs_iface: ti.i32):
+    """Relabel a remelting SOLID cell as metal.
+
+    Legacy VOF (fs_iface < 0) snaps phi to 1. Under the free-surface LBM phi
+    is the cell's fill (its mass), so it is kept and a partly filled cell
+    reopens as IFACE; forcing phi = 1 would create metal and energy.
+    """
+    if fs_iface < 0:
+        phi[i, j, k] = 1.0
+        flags[i, j, k] = FLAG_FLUID
+    elif phi[i, j, k] < 0.999:
+        flags[i, j, k] = fs_iface
+    else:
+        flags[i, j, k] = FLAG_FLUID
+
+
 @ti.kernel
 def solidify_cooled_metal(
     T: ti.template(),
@@ -736,6 +755,7 @@ def solidify_cooled_metal(
     FLAG_SOLID: ti.i32,
     FLAG_FLUID: ti.i32,
     FLAG_GAS: ti.i32,
+    fs_iface: ti.i32,
 ):
     """Promote solidified weld metal to static SOLID (bead growth / interpass).
 
@@ -749,7 +769,10 @@ def solidify_cooled_metal(
             continue
         if f_l[i, j, k] < 0.02 and T[i, j, k] < T_solidus:
             flags[i, j, k] = FLAG_SOLID
-            phi[i, j, k] = 1.0
+            if fs_iface < 0:
+                # Legacy VOF: snap to full. Under the free-surface LBM phi is
+                # the fill (mass) and must be kept.
+                phi[i, j, k] = 1.0
             f_l[i, j, k] = 0.0
             if H[i, j, k] > H_sol:
                 H[i, j, k] = H_sol
@@ -778,6 +801,7 @@ def solidify_cooled_metal_dual(
     FLAG_SOLID: ti.i32,
     FLAG_FLUID: ti.i32,
     FLAG_GAS: ti.i32,
+    fs_iface: ti.i32,
 ):
     """Birth-alloy freeze: plate cells use plate T_solidus / H_sol."""
     for i, j, k in T:
@@ -789,7 +813,10 @@ def solidify_cooled_metal_dual(
         H_sol = _alloy_pick(alloy_id[i, j, k], H_sol_w, H_sol_p)
         if f_l[i, j, k] < 0.02 and T[i, j, k] < T_sol:
             flags[i, j, k] = FLAG_SOLID
-            phi[i, j, k] = 1.0
+            if fs_iface < 0:
+                # Legacy VOF: snap to full. Under the free-surface LBM phi is
+                # the fill (mass) and must be kept.
+                phi[i, j, k] = 1.0
             f_l[i, j, k] = 0.0
             if H[i, j, k] > H_sol:
                 H[i, j, k] = H_sol
@@ -817,6 +844,7 @@ def remelt_hot_solid(
     H_liq: ti.f32,
     FLAG_SOLID: ti.i32,
     FLAG_FLUID: ti.i32,
+    fs_iface: ti.i32,
 ):
     """Re-open SOLID → FLUID when enthalpy already indicates melting.
 
@@ -840,8 +868,7 @@ def remelt_hot_solid(
             f_l[i, j, k] = 1.0
         else:
             f_l[i, j, k] = (h - H_sol) / (L_rho + 1e-9)
-        phi[i, j, k] = 1.0
-        flags[i, j, k] = FLAG_FLUID
+        _reopen_solid_cell(phi, flags, i, j, k, FLAG_FLUID, fs_iface)
         rho[i, j, k] = rho0
         ux[i, j, k] = 0.0
         uy[i, j, k] = 0.0
@@ -874,6 +901,7 @@ def remelt_hot_solid_dual(
     H_liq_p: ti.f32,
     FLAG_SOLID: ti.i32,
     FLAG_FLUID: ti.i32,
+    fs_iface: ti.i32,
 ):
     """Enthalpy-driven remelt with birth-alloy H_sol / L."""
     rho0 = 1.0
@@ -891,8 +919,7 @@ def remelt_hot_solid_dual(
             f_l[i, j, k] = 1.0
         else:
             f_l[i, j, k] = (h - H_sol) / (L_rho + 1e-9)
-        phi[i, j, k] = 1.0
-        flags[i, j, k] = FLAG_FLUID
+        _reopen_solid_cell(phi, flags, i, j, k, FLAG_FLUID, fs_iface)
         rho[i, j, k] = rho0
         ux[i, j, k] = 0.0
         uy[i, j, k] = 0.0
@@ -919,6 +946,7 @@ def remelt_hot_solid_scalar(
     H_liq: ti.f32,
     FLAG_SOLID: ti.i32,
     FLAG_FLUID: ti.i32,
+    fs_iface: ti.i32,
 ):
     """Scalar-cp twin of remelt_hot_solid (enthalpy-driven, no H rewrite)."""
     margin = 0.02 * L_rho
@@ -933,8 +961,7 @@ def remelt_hot_solid_scalar(
             f_l[i, j, k] = 1.0
         else:
             f_l[i, j, k] = (h - H_sol) / (L_rho + 1e-9)
-        phi[i, j, k] = 1.0
-        flags[i, j, k] = FLAG_FLUID
+        _reopen_solid_cell(phi, flags, i, j, k, FLAG_FLUID, fs_iface)
         rho[i, j, k] = rho0
         ux[i, j, k] = 0.0
         uy[i, j, k] = 0.0

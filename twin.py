@@ -361,7 +361,9 @@ class WAAMTwin:
         self.L_rho = mat.rho * mat.L_fusion
         self.alpha_lu = mat.alpha * g.dt / (g.dx ** 2)
         self.omega = 1.0 / g.tau
-        self.omega_bulk = 1.0 / bulk_tau if bulk_tau else self.omega
+        # TRT odd rate: 0 → magic Λ=1/4 from the local τ (see collision.py);
+        # an explicit bulk_tau pins ω_o = 1/bulk_tau.
+        self.omega_bulk = 1.0 / bulk_tau if bulk_tau else 0.0
         # Arc Gaussian sigma is a process parameter (job-configurable), not a
         # constant: previously hardcoded at 2 mm regardless of job settings.
         self.arc_sigma_m = arc_sigma_mm * 1e-3

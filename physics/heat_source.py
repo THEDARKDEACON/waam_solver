@@ -14,22 +14,42 @@ if TYPE_CHECKING:
     from ..twin import WAAMTwin
 
 
-def droplet_enthalpy_J_kg(twin: "WAAMTwin", T_drop_K: float) -> float:
-    """Specific enthalpy of liquid droplet metal [J/kg]."""
+def wire_volumetric_enthalpy_J_m3(twin: "WAAMTwin", T_K: float) -> float:
+    """Wire-metal enthalpy [J/m³] on the curve the solver inverts.
+
+    With material tables, update_phase_variable_cp inverts ρ∫cp(T)dT plus the
+    latent heat spread over the mush (``volumetric_enthalpy_J_m3``). The
+    scalar path (phase_change.update_phase) uses H = ρcp·T, with ρL added by
+    the liquidus. Injecting metal on any other curve shifts its recovered T.
+    """
+    T = float(T_K)
+    if getattr(twin, "use_material_tables", False):
+        from ..gpu_tables import MAX_KNOTS
+        from ..material_tables import volumetric_enthalpy_J_m3
+        mat = twin.mat
+        return volumetric_enthalpy_J_m3(
+            mat.rho, mat.cp, list(mat.tables.cp)[:MAX_KNOTS], T,
+            mat.T_solidus, mat.T_liquidus, mat.L_fusion,
+        )
     mat = twin.mat
-    cp = float(mat.cp_at(0.5 * (mat.T_solidus + mat.T_liquidus)))
-    # M7/M9-consistent: h = cp·T_sol + L + cp·(T − T_liq) for T ≥ T_liq
-    return (
-        cp * float(mat.T_solidus)
-        + float(mat.L_fusion)
-        + cp * (float(T_drop_K) - float(mat.T_liquidus))
-    )
+    cp_rho = float(twin.cp_rho)
+    if T <= float(mat.T_solidus):
+        return cp_rho * T
+    L_rho = float(twin.L_rho)
+    if T >= float(mat.T_liquidus):
+        return cp_rho * T + L_rho
+    span = float(mat.T_liquidus) - float(mat.T_solidus)
+    return cp_rho * T + L_rho * (T - float(mat.T_solidus)) / max(span, 1e-9)
+
+
+def droplet_enthalpy_J_kg(twin: "WAAMTwin", T_drop_K: float) -> float:
+    """Specific enthalpy of liquid droplet metal [J/kg] (solver H(T) curve)."""
+    return wire_volumetric_enthalpy_J_m3(twin, T_drop_K) / float(twin.mat.rho)
 
 
 def ambient_enthalpy_J_kg(twin: "WAAMTwin") -> float:
-    mat = twin.mat
-    cp = float(mat.cp_at(twin.T_amb))
-    return cp * float(twin.T_amb)
+    """Specific enthalpy of wire metal at ambient [J/kg] (same curve)."""
+    return wire_volumetric_enthalpy_J_m3(twin, twin.T_amb) / float(twin.mat.rho)
 
 
 def wire_mass_rate_kg_s(twin: "WAAMTwin") -> float:

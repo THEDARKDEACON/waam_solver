@@ -26,6 +26,8 @@ def core_tests() -> list[tuple[str, str]]:
         ("lbm_poiseuille", "waam_twin.validation.test_lbm_poiseuille"),
         ("lbm_cavity", "waam_twin.validation.test_lbm_cavity"),
         ("mrt_force_mass", "waam_twin.validation.test_mrt_force_mass"),
+        ("trt_poiseuille", "waam_twin.validation.test_trt_poiseuille"),
+        ("fslbm_fill_conservation", "waam_twin.validation.test_fslbm_fill_conservation"),
         ("remelt_population_init", "waam_twin.validation.test_remelt_population_init"),
         ("mach_clamp_population_sync", "waam_twin.validation.test_mach_clamp_population_sync"),
         ("operator_splitting", "waam_twin.validation.test_operator_splitting"),
