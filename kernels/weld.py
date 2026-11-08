@@ -8,6 +8,22 @@ from ._common import (
     _cell_rho,
 )
 
+
+@ti.func
+def _column_load_weight(phi: ti.template(), i, j, k, nz):
+    """Share of an arc surface load (P from above) carried by cell (i,j,k).
+
+    w = max(0, φ_k − φ_{k+1}). Down a column the weights sum to the fill
+    drop from bulk metal to gas (1), so Σ F·dx³ = ∫P dA on any mesh and for
+    any interface fill. The earlier per-cell rules gave every cell with
+    |Δφ| above a threshold the full P (1–3 cells per column), or |∇φ| central
+    differences that skip the gas side (50–100 % of P depending on fill).
+    """
+    above = 0.0
+    if k + 1 < nz:
+        above = phi[i, j, k + 1]
+    return ti.max(0.0, phi[i, j, k] - above)
+
 @ti.kernel
 def apply_vapor_recoil(
     Fz: ti.template(),
@@ -35,8 +51,8 @@ def apply_vapor_recoil(
     for i, j, k in Fz:
         if flags[i, j, k] == FLAG_SOLID or flags[i, j, k] == FLAG_GAS:
             continue
-        dphi_z = phi[i, j, ti.min(k + 1, Fz.shape[2] - 1)] - phi[i, j, ti.max(k - 1, 0)]
-        if ti.abs(dphi_z) < 0.05:
+        w = _column_load_weight(phi, i, j, k, Fz.shape[2])
+        if w <= 0.0:
             continue
         rho_ref = _cell_rho(alloy_id, i, j, k, rho_wire, rho_plate)
         F_peak_lu = (recoil_pa / (rho_ref * dx)) * dt * dt / dx
@@ -44,28 +60,19 @@ def apply_vapor_recoil(
         dj = ti.f32(j) - arc_j
         r2 = di * di + dj * dj
         t_ratio = ti.min(T[i, j, k] / (T_ref + eps), 3.0)
-        force = -F_peak_lu * t_ratio * ti.math.exp(-r2 * inv2s2)
+        force = -F_peak_lu * w * t_ratio * ti.math.exp(-r2 * inv2s2)
         Fz[i, j, k] += force
 
 
 # ── Advanced weld forces (recoil CC, gas shear, Lorentz, droplet) ────────────
 @ti.func
 def _wf_pressure_to_Fz_lu(pressure_pa, dt, dx, rho_ref):
-    """Legacy: assign P/(ρ·dx) to one interface cell (mesh-dependent)."""
+    """P/(ρ·dx) in lattice units: a full cell carrying pressure P on one face.
+
+    Multiply by the column weight (_column_load_weight) for surface loads.
+    """
     F_peak_phys = pressure_pa / (rho_ref * dx)
     return F_peak_phys * dt * dt / dx
-
-
-@ti.func
-def _wf_pressure_to_Fz_lu_grad(
-    pressure_pa, grad_phi_mag, dt, dx, rho_ref
-):
-    """
-    H4: mesh-independent surface load.  F = P · |∇φ| · (dt²/(ρ dx²)).
-
-    Integrates to ≈ P over the interface band regardless of smearing width.
-    """
-    return pressure_pa * grad_phi_mag * (dt * dt) / (rho_ref * dx * dx)
 
 
 @ti.func
@@ -112,21 +119,8 @@ def apply_vapor_recoil_clausius_clapeyron(
     for i, j, k in Fz:
         if flags[i, j, k] == FLAG_SOLID or flags[i, j, k] == FLAG_GAS:
             continue
-        # Full |∇φ| for mesh-independent area weighting (H4)
-        dpx = 0.5 * (
-            phi[ti.min(i + 1, Fz.shape[0] - 1), j, k]
-            - phi[ti.max(i - 1, 0), j, k]
-        )
-        dpy = 0.5 * (
-            phi[i, ti.min(j + 1, Fz.shape[1] - 1), k]
-            - phi[i, ti.max(j - 1, 0), k]
-        )
-        dpz = 0.5 * (
-            phi[i, j, ti.min(k + 1, Fz.shape[2] - 1)]
-            - phi[i, j, ti.max(k - 1, 0)]
-        )
-        gmag = ti.sqrt(dpx * dpx + dpy * dpy + dpz * dpz)
-        if gmag < 0.05:
+        w = _column_load_weight(phi, i, j, k, Fz.shape[2])
+        if w <= 0.0:
             continue
         Tc = T[i, j, k]
         if Tc <= T_onset_K:
@@ -140,13 +134,11 @@ def apply_vapor_recoil_clausius_clapeyron(
         exponent = ti.max(ti.min(exponent, 12.0), -8.0)
         P_vap = C_acc * P_ref_Pa * ti.math.exp(exponent) * ramp
         rho_ref = _cell_rho(alloy_id, i, j, k, rho_wire, rho_plate)
-        F_peak_lu = _wf_pressure_to_Fz_lu_grad(P_vap, gmag, dt, dx, rho_ref)
+        F_peak_lu = _wf_pressure_to_Fz_lu(P_vap, dt, dx, rho_ref)
         di = ti.f32(i) - arc_i
         dj = ti.f32(j) - arc_j
         r2 = di * di + dj * dj
-        # Direction along −∇φ (into the metal) with magnitude from |∇φ| weight
-        nz_n = dpz / (gmag + eps)
-        Fz[i, j, k] += -F_peak_lu * ti.abs(nz_n) * ti.math.exp(-r2 * inv2s2)
+        Fz[i, j, k] += -F_peak_lu * w * ti.math.exp(-r2 * inv2s2)
 
 
 @ti.kernel
@@ -177,7 +169,8 @@ def apply_gas_shear_stress(
         dpy = 0.5 * (phi[i, ti.min(j + 1, Fx.shape[1] - 1), k] - phi[i, ti.max(j - 1, 0), k])
         dpz = 0.5 * (phi[i, j, ti.min(k + 1, Fx.shape[2] - 1)] - phi[i, j, ti.max(k - 1, 0)])
         gmag = ti.sqrt(dpx * dpx + dpy * dpy + dpz * dpz)
-        if gmag < 0.08:
+        w = _column_load_weight(phi, i, j, k, Fx.shape[2])
+        if w <= 0.0:
             continue
         di = ti.f32(i) - arc_i
         dj = ti.f32(j) - arc_j
@@ -185,8 +178,11 @@ def apply_gas_shear_stress(
         r = ti.sqrt(r2 + eps)
         rx = di / r
         ry = dj / r
-        nx_n = dpx / gmag
-        ny_n = dpy / gmag
+        nx_n = 0.0
+        ny_n = 0.0
+        if gmag > eps:
+            nx_n = dpx / gmag
+            ny_n = dpy / gmag
         rdotn = rx * nx_n + ry * ny_n
         tx = rx - rdotn * nx_n
         ty = ry - rdotn * ny_n
@@ -196,7 +192,7 @@ def apply_gas_shear_stress(
         tau = tau_peak_pa * ti.math.exp(-r2 * inv2s2)
         rho_ref = _cell_rho(alloy_id, i, j, k, rho_wire, rho_plate)
         F_scale = _wf_pressure_to_Fz_lu(1.0, dt, dx, rho_ref)
-        Fmag = tau * F_scale
+        Fmag = tau * F_scale * w
         Fx[i, j, k] += Fmag * tx
         Fy[i, j, k] += Fmag * ty
 
@@ -324,8 +320,9 @@ def apply_arc_pressure(
     and droplet impact to the free surface.
 
     Lin–Eagar is an axisymmetric surface load: the Gaussian uses in-plane
-    r² = di² + dj² (same as Clausius–Clapeyron recoil). Interface cells
-    are selected by |∇φ_z| > 0.05.
+    r² = di² + dj² (same as Clausius–Clapeyron recoil). Each cell carries
+    the share w = max(0, φ_k − φ_{k+1}) of the column load (Σw = 1), so the
+    total force is ∫P dA independent of mesh and interface fill.
 
     The force is mapped from physical pressure [Pa] to LBM body force [lu/ts²].
     F_phys = P_phys / (rho * dx)  [m/s²]
@@ -344,15 +341,15 @@ def apply_arc_pressure(
         # Lin–Eagar is an axisymmetric *surface* load: r² is in-plane only
         # (same convention as Clausius–Clapeyron recoil). |∇φ_z| already
         # restricts the dump to the gas-metal interface.
-        dphi_z = phi[i, j, ti.min(k+1, Fz.shape[2]-1)] - phi[i, j, ti.max(k-1, 0)]
-        if ti.abs(dphi_z) > 0.05:
+        w = _column_load_weight(phi, i, j, k, Fz.shape[2])
+        if w > 0.0:
             rho_ref = _cell_rho(alloy_id, i, j, k, rho_wire, rho_plate)
             F_peak_phys = pressure_pa / (rho_ref * dx)
             F_peak_lu   = F_peak_phys * dt**2 / dx
             di = ti.f32(i) - arc_i
             dj = ti.f32(j) - arc_j
             r2 = di * di + dj * dj
-            force = -F_peak_lu * ti.math.exp(-r2 * inv2s2)
+            force = -F_peak_lu * w * ti.math.exp(-r2 * inv2s2)
             Fz[i, j, k] += force
 
 
