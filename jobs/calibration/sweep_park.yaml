@@ -1,0 +1,57 @@
+# Calibration sweep against Park et al. 2019 (Appl. Sci., doi 10.3390/app9214626).
+# Run with tools/calib_sweep.py (plan → run → fit → validate).
+#
+# Follows docs/CALIBRATION.md: physical parameters are never fitted. η stays
+# at the material-card 0.82 and dγ/dT at the Sahoo/handbook value; only the
+# heat-source shape is free.
+#
+# Data are thin: ONE process point is measured (flat P-GMAW, W 6.1 / D 1.8 /
+# H 2.2 mm). Three measured numbers can pin down two or three parameters at
+# most, so two are free: Goldak half-width b (→ W) and depth c (→ D).
+#
+# Cost: each sample is one 2.5 s steady bead (~4 min at dx 0.4 mm on the
+# RTX 3050 at 60 W), so n = 16 is about 1.1 h; validation adds ~1 h.
+# Run the mesh study first: at 0.4 mm ~17 % of steps hit the Mach clamp, and a
+# clamp-limited calibration fits the numerical speed cap, not the physics.
+
+points:                     # calibrated against (outputs with measurements)
+  - name: park_flat
+    job: jobs/examples/bead_calibrate.yaml
+
+heldout:                    # predicted after the fit; never used to fit
+  # Same process as the flat bead; the twin does not model welding position.
+  # Its W/D/H differ from the flat bead by 0.4/0.1/0.3 mm — treat it as a
+  # measure of bead-to-bead scatter, not a real out-of-sample test.
+  - name: park_overhead
+    job: jobs/examples/bead_calibrate_heldout_macro2.yaml
+  # No measurements yet (awaiting_measurement): predictions only. Measuring
+  # these two beads would turn them into real held-out tests.
+  - name: fast_15mm_s
+    job: jobs/examples/bead_calibrate_heldout_fast.yaml
+  - name: hot_120A
+    job: jobs/examples/bead_calibrate_heldout_hot.yaml
+
+params:
+  # Goldak half-width and depth [mm]; current lock b 2.8, c 2.6.
+  b: [2.0, 4.0]
+  c: [1.5, 3.5]
+  # Sensitivity check only (not a calibration, see docs/CALIBRATION.md):
+  # free η with its calorimetric range, GMAW ~0.75–0.88 (DuPont & Marder 1995),
+  # in a separate spec/out file to see how much the fit leans on it:
+  # eta: {lo: 0.70, hi: 0.90, mean: 0.80, sd: 0.05}
+
+fixed: {eta: 0.82}         # material-card value (CALIBRATION.md: never fitted)
+
+n: 16                       # ~8 per parameter
+seed: 1
+time_s: 2.5                 # steady by ~2 s at 10 mm/s
+x0: 22.0                    # section window behind the torch [mm]
+x1: 26.0
+# dx_mm: 0.3                # set after the mesh study picks the calibration mesh
+
+measurement_sigma:          # 1σ when the job reference gives none
+  abs_mm: 0.15              # section-to-section scatter of an etched macro
+  rel: 0.05
+model_discrepancy_rel: 0.05 # allowance for physics the model leaves out
+
+out: runs/calibration/sweep_park.jsonl
