@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from ..physics import thermal, phase_change, forces, free_surface, lbm, deposition, weld_forces
 from ..physics.electrical_stickout import droplet_entry_temperature_K, update_ctwd
 from .. import kernels
+from ..physics import step_stats
 from .. import logging_util as log
 
 if TYPE_CHECKING:
@@ -42,15 +43,27 @@ def _clamp_enthalpy_ceiling(twin: "WAAMTwin", g) -> None:
             twin.L_rho, g.dx, g.enthalpy_cap_energy_J_buf, g.FLAG_GAS,
             g.phi, twin.fs_iface_flag(),
         )
-    e = float(g.enthalpy_cap_energy_J_buf[None])
-    from ..physics.ledger import ensure_ledger
-    ensure_ledger(twin).record_cap(e)
-    twin._enthalpy_cap_energy_J_step = float(
-        getattr(twin, "_enthalpy_cap_energy_J_step", 0.0)
-    ) + e
-    twin._enthalpy_cap_energy_J_cum = float(
-        getattr(twin, "_enthalpy_cap_energy_J_cum", 0.0)
-    ) + e
+    # Accumulated on the device (ledger and telemetry read it lazily).
+    step_stats.add_energy(
+        g.enthalpy_cap_energy_J_buf, g.step_stats, step_stats.CAP_STEP, step_stats.CAP_CUM,
+    )
+
+
+# warn_on_force_clamp checks the device counter every N steps instead of
+# reading it (a GPU sync) every step.
+_CLAMP_WARN_EVERY = 200
+
+
+def _force_clamp_warn_count(twin: "WAAMTwin") -> int:
+    """Clamped cells since the last check, or 0 when no warning is due."""
+    if not getattr(twin, "warn_on_force_clamp", False):
+        return 0
+    if int(getattr(twin, "_step_n", 0)) % _CLAMP_WARN_EVERY != 0:
+        return 0
+    cum = int(twin._force_clamp_hits_cum)
+    last = int(twin.__dict__.get("_force_clamp_warn_last", 0))
+    twin.__dict__["_force_clamp_warn_last"] = cum
+    return max(0, cum - last)
 
 
 def _resolve_arc_k(
@@ -71,6 +84,16 @@ def _resolve_arc_k(
     )
     cache = twin.__dict__.setdefault("_surface_k_cache", {}) if static_surface else None
     k_surface = cache.get((i0, j0)) if cache is not None else None
+    # Moving surface: reading the height is a GPU sync (~3 ms/step at dx 0.4
+    # on a 4 GB laptop GPU), so it is re-read every surface_query_every steps
+    # for the same column, and after any deposition (_invalidate_surface_k).
+    # In 8 steps the surface moves < 1 cell even at the Mach-cap speed.
+    every = max(1, int(getattr(twin, "surface_query_every", 8) or 1))
+    step_n = int(getattr(twin, "_step_n", 0))
+    if k_surface is None and cache is None and every > 1:
+        lag = twin.__dict__.get("_surface_k_lagged")
+        if lag is not None and lag[0] == (i0, j0) and step_n - lag[1] < every:
+            k_surface = lag[2]
     if k_surface is None:
         free_surface.surface_height_at(
             g.phi, g.flags, g.surface_k_buf,
@@ -81,6 +104,8 @@ def _resolve_arc_k(
             k_surface = float(max(1, twin.nz_solid - 1))
         if cache is not None:
             cache[(i0, j0)] = k_surface
+        else:
+            twin.__dict__["_surface_k_lagged"] = ((i0, j0), step_n, k_surface)
 
     if getattr(twin, "use_torch_z", False) and torch_z_m is not None:
         # Two conventions for torch_z_m:
@@ -106,6 +131,11 @@ def _resolve_arc_k(
         return max(k_surface, k_robot)
 
     return k_surface
+
+
+def _invalidate_surface_k(twin: "WAAMTwin") -> None:
+    """Force a fresh surface-height read on the next step (surface changed)."""
+    twin.__dict__.pop("_surface_k_lagged", None)
 
 
 def _solidify_if_enabled(twin: "WAAMTwin", g) -> None:
@@ -307,21 +337,32 @@ def _conduct_and_recover(twin: "WAAMTwin", g, use_fields: bool) -> None:
             g.nx, g.ny, g.nz,
             fs_iface,
         )
-        e_step = float(g.evap_energy_J_buf[None])
-        twin._evap_energy_J_step = e_step
-        twin._evap_energy_J_cum = float(getattr(twin, "_evap_energy_J_cum", 0.0)) + e_step
-        from ..physics.ledger import ensure_ledger
-        ensure_ledger(twin).record_evap(e_step)
+        step_stats.add_energy(
+            g.evap_energy_J_buf, g.step_stats, step_stats.EVAP_STEP, step_stats.EVAP_CUM,
+        )
         if not twin.enable_enthalpy_cap:
             _update_phase(twin, g)
-    else:
-        twin._evap_energy_J_step = 0.0
 
     # Cap H, then re-recover T so telemetry / T_max cannot retain a
     # post-phase spike above T_vapor_cap while H was already clamped.
     if twin.enable_enthalpy_cap:
-        _clamp_enthalpy_ceiling(twin, g)
-        _update_phase(twin, g)
+        if twin.use_material_tables and not getattr(twin, "use_dual_alloy", False):
+            tbl = twin.gpu_tables
+            kernels.clamp_ceiling_and_recover_variable_cp(
+                g.H, g.T, g.f_l, g.flags, twin.H_cap,
+                g.dx, g.enthalpy_cap_energy_J_buf, g.FLAG_GAS,
+                g.phi, twin.fs_iface_flag(),
+                twin.L_rho, twin.mat.T_solidus, twin.mat.T_liquidus,
+                twin.H_sol, twin.H_liq, twin.mat.rho,
+                tbl.cp_T, tbl.cp_V, tbl.cp_H, tbl.n_cp,
+            )
+            step_stats.add_energy(
+                g.enthalpy_cap_energy_J_buf, g.step_stats,
+                step_stats.CAP_STEP, step_stats.CAP_CUM,
+            )
+        else:
+            _clamp_enthalpy_ceiling(twin, g)
+            _update_phase(twin, g)
 
 
 def _refresh_lbm_band(twin: "WAAMTwin", g: "WAAMGrid", band: int) -> None:
@@ -352,7 +393,7 @@ def _refresh_lbm_band(twin: "WAAMTwin", g: "WAAMGrid", band: int) -> None:
 
 def _free_surface_stream(twin: "WAAMTwin", g: "WAAMGrid") -> None:
     """Free-surface LBM stream and interface update (see kernels/fslbm.py)."""
-    from ..kernels.reduce import ordered_sum_field, add_total_to_acc
+    from ..kernels.reduce import ordered_sum_field, add_total_to_acc, copy_total_to_f64
 
     nx, ny, nz = g.nx, g.ny, g.nz
     gamma = float(twin.gamma_lu) if twin.enable_csf_tension else 0.0
@@ -376,8 +417,9 @@ def _free_surface_stream(twin: "WAAMTwin", g: "WAAMGrid") -> None:
         g.reduce_scratch, g.fs_ledger, g.fs_donor_cnt,
         g.FLAG_FLUID, g.FLAG_GAS, g.FLAG_IFACE, nx, ny, nz,
     )
-    g.fs_mass_lost[None] = ordered_sum_field(g, g.reduce_scratch)
-    ordered_sum_field(g, g.fs_ledger)
+    ordered_sum_field(g, g.reduce_scratch, to_host=False)
+    copy_total_to_f64(g.reduce_total, g.fs_mass_lost)
+    ordered_sum_field(g, g.fs_ledger, to_host=False)
     add_total_to_acc(g.reduce_total, g.energy_acc_J, 3)
     kernels.fs_count_surface(
         g.flags, g.fs_mass_lost, g.fs_n_surface, g.fs_share,
@@ -387,7 +429,7 @@ def _free_surface_stream(twin: "WAAMTwin", g: "WAAMGrid") -> None:
         g.flags, g.fs_mass, g.fs_energy, g.H, g.fs_share, g.dx, g.fs_ledger,
         g.FLAG_GAS, g.FLAG_IFACE, nx, ny, nz,
     )
-    ordered_sum_field(g, g.fs_ledger)
+    ordered_sum_field(g, g.fs_ledger, to_host=False)
     add_total_to_acc(g.reduce_total, g.energy_acc_J, 3)
     kernels.fs_update_phi(
         g.flags, g.phi, g.fs_mass, g.rho, g.fs_mark,
@@ -397,7 +439,7 @@ def _free_surface_stream(twin: "WAAMTwin", g: "WAAMGrid") -> None:
         g.H, g.flags, g.phi, g.fs_energy, g.dx, g.fs_ledger,
         g.FLAG_SOLID, g.FLAG_GAS,
     )
-    ordered_sum_field(g, g.fs_ledger)
+    ordered_sum_field(g, g.fs_ledger, to_host=False)
     add_total_to_acc(g.reduce_total, g.energy_acc_J, 3)
 
 
@@ -449,7 +491,7 @@ def coupled_step(
     twin._last_arc_ijk = (float(arc_i), float(arc_j), float(arc_k))
 
     forces.clear_forces(g.Fx, g.Fy, g.Fz)
-    twin._enthalpy_cap_energy_J_step = 0.0
+    step_stats.reset_step_slots(g.step_stats)
     # Droplet booking from *previous* step is consumed by _arc_power_W when
     # energy_split is on; clear after inject so a no-droplet step restores full ηQ.
     twin._droplet_enthalpy_booked_J_prev = float(
@@ -550,6 +592,7 @@ def coupled_step(
                 twin._deposited_volume_m3 += placed_real
                 twin._n_droplets_fired += 1
                 deposited_this_step = True
+                _invalidate_surface_k(twin)
                 # Ledger droplet enthalpy for converted volume
                 from ..physics.ledger import ensure_ledger
                 drop_H_J = H_drop * placed_real
@@ -573,10 +616,8 @@ def coupled_step(
             g.FLAG_GAS, g.nx, g.ny, g.nz,
         )
 
-    thermal.update_T_max(g.T, g.T_max, g.flags, g.FLAG_GAS)
-
-    thermal.update_cooling_rate(
-        g.T, g.T_prev, g.dT_dt, g.flags, g.dt, g.FLAG_GAS,
+    kernels.update_T_max_and_cooling_rate(
+        g.T, g.T_max, g.T_prev, g.dT_dt, g.flags, g.dt, g.FLAG_GAS,
     )
 
     fs_on = bool(twin.enable_vof and getattr(twin, "use_free_surface_lbm", False))
@@ -700,24 +741,24 @@ def coupled_step(
         F_cap = float(twin.effective_force_limit_lu())
     else:
         F_cap = float(getattr(twin, "force_limit_lu", 0.05))
-    twin._force_clamp_hits_step = 0
-    twin._mach_clamp_hits_step = 0
     if F_cap > 0.0:
         kernels.clamp_body_force_magnitude(
             g.Fx, g.Fy, g.Fz, g.flags, F_cap,
             g.clamp_force_hits_buf,
             g.FLAG_SOLID, g.FLAG_GAS,
         )
-        n_f = int(g.clamp_force_hits_buf[None])
-        twin._force_clamp_hits_step = n_f
-        twin._force_clamp_hits_cum = int(getattr(twin, "_force_clamp_hits_cum", 0)) + n_f
-        twin._force_clamp_steps = int(getattr(twin, "_force_clamp_steps", 0)) + (1 if n_f > 0 else 0)
-        if n_f > 0 and getattr(twin, "warn_on_force_clamp", False):
+        step_stats.add_hits(
+            g.clamp_force_hits_buf, g.step_stats,
+            step_stats.FHITS_STEP, step_stats.FHITS_CUM, step_stats.FSTEPS,
+        )
+        n_f = _force_clamp_warn_count(twin)
+        if n_f > 0:
             from .. import logging_util as log
             a_phys = float(getattr(twin, "force_limit_m_s2", 0.0) or 0.0)
             extra = f", a_phys={a_phys:g} m/s²" if a_phys > 0.0 else ""
             log.warning(
-                f"[coupled_step] body-force clamp hit {n_f} cells this step "
+                f"[coupled_step] body-force clamp hit {n_f} cells over the last "
+                f"{_CLAMP_WARN_EVERY} steps "
                 f"(cap={F_cap:g} lu/ts²{extra})"
             )
 
@@ -776,10 +817,10 @@ def coupled_step(
             g.clamp_mach_hits_buf,
             g.FLAG_SOLID, g.FLAG_GAS,
         )
-        n_u = int(g.clamp_mach_hits_buf[None])
-        twin._mach_clamp_hits_step = n_u
-        twin._mach_clamp_hits_cum = int(getattr(twin, "_mach_clamp_hits_cum", 0)) + n_u
-        twin._mach_clamp_steps = int(getattr(twin, "_mach_clamp_steps", 0)) + (1 if n_u > 0 else 0)
+        step_stats.add_hits(
+            g.clamp_mach_hits_buf, g.step_stats,
+            step_stats.MHITS_STEP, step_stats.MHITS_CUM, step_stats.MSTEPS,
+        )
 
     band = int(getattr(twin, "lbm_gas_band", 0) or 0)
     if fs_on:

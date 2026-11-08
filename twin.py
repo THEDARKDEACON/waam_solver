@@ -64,8 +64,24 @@ def _same_thermal_alloy(a: MaterialProps, b: MaterialProps) -> bool:
     )
 
 
+from .physics.step_stats import DeviceStat as _DeviceStat, TWIN_ATTRS as _STAT_ATTRS
+
+
 class WAAMTwin:
     """GPU-resident WAAM melt-pool digital twin (Taichi LBM + enthalpy-porosity)."""
+
+    # Per-step counters live on the device (physics/step_stats.py).
+    _enthalpy_cap_energy_J_step = _DeviceStat(*_STAT_ATTRS['_enthalpy_cap_energy_J_step'])
+    _enthalpy_cap_energy_J_cum = _DeviceStat(*_STAT_ATTRS['_enthalpy_cap_energy_J_cum'])
+    _evap_energy_J_step = _DeviceStat(*_STAT_ATTRS['_evap_energy_J_step'])
+    _evap_energy_J_cum = _DeviceStat(*_STAT_ATTRS['_evap_energy_J_cum'])
+    _force_clamp_hits_step = _DeviceStat(*_STAT_ATTRS['_force_clamp_hits_step'])
+    _force_clamp_hits_cum = _DeviceStat(*_STAT_ATTRS['_force_clamp_hits_cum'])
+    _force_clamp_steps = _DeviceStat(*_STAT_ATTRS['_force_clamp_steps'])
+    _mach_clamp_hits_step = _DeviceStat(*_STAT_ATTRS['_mach_clamp_hits_step'])
+    _mach_clamp_hits_cum = _DeviceStat(*_STAT_ATTRS['_mach_clamp_hits_cum'])
+    _mach_clamp_steps = _DeviceStat(*_STAT_ATTRS['_mach_clamp_steps'])
+
 
     def __init__(
         self,
@@ -176,6 +192,8 @@ class WAAMTwin:
         self.use_free_surface_lbm = False
         # FSLBM: specular slip on wall links at the contact line (unpins it).
         self.fs_contact_slip = True
+        # Re-read the arc-column surface height every N steps (GPU sync); 1 = every step.
+        self.surface_query_every = 8
         # Phase 4: only enable once droplet enthalpy is booked via real
         # gas→fluid conversion (see physics/arc._arc_power_W). Default off so
         # theoretical wire enthalpy is not subtracted from the arc.
@@ -888,16 +906,11 @@ class WAAMTwin:
         self._window_offset_x_m = 0.0
         self._window_offset_y_m = 0.0
         self._window_offset_z_m = 0.0
-        self._evap_energy_J_step = 0.0
-        self._evap_energy_J_cum = 0.0
-        self._enthalpy_cap_energy_J_step = 0.0
-        self._enthalpy_cap_energy_J_cum = 0.0
-        self._force_clamp_hits_step = 0
-        self._mach_clamp_hits_step = 0
-        self._force_clamp_hits_cum = 0
-        self._mach_clamp_hits_cum = 0
-        self._force_clamp_steps = 0
-        self._mach_clamp_steps = 0
+        led = self.__dict__.get("ledger")
+        if led is not None and hasattr(led, "fold_device_stats"):
+            led.fold_device_stats(self)  # keep ledger totals across the zeroing below
+        g.step_stats.fill(0.0)
+        self.__dict__.pop("_surface_k_lagged", None)
         self._clamp_regime_warned = False
         g.deposit_vol_buf[None] = 0.0
         g.deposit_real_buf[None] = 0.0
@@ -1096,6 +1109,7 @@ class WAAMTwin:
             n_shift = max(8, g.nx // 10)
             kernels.shift_simulation_window_x(n_shift, *self._window_field_args())
             self._window_offset_x_m += n_shift * g.dx
+            self.__dict__.pop("_surface_k_lagged", None)
             kernels.shift_tracers(
                 g.porosity_pos, g.porosity_active,
                 n_shift * g.dx, 0.0, 0.0, g.max_tracers,
@@ -1111,6 +1125,7 @@ class WAAMTwin:
         if sim_y >= (g.ny * g.dx - margin_y) and n_y < g.ny:
             kernels.shift_simulation_window_y(n_y, 1, *self._window_field_args())
             self._window_offset_y_m += n_y * g.dx
+            self.__dict__.pop("_surface_k_lagged", None)
             kernels.shift_tracers(
                 g.porosity_pos, g.porosity_active,
                 0.0, n_y * g.dx, 0.0, g.max_tracers,
@@ -1122,6 +1137,7 @@ class WAAMTwin:
         elif sim_y <= margin_y and n_y < g.ny:
             kernels.shift_simulation_window_y(n_y, -1, *self._window_field_args())
             self._window_offset_y_m -= n_y * g.dx
+            self.__dict__.pop("_surface_k_lagged", None)
             kernels.shift_tracers(
                 g.porosity_pos, g.porosity_active,
                 0.0, -n_y * g.dx, 0.0, g.max_tracers,

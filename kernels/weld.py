@@ -24,6 +24,21 @@ def _column_load_weight(phi: ti.template(), i, j, k, nz):
         above = phi[i, j, k + 1]
     return ti.max(0.0, phi[i, j, k] - above)
 
+
+# Gaussian surface loads are evaluated only within ±_ARC_BOX_SIGMAS·σ of the
+# arc axis (exp(−18) ≈ 1.5e-8 of the peak at the edge, below f32 resolution
+# of the summed load); full columns in z because the column weight needs k±1.
+_ARC_BOX_SIGMAS = 6.0
+
+
+@ti.func
+def _arc_box(arc_i, arc_j, radius, nx, ny):
+    i0 = ti.max(0, ti.cast(ti.floor(arc_i - radius), ti.i32) - 1)
+    i1 = ti.min(nx, ti.cast(ti.ceil(arc_i + radius), ti.i32) + 2)
+    j0 = ti.max(0, ti.cast(ti.floor(arc_j - radius), ti.i32) - 1)
+    j1 = ti.min(ny, ti.cast(ti.ceil(arc_j + radius), ti.i32) + 2)
+    return i0, i1, j0, j1
+
 @ti.kernel
 def apply_vapor_recoil(
     Fz: ti.template(),
@@ -48,7 +63,8 @@ def apply_vapor_recoil(
     eps = 1e-6
     inv2s2 = 1.0 / (2.0 * sigma * sigma + eps)
 
-    for i, j, k in Fz:
+    i0, i1, j0, j1 = _arc_box(arc_i, arc_j, _ARC_BOX_SIGMAS * sigma, Fz.shape[0], Fz.shape[1])
+    for i, j, k in ti.ndrange((i0, i1), (j0, j1), (0, Fz.shape[2])):
         if flags[i, j, k] == FLAG_SOLID or flags[i, j, k] == FLAG_GAS:
             continue
         w = _column_load_weight(phi, i, j, k, Fz.shape[2])
@@ -116,7 +132,8 @@ def apply_vapor_recoil_clausius_clapeyron(
     """
     eps = 1e-6
     inv2s2 = 1.0 / (2.0 * sigma * sigma + eps)
-    for i, j, k in Fz:
+    i0, i1, j0, j1 = _arc_box(arc_i, arc_j, _ARC_BOX_SIGMAS * sigma, Fz.shape[0], Fz.shape[1])
+    for i, j, k in ti.ndrange((i0, i1), (j0, j1), (0, Fz.shape[2])):
         if flags[i, j, k] == FLAG_SOLID or flags[i, j, k] == FLAG_GAS:
             continue
         w = _column_load_weight(phi, i, j, k, Fz.shape[2])
@@ -162,7 +179,8 @@ def apply_gas_shear_stress(
 ):
     eps = 1e-6
     inv2s2 = 1.0 / (2.0 * sigma * sigma + eps)
-    for i, j, k in Fx:
+    i0, i1, j0, j1 = _arc_box(arc_i, arc_j, _ARC_BOX_SIGMAS * sigma, Fx.shape[0], Fx.shape[1])
+    for i, j, k in ti.ndrange((i0, i1), (j0, j1), (0, Fx.shape[2])):
         if flags[i, j, k] == FLAG_SOLID or flags[i, j, k] == FLAG_GAS:
             continue
         dpx = 0.5 * (phi[ti.min(i + 1, Fx.shape[0] - 1), j, k] - phi[ti.max(i - 1, 0), j, k])
@@ -218,7 +236,8 @@ def apply_droplet_impact_pressure(
 ):
     eps = 1e-6
     inv2s2 = 1.0 / (2.0 * drop_radius * drop_radius + eps)
-    for i, j, k in Fz:
+    i0, i1, j0, j1 = _arc_box(arc_i, arc_j, 2.0 * drop_radius, Fz.shape[0], Fz.shape[1])
+    for i, j, k in ti.ndrange((i0, i1), (j0, j1), (0, Fz.shape[2])):
         if flags[i, j, k] == FLAG_GAS:
             continue
         if f_l[i, j, k] < 0.25 and phi[i, j, k] < 0.25:
@@ -332,7 +351,8 @@ def apply_arc_pressure(
     # eps guards against a zero-sigma call producing inf in inv2s2
     inv2s2 = 1.0 / (2.0 * sigma * sigma + eps)
 
-    for i, j, k in Fz:
+    i0, i1, j0, j1 = _arc_box(arc_i, arc_j, _ARC_BOX_SIGMAS * sigma, Fz.shape[0], Fz.shape[1])
+    for i, j, k in ti.ndrange((i0, i1), (j0, j1), (0, Fz.shape[2])):
         if flags[i, j, k] == FLAG_SOLID or flags[i, j, k] == FLAG_GAS:
             continue
 

@@ -226,6 +226,9 @@ class WAAMGrid:
         self.reduce_scratch = ti.field(dtype=ti.f32, shape=shape3)
         self.reduce_partials = ti.field(dtype=ti.f64, shape=(_n_blocks,))
         self.reduce_total = ti.field(dtype=ti.f64, shape=())
+        # Coalesced ordered reduction: (j,k) plane over i, then j lines over k.
+        self.reduce_plane = ti.field(dtype=ti.f64, shape=(ny, nz))
+        self.reduce_line = ti.field(dtype=ti.f64, shape=(ny,))
         # Telemetry reduction scratch (host reads a few scalars, not volumes)
         self.telem_n = ti.field(dtype=ti.i32, shape=())
         self.telem_T_peak = ti.field(dtype=ti.f32, shape=())
@@ -242,6 +245,8 @@ class WAAMGrid:
         # [2] enthalpy-floor restore, [3] signed gas<->metal relabel.
         # Read by the ledger, never per step.
         self.energy_acc_J = ti.field(dtype=ti.f64, shape=4)
+        from .physics.step_stats import N_SLOTS as _N_STAT
+        self.step_stats = ti.field(dtype=ti.f64, shape=_N_STAT)  # physics/step_stats.py
         self.phi_volume_buf = ti.field(dtype=ti.f32, shape=())
         self.clamp_force_hits_buf = ti.field(dtype=ti.i32, shape=())
         self.clamp_mach_hits_buf = ti.field(dtype=ti.i32, shape=())

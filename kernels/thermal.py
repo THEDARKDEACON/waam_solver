@@ -114,7 +114,7 @@ def inject_arc_heat(
         arc_i, arc_j, arc_k, sigma,
         penetration_cells, enable_surface_weight, FLAG_GAS, fs_iface,
     )
-    ordered_sum_scratch(grid)
+    ordered_sum_scratch(grid, to_host=False)
     copy_total_to_f32(grid.reduce_total, norm_buf)
     inject_arc_heat_apply(
         H, flags, phi, f_l, norm_buf,
@@ -347,7 +347,7 @@ def inject_goldak_heat(
             a_front, a_rear, b_axis, c_axis,
             penetration_cells, enable_surface_weight, FLAG_GAS, fs_iface,
         )
-        ordered_sum_scratch(grid)
+        ordered_sum_scratch(grid, to_host=False)
         copy_total_to_f32(grid.reduce_total, norm_buf)
     else:
         norm_buf[None] = 0.0
@@ -359,7 +359,7 @@ def inject_goldak_heat(
         normalize_energy, fs_iface,
     )
     if int(normalize_energy) == 0:
-        ordered_sum_scratch(grid)
+        ordered_sum_scratch(grid, to_host=False)
         copy_total_to_f32(grid.reduce_total, norm_buf)
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1291,6 +1291,55 @@ def clamp_enthalpy_ceiling_variable_cp(
 
 
 @ti.kernel
+def clamp_ceiling_and_recover_variable_cp(
+    H: ti.template(),
+    T: ti.template(),
+    f_l: ti.template(),
+    flags: ti.template(),
+    H_cap: ti.f32,
+    dx: ti.f32,
+    energy_J_buf: ti.template(),
+    FLAG_GAS: ti.i32,
+    phi: ti.template(),
+    fs_iface: ti.i32,
+    L_rho: ti.f32,
+    T_solidus: ti.f32,
+    T_liquidus: ti.f32,
+    H_sol: ti.f32,
+    H_liq: ti.f32,
+    rho: ti.f32,
+    cp_T: ti.template(),
+    cp_V: ti.template(),
+    cp_H: ti.template(),
+    n_cp: ti.template(),
+):
+    """``clamp_enthalpy_ceiling_variable_cp`` then ``update_phase_variable_cp``
+    in one sweep (both are per-cell, so the result is identical)."""
+    dx3 = dx * dx * dx
+    energy_J_buf[None] = 0.0
+    dH_mush = H_liq - H_sol + 1e-9
+    n = n_cp[None]
+    for i, j, k in H:
+        h = H[i, j, k]
+        if flags[i, j, k] != FLAG_GAS and h > H_cap:
+            H[i, j, k] = H_cap
+            ti.atomic_add(
+                energy_J_buf[None],
+                (h - H_cap) * dx3 * _fill_w(phi, flags, i, j, k, FLAG_GAS, fs_iface),
+            )
+            h = H_cap
+        T[i, j, k] = temperature_from_enthalpy(
+            h, rho, L_rho, T_solidus, T_liquidus, cp_T, cp_V, cp_H, n,
+        )
+        if h <= H_sol:
+            f_l[i, j, k] = 0.0
+        elif h >= H_liq:
+            f_l[i, j, k] = 1.0
+        else:
+            f_l[i, j, k] = (h - H_sol) / dH_mush
+
+
+@ti.kernel
 def clamp_enthalpy_ceiling_dual(
     H: ti.template(),
     flags: ti.template(),
@@ -1348,6 +1397,35 @@ def update_cooling_rate(
         else:
             dT_dt[i, j, k] = dT * inv_dt
         T_prev[i, j, k] = T[i, j, k]
+
+
+@ti.kernel
+def update_T_max_and_cooling_rate(
+    T: ti.template(),
+    T_max: ti.template(),
+    T_prev: ti.template(),
+    dT_dt: ti.template(),
+    flags: ti.template(),
+    dt_phys: ti.f32,
+    FLAG_GAS: ti.i32,
+):
+    """``update_T_max`` and ``update_cooling_rate`` in one sweep (same T)."""
+    inv_dt = 1.0 / (dt_phys + 1e-12)
+    max_jump_K = ti.max(25.0, 5.0e5 * dt_phys)
+    for i, j, k in T:
+        Tc = T[i, j, k]
+        if flags[i, j, k] == FLAG_GAS:
+            dT_dt[i, j, k] = 0.0
+            T_prev[i, j, k] = Tc
+            continue
+        if Tc > T_max[i, j, k]:
+            T_max[i, j, k] = Tc
+        dT = Tc - T_prev[i, j, k]
+        if ti.abs(dT) > max_jump_K:
+            dT_dt[i, j, k] = 0.0
+        else:
+            dT_dt[i, j, k] = dT * inv_dt
+        T_prev[i, j, k] = Tc
 
 
 @ti.kernel

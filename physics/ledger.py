@@ -92,11 +92,29 @@ class EnergyMassLedger:
     E_stored_0_J: float | None = None
     _last_stored_J: float = 0.0
     _acc_base_J: tuple[float, float, float, float] | None = None
+    _stat_base_J: tuple[float, float] | None = None
     notes: list[str] = field(default_factory=list)
 
     def attach(self, twin: "WAAMTwin") -> None:
         twin.ledger = self  # type: ignore[attr-defined]
         self._acc_base_J = _device_acc_J(twin)
+        from .step_stats import device_energy_totals
+        self._stat_base_J = device_energy_totals(twin)
+
+    def _stats_since_attach_J(self, twin: "WAAMTwin") -> tuple[float, float]:
+        """Enthalpy-cap and evaporation joules accumulated on device since attach."""
+        from .step_stats import device_energy_totals
+        now = device_energy_totals(twin)
+        if self._stat_base_J is None:
+            self._stat_base_J = now
+        return now[0] - self._stat_base_J[0], now[1] - self._stat_base_J[1]
+
+    def fold_device_stats(self, twin: "WAAMTwin") -> None:
+        """Move device cap/evap totals into the host fields (before they are zeroed)."""
+        cap, evap = self._stats_since_attach_J(twin)
+        self.E_cap_J += max(0.0, cap)
+        self.E_evap_J += max(0.0, evap)
+        self._stat_base_J = (0.0, 0.0)
 
     def _device_since_attach_J(self, twin: "WAAMTwin") -> tuple[float, float, float, float]:
         """Convection, radiation, floor and relabel joules booked on device since attach."""
@@ -140,6 +158,7 @@ class EnergyMassLedger:
         m_dep = float(getattr(twin, "_deposited_volume_m3", 0.0)) * float(twin.mat.rho)
         m_phi = _phi_metal_above_kg(twin)
         conv_J, rad_J, floor_J, relabel_J = self._device_since_attach_J(twin)
+        cap_J, evap_J = self._stats_since_attach_J(twin)
 
         return LedgerSnapshot(
             step=int(getattr(twin, "_step_n", 0)),
@@ -148,8 +167,8 @@ class EnergyMassLedger:
             E_droplet_J=self.E_droplet_J,
             E_conv_J=self.E_conv_J + conv_J,
             E_rad_J=self.E_rad_J + rad_J,
-            E_evap_J=self.E_evap_J,
-            E_cap_J=self.E_cap_J,
+            E_evap_J=self.E_evap_J + max(0.0, evap_J),
+            E_cap_J=self.E_cap_J + max(0.0, cap_J),
             E_floor_J=self.E_floor_J + floor_J,
             E_relabel_J=relabel_J,
             E_freeze_J=self.E_freeze_J,

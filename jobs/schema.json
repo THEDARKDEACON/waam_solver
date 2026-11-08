@@ -71,6 +71,11 @@
         "use_free_surface_lbm": {
           "type": "boolean"
         },
+        "surface_query_every": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Re-read the arc-column surface height every N steps (GPU sync); 1 = every step (default 8)"
+        },
         "fs_contact_slip": {
           "type": "boolean",
           "description": "FSLBM: specular slip on wall links at the contact line (default true)"

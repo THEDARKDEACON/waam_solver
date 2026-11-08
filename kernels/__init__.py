@@ -60,6 +60,8 @@ from .thermal import (
     clamp_enthalpy_ceiling_variable_cp,
     clamp_enthalpy_ceiling_dual,
     update_cooling_rate,
+    update_T_max_and_cooling_rate,
+    clamp_ceiling_and_recover_variable_cp,
     apply_thermal_boundary_losses,
     update_T_max,
     prescribe_gaussian_pulse,

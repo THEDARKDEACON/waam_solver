@@ -392,7 +392,7 @@ _KNOWN_SIM_KEYS = frozenset({
     "preset", "backend", "physics_tier", "domain_mm", "dx_mm", "auto_grid", "strict_mode",
     "enable_vof", "enable_csf_tension", "enable_wetting", "enable_hydrostatic_gravity",
     "enable_bead_freeze", "enable_trailing_solidify", "periodic_x",
-    "use_free_surface_lbm", "fs_contact_slip", "C_darcy_phys", "dt_mode", "ma_max",
+    "use_free_surface_lbm", "fs_contact_slip", "surface_query_every", "C_darcy_phys", "dt_mode", "ma_max",
     "enable_droplet_impact_pressure", "enable_recoil",
     "use_recoil_clausius_clapeyron", "enable_lorentz", "enable_gas_shear",
     "enable_enthalpy_cap", "enable_evaporative_cooling", "arc_surface_weighting",
@@ -726,6 +726,8 @@ def apply_job_to_twin(twin, job: dict[str, Any] | JobConfig) -> None:
         twin.use_free_surface_lbm = bool(sim["use_free_surface_lbm"])
     if "fs_contact_slip" in sim:
         twin.fs_contact_slip = bool(sim["fs_contact_slip"])
+    if "surface_query_every" in sim:
+        twin.surface_query_every = max(1, int(sim["surface_query_every"]))
     if "enable_ctwd" in sim:
         twin.enable_ctwd = bool(sim["enable_ctwd"])
     # Attach typed config view (Phase 2)
