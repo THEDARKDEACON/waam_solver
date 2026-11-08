@@ -164,6 +164,8 @@ def _knobs(twin, n_steps: int) -> dict[str, Any]:
         "C_darcy": float(getattr(twin, "C_darcy", 0.0) or 0.0),
         "C_darcy_eff": float(twin.effective_C_darcy()),
         "dx_mm": float(mm),
+        "n_cells": int(twin.grid.nx * twin.grid.ny * twin.grid.nz),
+        "grid": f"{twin.grid.nx}x{twin.grid.ny}x{twin.grid.nz}",
         "dt_s": float(twin.grid.dt),
         "dt_scale": float(twin.grid.dt_scale),
         "tau": float(twin.grid.tau),
