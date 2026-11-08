@@ -13,7 +13,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--job",
         default=None,
-        help="Job YAML (default: jobs/examples/bead_on_plate.yaml if present)",
+        help="Job YAML (default: jobs/examples/bead_calibrate.yaml, free-surface LBM)",
     )
     p.add_argument(
         "--preset",
@@ -40,8 +40,32 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--steps-per-frame",
         type=int,
-        default=int(os.environ.get("WAAM_VIEWER_SPF", "20")),
-        help="LBM steps per rendered frame (default: 20)",
+        default=int(os.environ.get("WAAM_VIEWER_SPF", "0")),
+        help=(
+            "LBM steps per rendered frame. 0 (default) = auto: as many steps as "
+            "fit in --frame-time of physics, so the bead grows at the fastest "
+            "rate the GPU allows while the window stays responsive"
+        ),
+    )
+    p.add_argument(
+        "--frame-time",
+        type=float,
+        default=float(os.environ.get("WAAM_VIEWER_FRAME_S", "0.3")),
+        help="Physics wall time per frame in auto mode, seconds (default: 0.3)",
+    )
+    p.add_argument(
+        "--sparse",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Override the job's simulation.sparse_grid (GPU only: compute only "
+            "near metal; about 1.6x faster on the calibration job)"
+        ),
+    )
+    p.add_argument(
+        "--particles",
+        action="store_true",
+        help="Start with cell particles instead of the φ = 0.5 bead surface",
     )
     p.add_argument(
         "--paused",

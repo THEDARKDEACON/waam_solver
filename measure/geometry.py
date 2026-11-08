@@ -181,13 +181,10 @@ def measure_bead_crown_mm(twin: "WAAMTwin") -> dict[str, float]:
     # Height: top free-surface crossing above plate
     if z_idx.size:
         # average top k over deposit footprint
-        tops = []
-        for i in range(g.nx):
-            for j in range(g.ny):
-                col = metal[i, j, :]
-                if col.any():
-                    tops.append(int(np.where(col)[0][-1]))
-        if tops:
+        has = metal.any(axis=2)
+        # Highest metal k per column (same as the old per-column loop, vectorised).
+        tops = (metal.shape[2] - 1 - np.argmax(metal[:, :, ::-1], axis=2))[has]
+        if tops.size:
             k_top = float(np.mean(tops)) + 0.5
             h_mm = max(0.0, (k_top - nz + 1) * g.dx * 1000.0)
         else:

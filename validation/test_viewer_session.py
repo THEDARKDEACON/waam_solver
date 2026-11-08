@@ -18,6 +18,16 @@ def run() -> None:
     session.advance_physics(5, is_welding=True)
     telem = twin.get_telemetry()
     assert telem["step"] == 5
+    i, j, k = session.torch_cell()
+    assert 0 <= i < g.nx and 0 <= j < g.ny and k >= twin.nz_solid - 1, (i, j, k)
+    # HUD bead section: none until the torch has travelled the lag, then a
+    # plane across the travel direction (bead_line.csv travels +Y → j-plane).
+    assert session.section_plane(3.0) is None
+    step0 = twin._step_n
+    twin._step_n = int(0.010 / session.path_driver.speed / g.dt)  # 10 mm travelled
+    plane = session.section_plane(3.0)
+    twin._step_n = step0
+    assert plane is not None and plane[0] == 1, plane
     print(
         f"[viewer_session] job={session.job_label} grid={g.nx}×{g.ny}×{g.nz} "
         f"pool_W={telem['pool_width_mm']:.2f}mm"

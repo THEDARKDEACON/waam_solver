@@ -560,8 +560,8 @@ Path behavior is intentionally consistent:
 
 ### Interactive viewer
 
-Real-time **PyVista** particle view of the melt pool (voxel-based, not ParaView quality).
-Needs `pip install -e ".[export]"`. Quadrants has no GGUI.
+Live **PyVista** view of the bead as it is laid down. Needs
+`pip install -e ".[export]"` (Quadrants has no GGUI).
 
 ```bash
 # From FYP22-01 parent (PYTHONPATH=.) or any parent of waam_twin/
@@ -569,39 +569,80 @@ Needs `pip install -e ".[export]"`. Quadrants has no GGUI.
 export PYTHONPATH=.
 export WAAM_BACKEND=cuda   # or cpu / vulkan / amdgpu
 
+# Default job: jobs/examples/bead_calibrate.yaml (free-surface LBM)
+python3 -m waam_twin.viewer
+# Faster on a GPU: compute only near metal (simulation.sparse_grid)
+python3 -m waam_twin.viewer --sparse
+
 # Nested under FYP22-01:
 python3 -m waam_twin.viewer --job waam_twin/jobs/examples/bead_calibrate.yaml
 
-# Standalone clone (cwd = waam_twin repo root):
-python3 -m waam_twin.viewer --job jobs/examples/bead_calibrate.yaml
-
-# Interactive playground (mirrors calibrate heat schedule)
+# Legacy VOF jobs (bead_on_plate.yaml, ...) still open, with a warning: their
+# wetting and droplet energy are known to be wrong.
 python3 -m waam_twin.viewer --job jobs/examples/bead_on_plate.yaml
-
-# Preset-only demo (no job file) — avoid --preset minimal for production-like heat
-python3 -m waam_twin.viewer --preset standard --material materials/validated/ER70S-6.v1.yaml
 ```
+
+The default view is the **φ = 0.5 bead surface** coloured by **deposit**: wire
+metal copper, plate grey, fusion-zone mixing in between, liquid orange → white.
+The camera follows the torch and the top of the bead under it. Physics steps
+per frame are paced automatically (`--frame-time`, default 0.3 s of physics per
+frame); `+`/`-` switch to manual, `0` back to auto. The HUD shows the rate in
+simulated ms per wall second.
 
 | Key | Action |
 |-----|--------|
-| `M` | Cycle view: Temperature / HAZ / Velocity / Vorticity / Body force (+ force arrows in body-force mode) |
+| `M` | Cycle colour: Deposit / Temperature / HAZ / Velocity / Vorticity / Body force |
+| `N` | Toggle φ = 0.5 bead surface (default) vs cell particles (`--particles` to start with them) |
+| `X` / `Y` / `Z` | Section plane on that axis (same key again = off). Everything on one side is kept and the cut face is filled in (deposit or temperature colours). Across the travel direction it starts a pool length behind the arc; `Y` runs along the bead centreline; `Z` sits at the plate face (plan view of the fusion footprint) |
+| `[` `]` / `{` `}` | Move the plane 1 cell / 1 mm |
+| `K` | Plane rides with the torch ↔ stays fixed in the world (watch the arc arrive at a fixed station) |
+| `\` | Keep the other side (by default the side away from the camera, so you face the cut) |
+| `Tab` | Tilt the plane with the mouse (drag the plane or its arrow; `Tab` again to finish) |
+| `C` | Camera follows the torch on / off |
 | `V` | Cycle flow overlay: off / velocity arrows / streamlines |
-| `B` / `H` / `F` | Filter: all metal / solid-only / surface (φ band) |
-| `N` | Toggle φ surface shell (T-colored) vs particles |
-| `C` / `Z` | Toggle Y / Z cross-section clip |
+| `B` / `H` / `F` | Particle filter: all metal / solid-only / surface (φ band) |
 | `T` / `O` | Toggle porosity tracers / torch marker |
 | `G` | Full research VTK bundle → `viewer_output/bundle_step_*/` |
-| `I` | Pick probe at camera lookat; **T(t)** panel updates live |
-| `U` | Add probe at torch (CSV on **`G`** export) |
+| Right-click | Add a probe on the metal under the cursor (a click on the cut face puts it inside the part) |
+| `I` / `U` | Add a probe at the screen centre / 1 mm under the metal surface below the torch |
+| `L` | New probes fixed in the world (thermocouple) ↔ riding with the torch |
+| `J` / `Del` | Select the next probe (its T(t) graph) / remove it |
 | `P` | Screenshot PNG → `viewer_output/` |
 | `R` | Reset simulation |
-| `+` / `-` | More / fewer physics steps per frame |
+| `+` / `-` / `0` | More / fewer steps per frame (manual) / back to auto |
 | `SPACE` | Pause / resume |
 | `ESC` | Exit |
 
-HUD shows pool W/D, peak T, Marangoni speed, liquid cell count, bead height, deposited mass, and a **T(t) probe** sparkline when a probe is active (`P`, `I`, or job `probes:`).
+HUD **Bead** line: height, width and toe angle measured on one cross-section:
+at the section plane when it cuts across the travel direction, otherwise
+where the torch was 0.6 × the pool length (≥ 3 mm) ago. Height is the metal above the
+plate face (sub-cell, liquid included, every layer of a wall); width spans the
+columns joined to the path centreline, so spatter is ignored; the toe angle is
+a coarse one-cell slope at the bead edges. Full telemetry (pool W/D, peak T,
+mass balance) refreshes about once a second.
 
-Temperature view colors hot liquid, warm HAZ, substrate (dark), and frozen bead (bronze) — not flat grey on solids.
+**Probes.** Each probe line on the HUD shows the current temperature, the peak,
+and t8/5 (time to cool from 800 to 500 °C on the last pass through 800 °C).
+The output folder holds `probes.csv` (sampled every 1 ms of simulated time),
+`probes_summary.csv` (peak, t8/5, time above solidus, cooling rate at 700 °C
+per probe) and `probes.yaml`, a `probes:` block you can paste into a job so a
+probe set found in the viewer becomes repeatable. Job probes accept a sensor
+model for comparing with real thermocouples:
+
+```yaml
+probes:
+  z_ref: plate_bottom          # thermocouples drilled from underneath
+  sample_every_ms: 1.0         # default 1; 0 = every step
+  points:
+    - {name: tc_2mm, x_mm: 35, y_mm: 22, z_mm: 7.0,
+       bead_diameter_mm: 0.5,       # average over the junction bead
+       time_constant_ms: 20,        # first-order sensor lag
+       position_tolerance_mm: 0.5}  # also record min/max T at ±0.5 mm
+```
+
+With a sensor model the CSV gains `<name>_T_tc_K` (what the thermocouple would
+read; the summary uses it) and, with a tolerance, `<name>_T_lo_K` /
+`<name>_T_hi_K`.
 
 #### Resolution tuning
 

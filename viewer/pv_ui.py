@@ -16,6 +16,7 @@ PRESS = "press"
 SPACE = " "
 ESCAPE = "escape"
 LMB = "lmb"
+RMB = "rmb"
 
 # PyVista default bindings that collide with the GGUI camera / viewer keys.
 _PYVISTA_KEYS_TO_CLEAR = ("q", "b", "v", "C", "plus", "minus", "Up", "Down")
@@ -105,6 +106,11 @@ class _Scene:
     def lines(self, vert_field, *, per_vertex_color, width: float, vertex_count: int) -> None:
         self._window._lines.append((vert_field, per_vertex_color, int(vertex_count), float(width)))
 
+    def labels(self, points, texts, *, color=(1.0, 1.0, 1.0), size_px: float = 10.0) -> None:
+        """Labelled marker points (e.g. probes); a new list every frame."""
+        if len(texts):
+            self._window._labels.append((np.asarray(points, dtype=np.float64), list(texts), color, size_px))
+
     def surface(self, mesh) -> None:
         # Same mesh object stays on the plotter. A new object replaces it.
         # None removes the sheet.
@@ -128,6 +134,14 @@ class _GUI:
 
     def end(self) -> None:
         return None
+
+
+# The HUD font (VTK's embedded Courier) has no glyphs for these.
+_HUD_ASCII = str.maketrans({
+    "φ": "phi", "→": "->", "—": "-", "×": "x", "°": " deg", "≈": "~",
+    "Δ": "d", "∇": "grad ", "…": "...", "²": "^2", "³": "^3",
+    "▁": "_", "▂": ".", "▃": ":", "▄": "-", "▅": "=", "▆": "+", "▇": "*", "█": "#",
+})
 
 
 class Window:
@@ -154,6 +168,11 @@ class Window:
         self._camera = Camera()
         self._particles: list[tuple[Any, Any, int, float]] = []
         self._lines: list[tuple[Any, Any, int, float]] = []
+        self._labels: list[tuple[Any, list, Any, float]] = []
+        self._labels_key: Any = None
+        self._n_label_actors = 0
+        self._click_px: tuple[int, int] | None = None
+        self._plane_widget_on = False
         self._surface_mesh: Any = None
         self._surface_dirty = False
         self._ambient = (0.4, 0.4, 0.4)
@@ -227,6 +246,7 @@ class Window:
         _observe(vtk_iren, "LeftButtonPressEvent", self._on_lmb_press)
         _observe(vtk_iren, "LeftButtonReleaseEvent", self._on_lmb_release)
         _observe(vtk_iren, "MouseMoveEvent", self._on_mouse_move)
+        _observe(vtk_iren, "RightButtonPressEvent", self._on_rmb_press)
         _observe(vtk_iren, "ExitEvent", self._on_vtk_exit)
         _observe(vtk_iren, "CharEvent", _abort_char, 1.0)
         style = vtk_iren.GetInteractorStyle()
@@ -293,6 +313,68 @@ class Window:
         self._lmb = False
         self._pressed.discard(LMB)
 
+    def _on_rmb_press(self, *_args: Any) -> None:
+        """Right click → a "RMB" event; its pixel is ``last_click_px``."""
+        vtk_iren = self._vtk_iren()
+        if vtk_iren is None:
+            return
+        try:
+            x, y = vtk_iren.GetEventPosition()
+        except Exception:
+            return
+        self._click_px = (int(x), int(y))
+        self._events.append(_Event(key=RMB))
+
+    @property
+    def last_click_px(self) -> tuple[int, int] | None:
+        return self._click_px
+
+    def pixel_ray(self, px: float, py: float) -> tuple[np.ndarray, np.ndarray]:
+        """World-space ray (origin, unit direction) through a window pixel
+        (VTK display coordinates, origin bottom-left), for the camera drawn
+        last frame."""
+        ren = self._plotter.renderer
+        pts = []
+        for zd in (0.0, 1.0):
+            ren.SetDisplayPoint(float(px), float(py), zd)
+            ren.DisplayToWorld()
+            w = ren.GetWorldPoint()
+            pts.append(np.array(w[:3], dtype=np.float64) / (w[3] if w[3] else 1.0))
+        d = pts[1] - pts[0]
+        n = float(np.linalg.norm(d))
+        return pts[0], (d / n if n > 0 else np.array([0.0, 0.0, -1.0]))
+
+    def centre_px(self) -> tuple[float, float]:
+        w, h = self._plotter.window_size
+        return 0.5 * float(w), 0.5 * float(h)
+
+    def set_plane_widget(self, enabled: bool, *, normal=None, origin=None, bounds=None, callback=None) -> None:
+        """Mouse plane widget (drag to move, drag the arrow to tilt); calls
+        ``callback(normal, origin)`` when a drag ends."""
+        pl = self._plotter
+        if not enabled:
+            if self._plane_widget_on:
+                pl.clear_plane_widgets()
+                self._plane_widget_on = False
+            return
+        if self._plane_widget_on:
+            pl.clear_plane_widgets()
+        pl.add_plane_widget(
+            callback,
+            normal=tuple(float(v) for v in normal),
+            origin=tuple(float(v) for v in origin),
+            bounds=tuple(float(v) for v in bounds),
+            factor=1.0,
+            implicit=True,
+            normal_rotation=True,
+            origin_translation=True,
+            outline_translation=False,
+            test_callback=False,
+            interaction_event="end",
+            color="white",
+        )
+        self._plane_widget_on = True
+
     def _on_mouse_move(self, *_args: Any) -> None:
         vtk_iren = self._vtk_iren()
         if vtk_iren is None:
@@ -351,8 +433,18 @@ class Window:
         return float(np.clip(px, 5.0, 28.0))
 
     def _sync_lights(self) -> None:
-        look = tuple(float(x) for x in self._camera.curr_lookat)
-        key = (tuple(self._light_pos), tuple(self._light_color), tuple(self._ambient), look)
+        """(Re)build the lights only when their settings change.
+
+        The key used to include the camera look point, so a moving camera
+        rebuilt the lights every frame; the positional lamp's light actor was
+        never removed and the renderer's prop list grew, until preparing a
+        frame took ~1 s after a few minutes. The lamp is now directional, aimed
+        at the first look point, and the headlight follows the camera anyway.
+        """
+        if getattr(self, "_light_focal", None) is None:
+            self._light_focal = tuple(float(x) for x in self._camera.curr_lookat)
+        look = self._light_focal
+        key = (tuple(self._light_pos), tuple(self._light_color), tuple(self._ambient))
         if key == self._lights_key:
             return
         pl = self._plotter
@@ -366,7 +458,7 @@ class Window:
                 focal_point=look,
                 color=self._light_color,
                 intensity=1.2,
-                positional=True,
+                positional=False,
             )
             pl.add_light(lamp)
             head = self._pv.Light(
@@ -384,29 +476,40 @@ class Window:
                 pass
 
     def _set_hud(self, hud: str) -> None:
-        """Update the overlay in place — destroying it every frame is the flicker."""
+        """Update the overlay in place — destroying it every frame is the flicker.
+
+        A plain vtkTextActor with a fixed font, anchored to the top-left
+        corner. pyvista's corner annotation re-fits its font size over the
+        whole text whenever the text changes; with the live HUD that cost
+        ~0.23 s per frame in the viewer (the scene itself renders in ~10 ms).
+        """
         pl = self._plotter
         actor = self._hud_actor
-        if actor is None:
-            actor = pl.actors.get("hud") if hasattr(pl, "actors") else None
-        if hud:
-            if actor is not None and hasattr(actor, "set_text"):
-                actor.set_text("upper_left", hud)
-                self._hud_actor = actor
-                return
-            self._hud_actor = pl.add_text(
-                hud,
-                font_size=9,
-                color="white",
-                font="courier",
-                name="hud",
-                shadow=True,
-                render=False,
-            )
+        if not hud:
+            if actor is not None:
+                pl.remove_actor(actor, reset_camera=False, render=False)
+                self._hud_actor = None
             return
-        if actor is not None:
-            pl.remove_actor("hud", reset_camera=False, render=False)
-            self._hud_actor = None
+        if actor is None:
+            from vtkmodules.vtkRenderingCore import vtkTextActor
+
+            actor = vtkTextActor()
+            tp = actor.GetTextProperty()
+            tp.SetFontFamilyToCourier()
+            tp.SetFontSize(13)
+            tp.SetColor(1.0, 1.0, 1.0)
+            tp.SetShadow(True)
+            tp.SetVerticalJustificationToTop()
+            tp.SetJustificationToLeft()
+            coord = actor.GetPositionCoordinate()
+            coord.SetCoordinateSystemToNormalizedViewport()
+            coord.SetValue(0.005, 0.995)
+            pl.add_actor(actor, name="hud", reset_camera=False, render=False)
+            self._hud_actor = actor
+            self._hud_text = None
+        if hud != getattr(self, "_hud_text", None):
+            actor.SetInput(hud.translate(_HUD_ASCII))
+            self._hud_text = hud
 
     def _apply_draw(self, *, consume_hud: bool = True) -> None:
         pl = self._plotter
@@ -477,6 +580,31 @@ class Window:
                     reset_camera=False,
                     render=False,
                 )
+        key = tuple(
+            (tuple(np.round(p, 3).ravel()), tuple(t), tuple(c), s)
+            for p, t, c, s in self._labels
+        )
+        if key != self._labels_key:
+            for i in range(self._n_label_actors):
+                pl.remove_actor(f"labels_{i}", reset_camera=False, render=False)
+            for i, (p, texts, color, size_px) in enumerate(self._labels):
+                pl.add_point_labels(
+                    p, texts,
+                    name=f"labels_{i}",
+                    point_color=color,
+                    point_size=size_px,
+                    render_points_as_spheres=True,
+                    font_size=12,
+                    text_color="white",
+                    font_family="courier",
+                    shape_opacity=0.35,
+                    always_visible=True,
+                    reset_camera=False,
+                    render=False,
+                )
+            self._n_label_actors = len(self._labels)
+            self._labels_key = key
+        self._labels = []
         if self._surface_dirty:
             self._surface_dirty = False
             mesh = self._surface_mesh

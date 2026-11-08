@@ -40,7 +40,7 @@ def run(min_arrows: int = 1) -> None:
         1,
         g.FLAG_GAS, g.FLAG_SOLID,
         filt, 1, max_arrows,
-        0, 0, 0, g.nx, g.ny, g.nz,
+        0, 0.0, 0.0, 0.0, 0.0,  # no section plane
     )
     n = int(count[None])
     print(f"[viewer_flow_arrows] arrows={n}")

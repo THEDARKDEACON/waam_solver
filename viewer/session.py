@@ -10,6 +10,8 @@ from ..job import load_job_config, parse_torch_path
 from ..paths import PROJECT_ROOT, resolve_project_path
 from ..torch_path import TorchPathDriver, clamp_torch_to_domain
 
+DEFAULT_JOB = "jobs/examples/bead_calibrate.yaml"
+
 
 @dataclass
 class ViewerSession:
@@ -201,6 +203,48 @@ class ViewerSession:
         tip_mm = min(max(tip_mm, z_surf_mm + dx_mm), (g.nz - 1.5) * dx_mm)
         return x_mm, y_mm, tip_mm
 
+    def torch_cell(self) -> tuple[int, int, int]:
+        """(i, j, k) of the free-surface cell under the torch (window-local)."""
+        g = self.twin.grid
+        x_mm, y_mm, z_mm = self.torch_surface_mm()
+        ox, oy, _ = self.twin.window_offset_m()
+        dx_mm = g.dx * 1000.0
+        i = int(min(max((x_mm - ox * 1000.0) / dx_mm, 0), g.nx - 1))
+        j = int(min(max((y_mm - oy * 1000.0) / dx_mm, 0), g.ny - 1))
+        k = int(min(max(z_mm / dx_mm, 0), g.nz - 1))
+        return i, j, k
+
+    def section_plane(self, lag_mm: float) -> tuple[int, int, int, float] | None:
+        """Transverse plane where the torch was ``lag_mm`` of travel ago.
+
+        Returns (axis, plane index, centreline index, station mm): axis 0 is
+        a plane i = const (travel mostly along x, centreline index is j),
+        axis 1 a plane j = const. None before the torch has travelled
+        ``lag_mm`` or without a torch path.
+        """
+        drv = self.path_driver
+        twin = self.twin
+        g = twin.grid
+        if drv is None or float(drv.speed) <= 0.0:
+            return None
+        v = float(drv.speed)
+        t_now = twin._step_n * g.dt
+        # After the path ends the torch is parked: keep the plane on the path.
+        t_end = min(t_now, float(drv.total_length) / v)
+        t_lag = t_end - float(lag_mm) / 1000.0 / v
+        if t_lag <= 0.0:
+            return None
+        x1, y1, _ = drv.position_at_time(t_lag)
+        x0, y0, _ = drv.position_at_time(max(0.0, t_lag - 0.1e-3 / v))
+        ox, oy, _ = twin.window_offset_m()
+        i = int((x1 - ox) / g.dx)
+        j = int((y1 - oy) / g.dx)
+        if not (0 <= i < g.nx and 0 <= j < g.ny):
+            return None
+        if abs(x1 - x0) >= abs(y1 - y0):
+            return 0, i, j, x1 * 1000.0
+        return 1, j, i, y1 * 1000.0
+
 
 def _resolve_job_path(job_arg: str | None) -> str | None:
     if job_arg is None:
@@ -215,11 +259,13 @@ def create_session(
     preset: str | None = None,
     material: str | None = None,
     auto_grid: bool | None = None,
+    sparse: bool | None = None,
 ) -> ViewerSession:
     """
     Load twin from job YAML (default) or preset-only demo.
 
-    Default job: ``jobs/examples/bead_on_plate.yaml`` (calibrated + VOF).
+    Default job: ``jobs/examples/bead_calibrate.yaml`` (the free-surface LBM
+    calibration job). ``sparse`` overrides the job's ``sparse_grid``.
     """
     from .. import WAAMTwin
 
@@ -228,12 +274,13 @@ def create_session(
         raise FileNotFoundError(f"Job file not found: {job}")
 
     if job_path is None:
-        default_job = PROJECT_ROOT / "jobs/examples/bead_on_plate.yaml"
+        default_job = PROJECT_ROOT / DEFAULT_JOB
         if default_job.exists():
             job_path = str(default_job)
 
     if job_path:
-        twin = WAAMTwin.from_job(job_path, preset_override=preset, auto_grid=auto_grid)
+        extra = {} if sparse is None else {"sparse_grid": bool(sparse)}
+        twin = WAAMTwin.from_job(job_path, preset_override=preset, auto_grid=auto_grid, **extra)
         job_cfg = load_job_config(job_path)
         label = os.path.basename(job_path)
         if preset:
@@ -254,6 +301,12 @@ def create_session(
 
     twin.reset()
     g = twin.grid
+    if twin.enable_vof and not getattr(twin, "use_free_surface_lbm", False):
+        print(
+            "[viewer] WARNING: this job uses the legacy VOF free surface (no "
+            "use_free_surface_lbm). Its wetting and droplet energy are known to be "
+            f"wrong; watch beads with the free-surface LBM jobs (default {DEFAULT_JOB})."
+        )
 
     travel = twin.travel_speed_m_s
     if travel <= 0:

@@ -58,6 +58,14 @@ sequence/
 sequence_*/
 bundle_step_*/
 .waam_sweep_tmp/
+# Viewer probe outputs (written to --output-dir, which may be inside the repo).
+# probes.yaml there is a generated job block; jobs keep their probes inline.
+probes.csv
+probes_summary.csv
+probes.yaml
+!jobs/**/probes.yaml
+# Scratch field arrays from comparisons (dense vs sparse, mesh study)
+*.npz
 
 # ── Auto-calibrate / matrix / clamp / GCI tool outputs (regenerate; do not commit) ─
 materials/calibration/ER70S-6.auto_calibrate.yaml

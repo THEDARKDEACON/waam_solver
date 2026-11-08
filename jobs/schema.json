@@ -792,6 +792,11 @@
                 "type": "object"
               },
               "description": "Alias for points."
+            },
+            "sample_every_ms": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Record every N ms of simulated time (default 1; 0 = every step)."
             }
           }
         }

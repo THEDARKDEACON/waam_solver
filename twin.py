@@ -1331,7 +1331,7 @@ class WAAMTwin:
         from .export.vtk_io import export_volume, TIER_CORE
         export_volume(self, path, tiers=(TIER_CORE,), crop_liquid=False)
 
-    def get_telemetry(self) -> dict:
+    def get_telemetry(self, force_diagnostics: bool = True) -> dict:
         """Pool/process telemetry.
 
         Pool width is the TRANSVERSE (y) extent of the melt pool measured at
@@ -1434,7 +1434,9 @@ class WAAMTwin:
             W_rep_mm, D_rep_mm = W_fus, D_fus
 
         force_diag = dict(getattr(self, "_force_diag", {}) or {})
-        if getattr(self, "enable_force_diagnostics", True) and self._step_n > 0:
+        # force_diagnostics=False (live viewer) reuses the last sample: the
+        # sampling costs ~0.24 s at dx 0.4 mm and the viewer HUD does not show it.
+        if force_diagnostics and getattr(self, "enable_force_diagnostics", True) and self._step_n > 0:
             try:
                 from .physics.force_diagnostics import sample_force_diagnostics
                 force_diag = sample_force_diagnostics(self)

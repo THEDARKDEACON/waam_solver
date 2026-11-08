@@ -51,6 +51,45 @@ def run() -> None:
     hot = rgb[z > face + 0.5, 0].max()
     cold = rgb[z < face + 0.2, 0].mean()
     assert hot > cold
+
+    # Deposit colouring: wire-born crown copper, plate grey, at equal temperature.
+    alloy = np.ones_like(phi)
+    alloy[12:28, 8:16, nz_solid:nz_solid + 5] = 0.0
+    alloy[phi == 0] = 0.0  # gas is born "wire": must not tint the plate face
+    cold_t = np.full_like(temperature, 300.0)
+    dep = phi_isosurface(
+        phi, cold_t, dx_mm=dx_mm, nz_solid=nz_solid, t_lo=300.0, t_hi=2600.0,
+        alloy_frac=alloy, f_l=np.zeros_like(phi), t_solidus=1700.0,
+    )
+    zd = np.asarray(dep.points)[:, 2]
+    rgb = np.asarray(dep.point_data["RGB"])
+    crown = rgb[zd > face + 1.0]
+    yd = np.asarray(dep.points)[:, 1]
+    plate_face = rgb[(zd < face + 0.1) & ((yd < 2.0) | (yd > 8.0))]
+    assert (crown[:, 0] - crown[:, 2]).mean() > 0.4, "crown not wire-coloured"
+    assert np.abs(plate_face[:, 0] - plate_face[:, 2]).max() < 0.15, "plate face tinted by gas"
+
+    # Section plane x = 6 mm keeping +x: sheet clipped there, cut face capped
+    # with the metal of that plane — wire-coloured crown over a grey plate,
+    # through the whole plate thickness.
+    n_keep = np.array([1.0, 0.0, 0.0])
+    origin = np.array([6.0, 0.0, 0.0])
+    sec = phi_isosurface(
+        phi, cold_t, dx_mm=dx_mm, nz_solid=nz_solid, t_lo=300.0, t_hi=2600.0,
+        cut=(n_keep, origin), alloy_frac=alloy, f_l=np.zeros_like(phi), t_solidus=1700.0,
+    )
+    P = np.asarray(sec.points)
+    assert P[:, 0].min() >= origin[0] - 1e-4, P[:, 0].min()
+    cap = np.abs(P[:, 0] - origin[0]) < 1e-4
+    zc = P[cap, 2]
+    assert zc.min() < 0.5 and zc.max() > face + 1.5, (zc.min(), zc.max())
+    rc = np.asarray(sec.point_data["RGB"])[cap]
+    yc = P[cap, 1]
+    bead_cap = rc[(zc > face + 0.5) & (yc > 3.6) & (yc < 6.0)]
+    plate_cap = rc[zc < face - 1.0]
+    assert bead_cap.size and (bead_cap[:, 0] - bead_cap[:, 2]).mean() > 0.4, "cap crown not wire"
+    assert np.abs(plate_cap[:, 0] - plate_cap[:, 2]).max() < 0.15, "cap plate not grey"
+
     print(
         f"[viewer_surface] tris={surf.n_cells}  "
         f"k={k0}:{k1}  z={z.min():.2f}..{z.max():.2f} mm  face={face:.2f}"
