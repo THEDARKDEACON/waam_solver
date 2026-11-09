@@ -388,9 +388,16 @@ class WAAMTwin:
         self.L_rho = mat.rho * mat.L_fusion
         self.alpha_lu = mat.alpha * g.dt / (g.dx ** 2)
         self.omega = 1.0 / g.tau
-        # TRT odd rate: 0 → magic Λ=1/4 from the local τ (see collision.py);
-        # an explicit bulk_tau pins ω_o = 1/bulk_tau.
-        self.omega_bulk = 1.0 / bulk_tau if bulk_tau else 0.0
+        # TRT odd relaxation rate ω_o (job key advanced_physics.bulk_tau = τ_odd).
+        # Default τ_odd = 1. The magic Λ = 1/4 (bulk_tau: 0) gives
+        # τ_odd = 0.5 + 0.25/(τ − 0.5) ≈ 300 at liquid-metal τ ≈ 0.5008, so the
+        # odd modes driven by the mushy-zone Darcy drag barely relax: density
+        # pockets build up at the pool bottom and the run blows up to NaN after
+        # 0.4–1.9 s at 150–200 A (Nov 2026). τ_odd = 1 ran those cases clean,
+        # halved Mach clamping on bead_calibrate and conserved metal to 2 %.
+        if bulk_tau is None:
+            bulk_tau = 1.0
+        self.omega_bulk = 1.0 / bulk_tau if bulk_tau > 0 else 0.0
         # Arc Gaussian sigma is a process parameter (job-configurable), not a
         # constant: previously hardcoded at 2 mm regardless of job settings.
         self.arc_sigma_m = arc_sigma_mm * 1e-3

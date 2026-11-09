@@ -543,8 +543,8 @@
         },
         "bulk_tau": {
           "type": "number",
-          "exclusiveMinimum": 0.5,
-          "description": "Bulk/trace relaxation time for two-rate MRT (omega_b = 1/bulk_tau). Ignored when use_variable_tau is true."
+          "minimum": 0,
+          "description": "TRT odd-mode relaxation time tau_odd (omega_o = 1/bulk_tau), constant- and variable-tau collision alike. Default 1.0. 0 selects the magic Lambda = 1/4 (tau_odd ~300 at liquid-metal tau ~0.5008; unstable under mushy-zone drag at 150-200 A)."
         },
         "marangoni_scale": {
           "type": "number",

@@ -779,7 +779,8 @@ def coupled_step(
 
     C_darcy_eff = float(twin.effective_C_darcy())
     if twin.use_material_tables and twin.use_variable_tau and (not twin.use_srt):
-        # TRT (two-rate) with per-cell μ(T) → τ; magic Λ=1/4 for odd modes.
+        # TRT (two-rate) with per-cell μ(T) → τ; odd rate from twin.omega_bulk
+        # (τ_odd = 1 by default; 0 → magic Λ = 1/4 on the local τ).
         lbm.collide_mrt_variable_tau(
             g.f_src, g.f_dst,
             g.rho, g.ux, g.uy, g.uz,

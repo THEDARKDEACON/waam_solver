@@ -27,12 +27,19 @@ from waam_twin.collision import collide_mrt
 from waam_twin.lattice import EX, W
 from waam_twin.runtime import init_taichi
 
-# (τ_s, u_max_lu, steps)
+# (τ_s, u_max_lu, steps, omega_b): omega_b 0 → magic Λ = 1/4; 1.0 → τ_odd = 1,
+# the twin default since Nov 2026.
 CASES = (
-    (0.51, 0.01, 3000),
-    (0.5007, 0.002, 4000),
+    (0.51, 0.01, 3000, 0.0),
+    (0.5007, 0.002, 4000, 0.0),
+    (0.51, 0.01, 3000, 1.0),
+    (0.5007, 0.002, 4000, 1.0),
 )
-TOL = 0.015  # max |u − u_anal| / u_max
+TOL = 0.015  # max |u − u_anal| / u_max (magic Λ = 1/4: bounce-back wall ~halfway)
+# τ_odd = 1 gives Λ = (τ_s − ½)/2 ≈ 4e-4 at τ_s 0.5007, so the bounce-back wall
+# sits slightly off halfway and a 16-cell duct runs ~1.4 % fast. Accepted for
+# stability (magic Λ blows up under mushy-zone drag); still tracked here.
+TOL_TAU_ODD_1 = 0.025
 
 
 def duct_velocity(ny: int, nz: int, F: float, nu: float, terms: int = 41) -> np.ndarray:
@@ -53,7 +60,7 @@ def duct_velocity(ny: int, nz: int, F: float, nu: float, terms: int = 41) -> np.
     return u
 
 
-def _run_case(twin: WAAMTwin, tau: float, u_max: float, steps: int) -> float:
+def _run_case(twin: WAAMTwin, tau: float, u_max: float, steps: int, omega_b: float = 0.0) -> float:
     g = twin.grid
     nx, ny, nz = g.nx, g.ny, g.nz
     nu = (tau - 0.5) / 3.0
@@ -76,7 +83,7 @@ def _run_case(twin: WAAMTwin, tau: float, u_max: float, steps: int) -> float:
         collide_mrt(
             g.f_a, g.f_b, g.rho, g.ux, g.uy, g.uz, g.Fx, g.Fy, g.Fz,
             g.f_l, g.flags, g.ex, g.ey, g.ez, g.w, g.opp,
-            1.0 / tau, 0.0,  # omega_s, omega_b (0 → magic Λ = 1/4)
+            1.0 / tau, omega_b,  # omega_s, omega_b (0 → magic Λ = 1/4)
             0.0,             # C_darcy
             g.FLAG_SOLID, g.FLAG_GAS, nx, ny, nz,
         )
@@ -87,8 +94,8 @@ def _run_case(twin: WAAMTwin, tau: float, u_max: float, steps: int) -> float:
     err = float(np.abs(ux[fluid] - U[fluid]).max() / U.max())
     ratio = float(ux[fluid].max() / U.max())
     print(
-        f"[trt_poiseuille] τ_s={tau:<6g} Re={u_max * (ny - 2) / nu:6.0f} steps={steps}  "
-        f"u_max/anal={ratio:.4f}  max err={err * 100:.2f}%  (tol {TOL * 100:.1f}%)"
+        f"[trt_poiseuille] τ_s={tau:<6g} {'magic' if omega_b <= 0 else f'ω_o={omega_b:g}':>7s} Re={u_max * (ny - 2) / nu:6.0f} steps={steps}  "
+        f"u_max/anal={ratio:.4f}  max err={err * 100:.2f}%"
     )
     return err
 
@@ -100,13 +107,14 @@ def run() -> float:
         use_srt=False, C_darcy=0.0, max_tracers=10,
     )
     worst = 0.0
-    for tau, u_max, steps in CASES:
-        err = _run_case(twin, tau, u_max, steps)
+    for tau, u_max, steps, omega_b in CASES:
+        err = _run_case(twin, tau, u_max, steps, omega_b)
         worst = max(worst, err)
-        if err > TOL:
+        tol = TOL if omega_b <= 0.0 else TOL_TAU_ODD_1
+        if err > tol:
             raise AssertionError(
                 f"TRT duct at τ_s={tau} drifted {err * 100:.2f}% from the analytic "
-                f"profile (tol {TOL * 100:.1f}%): body force not fully applied"
+                f"profile (tol {tol * 100:.1f}%): body force not fully applied"
             )
     print(f"[trt_poiseuille] worst error {worst * 100:.2f}%  PASS")
     return worst
