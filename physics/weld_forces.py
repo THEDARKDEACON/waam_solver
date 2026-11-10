@@ -56,6 +56,13 @@ def lin_eagar_peak_pa(current_A: float, sigma_p_m: float) -> float:
     return MU0 * i * i / (4.0 * math.pi * math.pi * sig * sig)
 
 
+def force_current_A(twin: "WAAMTwin") -> float:
+    """Current for I²-scaling loads (arc pressure, J×B, I²R): the rms of a
+    pulsed waveform when the job gives one, else the welding current."""
+    rms = getattr(twin, "welding_current_rms_A", None)
+    return float(rms) if rms else float(twin.welding_current_A)
+
+
 def arc_pressure_sigma_m(twin: "WAAMTwin") -> float:
     """Pressure Gaussian radius [m]; defaults to arc heat σ."""
     sig = getattr(twin, "pressure_sigma_m", None)
@@ -78,7 +85,7 @@ def arc_pressure_peak_pa(twin: "WAAMTwin") -> float:
     """
     model = str(getattr(twin, "arc_pressure_model", "constant")).strip().lower()
     if model in ("lin_eagar", "lineagar", "lin-eagar"):
-        return lin_eagar_peak_pa(twin.welding_current_A, arc_pressure_sigma_m(twin))
+        return lin_eagar_peak_pa(force_current_A(twin), arc_pressure_sigma_m(twin))
     return float(twin.arc_pressure)
 
 
@@ -248,10 +255,10 @@ def solve_lorentz(twin: "WAAMTwin", g: "WAAMGrid", arc_i: float, arc_j: float, a
     kwf.elec_clear_source(g.elec_source)
     kwf.elec_inject_arc_source(
         g.elec_source, arc_i, arc_j, arc_k,
-        twin.sigma_cells, twin.welding_current_A, g.dx, g.nz,
+        twin.sigma_cells, force_current_A(twin), g.dx, g.nz,
         g.flags, twin.nz_solid, g.FLAG_GAS, g.FLAG_SOLID,
     )
-    kwf.elec_normalize_source(g.elec_source, twin.welding_current_A, g.dx)
+    kwf.elec_normalize_source(g.elec_source, force_current_A(twin), g.dx)
 
     # Warm start: keep the potential from the previous step (the geometry
     # changes slowly, so a few dozen iterations/step track the solution).

@@ -77,6 +77,8 @@ def _write_override_job(
     sulphur_ppm: float | None,
     dt_scale: float | None = None,
     wire_feed_m_min: float | None = None,
+    u_design_m_s: float | None = None,
+    sparse_grid: bool = False,
 ) -> pathlib.Path:
     """Copy the job (and, for sulphur, its material) under runs/steady/."""
     _STEADY.mkdir(parents=True, exist_ok=True)
@@ -86,6 +88,12 @@ def _write_override_job(
         sim["dx_mm"] = float(dx_mm)
     if dt_scale is not None:
         sim["dt_scale"] = float(dt_scale)
+    if u_design_m_s is not None:
+        # Speed ceiling = u_mach_limit_lu·dx/dt with auto_dt_ma; the same value
+        # on every mesh keeps a mesh study's only variable the resolution.
+        sim["u_design_m_s"] = float(u_design_m_s)
+    if sparse_grid:
+        sim["sparse_grid"] = True
     if wire_feed_m_min is not None:
         proc = job.setdefault("process", {})
         proc["wire_feed_m_min"] = float(wire_feed_m_min)
@@ -215,11 +223,15 @@ def run_once(args: argparse.Namespace, job_path: pathlib.Path) -> dict[str, Any]
     t_sample0 = max(0.0, n_steps * float(g.dt) - 1.0)
     next_sample = t_sample0
     samples = []
+    win = None  # clamp counters when the measurement window opens
     t0 = time.time()
     for step, x, y, _z in driver.positions_for_steps(n_steps, g.dt):
         twin.step(x, y, is_welding=True)
         t_now = (step + 1) * float(g.dt)
         if t_now + 0.5 * float(g.dt) >= next_sample:
+            if win is None:
+                win = (step + 1, int(getattr(twin, "_mach_clamp_steps", 0)),
+                       int(getattr(twin, "_force_clamp_steps", 0)))
             samples.append(pool_flow_stats(twin, float(twin.smagorinsky_cs)))
             next_sample += sample_every
     wall = time.time() - t0
@@ -235,6 +247,11 @@ def run_once(args: argparse.Namespace, job_path: pathlib.Path) -> dict[str, Any]
         "mach_steps": int(getattr(twin, "_mach_clamp_steps", 0)),
         "mach_frac": int(getattr(twin, "_mach_clamp_steps", 0)) / n_steps,
         "force_clamp_frac": int(getattr(twin, "_force_clamp_steps", 0)) / n_steps,
+        # Same, over the measurement window only (start-up transients excluded).
+        "mach_frac_window": _window_frac(twin, "_mach_clamp_steps", win, n_steps, 1),
+        "force_clamp_frac_window": _window_frac(twin, "_force_clamp_steps", win, n_steps, 2),
+        "u_ceiling_m_s": 0.08 * float(g.dx) / float(g.dt),
+        "sparse_grid": bool(getattr(g, "sparse", False)),
         **mean_flow_stats(samples),
         "n_flow_samples": len(samples),
         "wall_s": wall,
@@ -252,6 +269,15 @@ def run_once(args: argparse.Namespace, job_path: pathlib.Path) -> dict[str, Any]
         )
     _print_result(record)
     return record
+
+
+def _window_frac(twin, attr: str, win, n_steps: int, slot: int) -> float | None:
+    if win is None:
+        return None
+    steps = n_steps - win[0]
+    if steps <= 0:
+        return None
+    return (int(getattr(twin, attr, 0)) - win[slot]) / steps
 
 
 def _print_result(record: dict[str, Any]) -> None:
@@ -328,6 +354,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--arc-sigma", type=float, default=None,
                     help="Arc sigma in mm. Deposition footprint and Lorentz spread, not Goldak heat.")
     ap.add_argument("--dx", type=float, default=None, help="dx in mm")
+    ap.add_argument("--u-design", type=float, default=None,
+                    help="simulation.u_design_m_s (speed ceiling with auto_dt_ma)")
+    ap.add_argument("--sparse", action="store_true",
+                    help="simulation.sparse_grid (GPU; set WAAM_DEVICE_MEMORY_GB for big meshes)")
     ap.add_argument("--lorentz-every-s", type=float, default=2.5e-4)
     ap.add_argument("--cs", type=float, default=None, help="Smagorinsky Cs override")
     ap.add_argument("--force-limit-m-s2", type=float, default=None,
@@ -365,6 +395,8 @@ def main(argv: list[str] | None = None) -> int:
         or args.sulphur is not None
         or args.dt_scale is not None
         or args.wire_feed_m_min is not None
+        or args.u_design is not None
+        or args.sparse
     ):
         job_path = _write_override_job(
             job_path,
@@ -372,6 +404,8 @@ def main(argv: list[str] | None = None) -> int:
             sulphur_ppm=args.sulphur,
             dt_scale=args.dt_scale,
             wire_feed_m_min=args.wire_feed_m_min,
+            u_design_m_s=args.u_design,
+            sparse_grid=args.sparse,
         )
 
     out_path = pathlib.Path(args.out) if args.out else None

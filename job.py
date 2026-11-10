@@ -64,11 +64,12 @@ def validate_job_config(data: dict[str, Any], path: pathlib.Path | None = None) 
             key = str(hs).lower().replace("-", "").replace("_", "")
             if key not in (
                 "gaussian2d", "gaussian", "gauss",
+                "surface", "surfacegaussian", "surfaceflux",
                 "goldak", "goldak3d", "doubleellipsoid",
             ):
                 raise ValueError(
                     f"Job {label}: unknown heat_source '{hs}' "
-                    "(valid: gaussian2d | goldak)"
+                    "(valid: gaussian2d | surface | goldak)"
                 )
     except Exception as exc:
         try:
@@ -142,6 +143,19 @@ def load_job_config(path: str | pathlib.Path) -> dict[str, Any]:
     data = _coerce_yaml_numbers(data)
     validate_job_config(data, path)
     return data
+
+
+def pulse_current_mean_rms_A(process: dict[str, Any]) -> tuple[float, float]:
+    """(I_mean, I_rms) of a rectangular pulse train from job pulse fields."""
+    ip = float(process["pulse_peak_A"])
+    ib = float(process["pulse_base_A"])
+    tp = float(process["pulse_peak_ms"]) / 1000.0
+    f = float(process["pulse_frequency_hz"])
+    period = 1.0 / f
+    if not (0.0 < tp < period):
+        raise ValueError(f"pulse_peak_ms {tp * 1e3:g} must lie inside the period {period * 1e3:.3g} ms")
+    d = tp / period
+    return ip * d + ib * (1.0 - d), (ip * ip * d + ib * ib * (1.0 - d)) ** 0.5
 
 
 def _wire_droplet_freq_hz(process: dict[str, Any]) -> float | None:
@@ -360,15 +374,38 @@ def _apply_heat_source(twin, job: dict[str, Any]) -> None:
 
 
 def electrical_arc_power_W(process: dict[str, Any], *, required: bool = False) -> float:
-    """Arc electrical power Q_w = V·I·PF·duty (η applied separately in kernels)."""
-    if required and ("voltage_V" not in process or "current_A" not in process):
+    """Arc electrical power Q_w = mean(U·I)·PF·duty (η applied separately in kernels).
+
+    Steady current: V·I.
+
+    Pulse train (pulse_peak_A / pulse_base_A / pulse_peak_ms /
+    pulse_frequency_hz, no current_A): the arc voltage follows the current,
+    U = U0 + R·I, so the mean power is U0·I_mean + R·I_rms², not V·I_mean.
+    With voltage_V read as the mean voltage (what a meter shows), U0 =
+    V − R·I_mean and
+
+        mean(U·I) = V·I_mean + R·(I_rms² − I_mean²).
+
+    R is ``arc_slope_ohm`` (default 0.05 Ω, the slope of the IEC 60974-1
+    conventional MIG/MAG load line U = 14 + 0.05·I). For Park's 345/35 A train
+    at 22 V that adds ~0.7 kW to the 2.0 kW of V·I_mean (+36 %).
+    """
+    current = process.get("current_A")
+    extra_W = 0.0
+    if current is None and all(
+        k in process for k in ("pulse_peak_A", "pulse_base_A", "pulse_peak_ms", "pulse_frequency_hz")
+    ):
+        i_mean, i_rms = pulse_current_mean_rms_A(process)
+        current = i_mean
+        slope = float(process.get("arc_slope_ohm", 0.05))
+        extra_W = slope * (i_rms * i_rms - i_mean * i_mean)
+    if required and ("voltage_V" not in process or current is None):
         raise ValueError(
-            "Job process must set current_A and voltage_V "
+            "Job process must set current_A (or a pulse train) and voltage_V "
             "(electrical power is V·I; defaults are refused on from_job)."
         )
     return (
-        float(process.get("voltage_V", 20.0))
-        * float(process.get("current_A", 140.0))
+        (float(process.get("voltage_V", 20.0)) * float(current if current is not None else 140.0) + extra_W)
         * float(process.get("power_factor", 1.0))
         * float(process.get("duty_cycle", 1.0))
     )
@@ -392,7 +429,7 @@ _KNOWN_SIM_KEYS = frozenset({
     "preset", "backend", "physics_tier", "domain_mm", "dx_mm", "auto_grid", "strict_mode",
     "enable_vof", "enable_csf_tension", "enable_wetting", "enable_hydrostatic_gravity",
     "enable_bead_freeze", "enable_trailing_solidify", "periodic_x",
-    "use_free_surface_lbm", "fs_contact_slip", "surface_query_every", "sparse_grid", "sparse_halo_blocks", "sparse_refresh_every", "C_darcy_phys", "dt_mode", "ma_max",
+    "use_free_surface_lbm", "fs_contact_slip", "surface_query_every", "energy_split", "sparse_grid", "sparse_halo_blocks", "sparse_refresh_every", "C_darcy_phys", "dt_mode", "ma_max",
     "enable_droplet_impact_pressure", "enable_recoil",
     "use_recoil_clausius_clapeyron", "enable_lorentz", "enable_gas_shear",
     "enable_enthalpy_cap", "enable_evaporative_cooling", "arc_surface_weighting",
@@ -416,6 +453,7 @@ _KNOWN_PROCESS_KEYS = frozenset({
     "stickout_mm", "ctwd_mm", "transfer_mode", "droplet_transfer_mode",
     "droplet_size_jitter", "impact_lead_angle_deg", "droplet_freq_hz",
     "pulse_frequency_hz", "power_factor", "duty_cycle", "arc_sigma_mm",
+    "pulse_peak_A", "pulse_base_A", "pulse_peak_ms", "arc_slope_ohm",
 })
 
 _KNOWN_GOLDAK_KEYS = frozenset({
@@ -570,8 +608,19 @@ def apply_job_to_twin(twin, job: dict[str, Any] | JobConfig) -> None:
     if current_A is not None:
         twin.welding_current_A = float(current_A)
 
+    # Pulsed current: arc pressure, J×B and stick-out I²R heating scale with
+    # I², so their time average follows I_rms, not I_mean (Park P-GMAW:
+    # 91 A mean, ~150 A rms → 2.7× the force of a steady 91 A arc). Heat input
+    # stays the mean electrical power (current_A × voltage_V, or the mean of
+    # I·U when known).
+    if all(k in process for k in ("pulse_peak_A", "pulse_base_A", "pulse_peak_ms", "pulse_frequency_hz")):
+        i_mean, i_rms = pulse_current_mean_rms_A(process)
+        twin.welding_current_rms_A = i_rms
+        if current_A is None:
+            twin.welding_current_A = i_mean
+
     # Keep Lin–Eagar (I) and Goldak heating (Q_w) consistent after process edits.
-    if any(k in process for k in ("current_A", "voltage_V", "power_factor", "duty_cycle")):
+    if any(k in process for k in ("current_A", "voltage_V", "power_factor", "duty_cycle", "arc_slope_ohm")):
         twin.Q_w = electrical_arc_power_W(process)
     if "arc_efficiency" in process:
         twin.eta = float(process["arc_efficiency"])
@@ -728,6 +777,8 @@ def apply_job_to_twin(twin, job: dict[str, Any] | JobConfig) -> None:
         twin.fs_contact_slip = bool(sim["fs_contact_slip"])
     if "surface_query_every" in sim:
         twin.surface_query_every = max(1, int(sim["surface_query_every"]))
+    if "energy_split" in sim:
+        twin.energy_split = bool(sim["energy_split"])
     if "sparse_halo_blocks" in sim:
         twin.sparse_halo_blocks = max(1, int(sim["sparse_halo_blocks"]))
     if "sparse_refresh_every" in sim:

@@ -1,0 +1,170 @@
+# =============================================================================
+# Multilayer capability test — three layers, back and forth, on one plate.
+# =============================================================================
+# Purpose: check that the twin builds a wall, not a single bead:
+#   1. each layer lands on the frozen layer below (wall height steps up);
+#   2. the arc attaches to the rising surface (torch z follows the build);
+#   3. the next layer remelts the top of the one below (fusion between layers);
+#   4. heat accumulates between layers (interpass temperature rises);
+#   5. metal is conserved and nothing blows up over the whole run.
+#
+# Process and physics are bead_calibrate.yaml's (free-surface LBM, 91 A,
+# stable settings), so any failure is a multilayer problem, not a process one.
+#
+# Run (from the parent of waam_twin/, honours the interpass dwell):
+#   export PYTHONPATH=$PWD WAAM_BACKEND=cuda
+#   python waam_twin/scripts/hpc/run_batch.py \
+#       --job jobs/examples/multilayer_test.yaml \
+#       --sequence-every 2500 --out runs/multilayer_test
+# ~220k steps, ~15 min on the RTX 3050 at 60 W. Open
+# runs/multilayer_test/sequence/sequence.pvd in ParaView to watch it build.
+#
+# The live viewer also runs it (python -m waam_twin.viewer --job
+# jobs/examples/multilayer_test.yaml), but the viewer does not apply the
+# interpass dwell: it welds straight through, so layers stack hotter.
+#
+# Known limitation: waypoints cannot switch the arc off, so the torch welds
+# during each 1.8 mm climb between layers and leaves a small bump at the
+# layer ends (same as wall_pioneer_m1.yaml). Judge layers away from the ends.
+# =============================================================================
+
+simulation:
+  preset: standard
+  backend: cuda
+  physics_tier: full
+  domain_mm: [80, 40, 25]   # plate face at 9 mm; 3 layers reach ~14.5 mm
+  dx_mm: 0.4
+  enable_vof: true
+  use_free_surface_lbm: true
+  enable_csf_tension: true
+  enable_wetting: true
+  enable_hydrostatic_gravity: true
+  enable_bead_freeze: true
+  enable_trailing_solidify: false
+  enable_droplet_impact_pressure: true
+  enable_recoil: true
+  use_recoil_clausius_clapeyron: true
+  enable_lorentz: true
+  enable_gas_shear: true
+  enable_enthalpy_cap: true
+  enable_evaporative_cooling: true
+  enable_substrate_growth: true   # frozen layers become the new substrate
+  use_torch_z: true               # path z = build height above the plate
+  arc_surface_weighting: true
+  # Test run: keep going past warnings so the whole wall is built; blow-ups
+  # are still detected and logged ("BLOW-UP") by the health check.
+  strict_mode: false
+  dt_scale: 1.0
+  use_variable_tau: true
+  use_srt: false
+  auto_dt_ma: true
+  u_design_m_s: 0.5
+  u_mach_limit_lu: 0.08
+  force_limit_lu: 0.05
+  force_limit_m_s2: 12500.0
+  warn_on_force_clamp: true
+  C_darcy: 160000.0
+  C_darcy_ref_dt_s: 4.0e-05
+
+plate:
+  thickness_mm: 9.0
+  size_mm: [50, 20]
+
+material: materials/validated/ER70S-6.v1.yaml
+calibration: null
+
+heat_source: goldak
+goldak:
+  ff: 0.6
+  fr: 1.4
+  a_front_mm: 2.0
+  a_rear_mm: 3.8
+  b_mm: 2.8
+  c_mm: 2.6
+
+arc_physics:
+  sigma_mm: 2.0
+  penetration_mm: 2.1
+  T_vapor_cap_K: 3200.0
+  surface_weighting: true
+  pressure_model: lin_eagar
+  pressure_pa: 150.0
+  pressure_sigma_mm: 2.0
+
+advanced_physics:
+  evap_cooling_scale: 1.0
+  T_boiling_K: 3000.0
+  recoil_accommodation: 0.25
+  L_vapor_J_kg: 6.0e6
+  R_spec_vapor_J_kgK: 149.0
+  lorentz_jacobi_iters: 300
+  lorentz_jacobi_tol: 0.001
+  lorentz_solve_every_s: 2.5e-4
+  sigma_liquid_Sm: 1.0e6
+  sigma_solid_Sm: 1.0e5
+  gas_jet_velocity_m_s: 12.0
+  gas_shear_coeff: 1.0
+  marangoni_scale: 1.0
+
+process:
+  current_A: 91
+  voltage_V: 22.0
+  arc_efficiency: 0.82
+  travel_speed_mm_s: 10.0
+  wire_feed_m_min: 7.0
+  wire_diameter_mm: 1.0
+  droplet_length_mm: 2.5
+  T_ambient_K: 293
+  stickout_mm: 12.0
+  ctwd_mm: 15.0
+  transfer_mode: auto
+  droplet_size_jitter: 0.05
+  impact_lead_angle_deg: 5.0
+  power_factor: 1.0
+  duty_cycle: 1.0
+
+deposition:
+  superheat_K: 400.0
+  footprint_sigma_scale: 1.0
+  trailing_solidify_lookback_mm: 6.0
+  trailing_solidify_temp_margin_K: 10.0
+
+surface_wetting:
+  contact_angle_deg: 80.0
+
+heat_loss:
+  convection: true
+  radiation: true
+  h_conv: 35.0
+
+# Dwell with the arc off at every path-segment change (end of a layer and top
+# of each climb): 6000 steps × 40 µs = 0.24 s each, ~0.5 s per layer change.
+# Real WAAM dwells are tens of seconds; this short dwell is a capability test,
+# so expect the wall to run hot.
+interpass:
+  cooling_steps: 6000
+
+# Three 25 mm layers, alternating direction. z_mm is the build height above
+# the plate face; 1.8 mm ≈ the frozen bead height at this process.
+layer_height_mm: 1.8
+torch_path:
+  - {x_mm: 20, y_mm: 20, z_mm: 0.0}    # layer 1 →
+  - {x_mm: 45, y_mm: 20, z_mm: 0.0}
+  - {x_mm: 45, y_mm: 20, z_mm: 1.8}    # climb
+  - {x_mm: 20, y_mm: 20, z_mm: 1.8}    # layer 2 ←
+  - {x_mm: 20, y_mm: 20, z_mm: 3.6}    # climb
+  - {x_mm: 45, y_mm: 20, z_mm: 3.6}    # layer 3 →
+
+probes:
+  z_ref: plate_face            # z = 0 at the plate face, positive up
+  sample_every_ms: 1.0
+  points:
+    # Inside layer 1 at mid-length: should re-melt (or come close) as
+    # layers 2 and 3 pass over it, and shows the interpass temperature.
+    - {name: layer1_mid, x_mm: 32.5, y_mm: 20.0, z_mm: 0.8}
+    # Inside layer 2 at mid-length (metal only once layer 2 exists).
+    - {name: layer2_mid, x_mm: 32.5, y_mm: 20.0, z_mm: 2.6}
+    # Plate 2 mm under the face: heat accumulation in the substrate.
+    - {name: plate_below, x_mm: 32.5, y_mm: 20.0, z_mm: -2.0}
+    # Plate 6 mm to the side of the wall at the face: far-field cooling.
+    - {name: plate_side_6mm, x_mm: 32.5, y_mm: 26.0, z_mm: -0.5}

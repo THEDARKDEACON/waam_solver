@@ -71,6 +71,10 @@
         "use_free_surface_lbm": {
           "type": "boolean"
         },
+        "energy_split": {
+          "type": "boolean",
+          "description": "Arc heat = eta*V*I minus the (running-mean) droplet enthalpy power, so arc + droplets = eta*V*I. Off: the arc injects eta*V*I and droplets add their enthalpy on top."
+        },
         "sparse_grid": {
           "type": "boolean",
           "description": "Store and compute only 8^3-cell blocks near metal (FSLBM or thermal tier); default false"
@@ -352,6 +356,9 @@
         "gaussian2d",
         "gaussian",
         "gauss",
+        "surface",
+        "surfacegaussian",
+        "surfaceflux",
         "goldak",
         "goldak3d",
         "doubleellipsoid"
@@ -445,6 +452,10 @@
         "droplet_freq_hz": {
           "type": "number"
         },
+        "pulse_peak_A": {"type": "number", "minimum": 0, "description": "Pulsed GMAW peak current; with pulse_base_A, pulse_peak_ms and pulse_frequency_hz gives I_mean and I_rms (I_rms drives arc pressure, J x B and stick-out heating)."},
+        "pulse_base_A": {"type": "number", "minimum": 0},
+        "pulse_peak_ms": {"type": "number", "exclusiveMinimum": 0},
+        "arc_slope_ohm": {"type": "number", "minimum": 0, "description": "Pulsed GMAW arc voltage slope R in U = U0 + R*I (default 0.05, IEC 60974-1 MIG/MAG load line); mean power = V*I_mean + R*(I_rms^2 - I_mean^2)."},
         "pulse_frequency_hz": {
           "type": "number"
         },

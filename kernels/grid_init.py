@@ -440,12 +440,20 @@ def surface_height_at(
     FLAG_GAS: ti.i32,
     nz: ti.i32,
 ):
-    """Top metal cell index at column (i0,j0); falls back to nz_fallback."""
-    k_surf = ti.max(1, nz_fallback - 1)
+    """Top metal cell index at column (i0,j0); falls back to nz_fallback − 1.
+
+    The k loop is the kernel's outermost loop, so it runs in parallel: the
+    highest metal cell is an atomic max. (A plain ``k_surf = k`` here raced:
+    the GPU returned the first k of whichever warp wrote last — 0, 32, 64 …
+    — never the surface. At dx 0.4 that gave 0 → the plate-top fallback; at
+    dx 0.2 it gave k = 32 inside a 45-cell plate and droplets stopped landing.)
+    """
+    out[None] = -1.0
     for k in range(nz):
         if flags[i0, j0, k] != FLAG_GAS and phi[i0, j0, k] > 0.05:
-            k_surf = k
-    out[None] = ti.f32(k_surf)
+            ti.atomic_max(out[None], ti.f32(k))
+    if out[None] < 0.0:
+        out[None] = ti.f32(ti.max(1, nz_fallback - 1))
 
 
 @ti.kernel

@@ -73,13 +73,33 @@ def _arc_power_W(twin: "WAAMTwin") -> tuple[float, float]:
     split = energy_split_W(twin)
     twin._last_energy_split = split
     dt = max(float(twin.grid.dt), 1e-30)
-    # Prefer previous-step booking (inject runs before this step's deposition).
-    booked_J = float(
-        getattr(twin, "_droplet_enthalpy_booked_J_prev", 0.0)
-        or getattr(twin, "_droplet_enthalpy_booked_J_step", 0.0)
-    )
-    booked_W = booked_J / dt
-    q_arc = max(0.0, float(split["Q_total_W"]) - booked_W)
+    # Droplets arrive one every few hundred steps. Subtracting the step's own
+    # booking (a whole droplet's enthalpy against one step of arc power,
+    # clipped at 0) removed ~1 % of it on average. The arc gives up the
+    # running mean of the droplet power actually delivered instead, over about
+    # ten droplet periods, seeded with the wire-feed estimate so the start has
+    # no transient. Total heat into the workpiece = η·Q.
+    # The booking is the droplet's absolute enthalpy H(T_drop)·V (its metal
+    # appears from gas). The wire already held H(T_ambient) before the arc
+    # touched it, so the arc's share is the (H_drop − H_amb)/H_drop part.
+    from .heat_source import wire_volumetric_enthalpy_J_m3
+    h_drop = float(wire_volumetric_enthalpy_J_m3(twin, split["T_drop_K"]))
+    h_amb = float(wire_volumetric_enthalpy_J_m3(twin, twin.T_amb))
+    arc_part = (h_drop - h_amb) / h_drop if h_drop > 0.0 else 1.0
+    booked_W = float(getattr(twin, "_droplet_enthalpy_booked_J_prev", 0.0)) / dt * arc_part
+    step = int(getattr(twin, "_step_n", 0))
+    ema = getattr(twin, "_droplet_power_ema_W", None)
+    if ema is None:
+        ema = float(split["Q_droplet_W"])
+    if getattr(twin, "_droplet_power_ema_step", None) != step:
+        from .deposition_balance import base_droplet_period_s, droplet_period_s
+        period = max(droplet_period_s(twin), base_droplet_period_s(twin) * 0.2, dt)
+        tau = max(10.0 * period, 50.0 * dt)
+        ema += (booked_W - ema) * min(1.0, dt / tau)
+        twin._droplet_power_ema_W = ema
+        twin._droplet_power_ema_step = step
+    q_arc = max(0.0, float(split["Q_total_W"]) - ema)
+    split["Q_arc_W_applied"] = q_arc
     return q_arc, 1.0
 
 
@@ -99,6 +119,28 @@ class Gaussian2D:
             g.FLAG_SOLID, g.FLAG_GAS,
             twin.fs_iface_flag(),
             grid=g,
+        )
+
+
+@dataclass
+class SurfaceGaussian:
+    """Arc heat as a surface flux: q(r) = Q/(2πσ²)·exp(−r²/2σ²) into the top
+    metal of each column (column-exact share, like the arc pressure).
+
+    The free-surface LBM resolves Marangoni, Lorentz and droplet transport, so
+    the heat should enter at the surface and be carried down by the model; a
+    volume source (Goldak depth c, or Gaussian2D heating the whole liquid
+    column) counts that transport twice. σ is the arc radius ``arc_sigma_m``,
+    shared with the current density and the arc pressure.
+    """
+
+    def inject(self, twin: "WAAMTwin", g: "WAAMGrid", arc_i: float, arc_j: float, arc_k: float) -> None:
+        Q, eta = _arc_power_W(twin)
+        energy_J = float(Q) * float(eta) * float(g.dt)
+        kernels.inject_surface_heat(
+            g.H, g.flags, g.phi, g.arc_norm_buf,
+            float(arc_i), float(arc_j), float(twin.sigma_cells), energy_J, float(g.dx) ** 3,
+            g.FLAG_GAS, twin.fs_iface_flag(), grid=g,
         )
 
 
@@ -200,9 +242,11 @@ def create_heat_source(name: str, **kwargs) -> ArcHeatSource:
         )
     if key in ("gaussian2d", "gaussian", "gauss"):
         return Gaussian2D()
+    if key in ("surface", "surfacegaussian", "surfaceflux"):
+        return SurfaceGaussian()
     raise ValueError(
         f"Unknown heat_source '{name}'. "
-        "Valid: gaussian2d | goldak (aliases: goldak3d, doubleellipsoid)"
+        "Valid: gaussian2d | surface | goldak (aliases: goldak3d, doubleellipsoid)"
     )
 
 

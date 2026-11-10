@@ -25,7 +25,8 @@ def droplet_entry_temperature_K(twin: "WAAMTwin") -> float:
     base = twin.mat.T_liquidus + twin.deposition_superheat_K
     if not twin.enable_ctwd:
         return base
-    I = twin.welding_current_A
+    from .weld_forces import force_current_A
+    I = force_current_A(twin)  # I²R: the rms for a pulsed waveform
     R = stickout_resistance_ohm(twin)
     P = twin.eta_stick * I * I * R
     mdot = wire_mass_flux_kg_s(twin)

@@ -212,6 +212,14 @@ def _load(out: pathlib.Path) -> dict[float, dict]:
             vals = [float(r[key]) for r in recs if r.get(key) is not None
                     and not (isinstance(r[key], float) and math.isnan(r[key]))]
             m[key] = sum(vals) / len(vals) if vals else float("nan")
+        for key in ("mach_frac_window", "force_clamp_frac_window"):
+            # Only where recorded: older files have no window counts, and a NaN
+            # here would silently clear the CLAMP flag.
+            vals = [float(r[key]) for r in recs if r.get(key) is not None]
+            if vals:
+                m[key] = sum(vals) / len(vals)
+            else:
+                m.pop(key, None)
         m["steady"] = all(bool(r.get("steady", True)) for r in recs)
         m["n_repeats"] = len(recs)
         merged[dx] = m
@@ -220,7 +228,13 @@ def _load(out: pathlib.Path) -> dict[float, dict]:
 
 def mesh_flags(r: dict, nu_m2_s: float | None) -> list[str]:
     flags = []
-    if max(float(r.get("mach_frac", 0) or 0), float(r.get("force_clamp_frac", 0) or 0)) > CLAMP_FRAC:
+    # Clamps inside the measurement window, when recorded (a start-up burst
+    # before the window does not set the steady bead); else the whole run.
+    mach = r.get("mach_frac_window")
+    force = r.get("force_clamp_frac_window")
+    if mach is None:
+        mach, force = r.get("mach_frac", 0), r.get("force_clamp_frac", 0)
+    if max(float(mach or 0), float(force or 0)) > CLAMP_FRAC:
         flags.append("CLAMP")
     ratio = float(r.get("nu_ratio", 0) or 0)
     if ratio > 1.0:
@@ -253,7 +267,8 @@ def report(out: pathlib.Path, target_dx: float, gate_pct: float) -> dict[str, An
             f"  {dx:5.3f} {float(r.get('n_cells') or float('nan')) / 1e6:7.2f} "
             f"{r.get('tau', float('nan')):8.5f} {r.get('tau_eff', float('nan')):8.5f} "
             f"{r.get('nu_ratio', float('nan')):8.2f} "
-            f"{100 * r.get('mach_frac', 0):6.2f} {100 * r.get('force_clamp_frac', 0):6.2f} "
+            f"{100 * r.get('mach_frac_window', r.get('mach_frac', 0)):6.2f} "
+            f"{100 * r.get('force_clamp_frac_window', r.get('force_clamp_frac', 0)):6.2f} "
             f"{r['W_mm']:6.2f} {r['D_mm']:6.2f} {r.get('H_frozen_mm', float('nan')):6.2f} "
             f"{r.get('area_mm2', float('nan')):6.2f}  {','.join(r['flags']) or 'ok'}"
         )
@@ -331,6 +346,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--report", default=None, help="report an existing results file and exit")
     ap.add_argument("--force", action="store_true", help="rerun meshes already in --out")
+    ap.add_argument("--sparse-dx", default="",
+                    help="comma-separated meshes to run on the sparse grid (skips the dense "
+                         "memory check; set WAAM_DEVICE_MEMORY_GB to the pool size)")
     args = ap.parse_args(argv)
 
     if args.report:
@@ -351,15 +369,18 @@ def main(argv: list[str] | None = None) -> int:
     out = out if out.is_absolute() else PROJECT_ROOT / out
     out.parent.mkdir(parents=True, exist_ok=True)
     done = set() if args.force else _done_dx(out)
+    sparse_dx = {round(float(v), 4) for v in args.sparse_dx.split(",") if v.strip()}
     for r in rows:
         dx = r["dx_mm"]
         if round(dx, 4) in done:
             print(f"SKIP dx={dx:g} (already in {out.name})")
             continue
-        if not r["fits"]:
-            print(f"SKIP dx={dx:g}: needs ≈{r['vram_need_mib']:.0f} MiB, {vram:.0f} free")
+        sparse = round(dx, 4) in sparse_dx
+        if not r["fits"] and not sparse:
+            print(f"SKIP dx={dx:g}: needs ≈{r['vram_need_mib']:.0f} MiB, {vram:.0f} free "
+                  f"(add it to --sparse-dx to run on the sparse grid)")
             continue
-        run_mesh(job, dx, args, out, extra)
+        run_mesh(job, dx, args, out, extra + (["--sparse"] if sparse else []))
     if out.exists():
         report(out, args.target_dx, args.gate_pct)
     return 0

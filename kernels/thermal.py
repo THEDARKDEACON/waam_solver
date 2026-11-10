@@ -1666,3 +1666,79 @@ def update_time_above_T_dual(
             time_above_solidus[i, j, k] += dt
 
 
+
+
+# ── Surface arc heat flux ────────────────────────────────────────────────────
+# q(r) = Q / (2πσ²) · exp(−r²/2σ²) applied at the free surface: each cell gets
+# the share w_col = max(0, φ_k − φ_{k+1}) of its column's surface (the same
+# column-exact weight as the arc pressure), so the heat enters the top metal of
+# every column and conduction / convection carry it down. A cell's thermal
+# energy is fill·H·Δx³, and w_col ≤ fill, so ΔH = ΔE / (fill·Δx³) stays bounded
+# in thin interface cells.
+
+
+@ti.func
+def _surface_share(phi: ti.template(), flags: ti.template(), i: ti.i32, j: ti.i32, k: ti.i32,
+                   nz: ti.i32, FLAG_GAS: ti.i32) -> ti.f32:
+    w = 0.0
+    if flags[i, j, k] != FLAG_GAS:
+        above = 0.0
+        if k + 1 < nz:
+            if flags[i, j, k + 1] != FLAG_GAS:
+                above = phi[i, j, k + 1]
+        w = ti.max(0.0, phi[i, j, k] - above)
+    return w
+
+
+@ti.kernel
+def inject_surface_heat_weights(
+    flags: ti.template(), phi: ti.template(), scratch: ti.template(),
+    arc_i: ti.f32, arc_j: ti.f32, sigma: ti.f32, nz: ti.i32, FLAG_GAS: ti.i32,
+):
+    """scratch = horizontal Gaussian × column surface share (ordered sum later)."""
+    inv2s2 = 1.0 / (2.0 * sigma * sigma)
+    for i, j, k in scratch:
+        s = _surface_share(phi, flags, i, j, k, nz, FLAG_GAS)
+        v = 0.0
+        if s > 0.0:
+            di = ti.f32(i) - arc_i
+            dj = ti.f32(j) - arc_j
+            v = ti.math.exp(-(di * di + dj * dj) * inv2s2) * s
+        scratch[i, j, k] = v
+
+
+@ti.kernel
+def inject_surface_heat_apply(
+    H: ti.template(), flags: ti.template(), phi: ti.template(), norm_buf: ti.template(),
+    arc_i: ti.f32, arc_j: ti.f32, sigma: ti.f32, energy_J: ti.f32, dx3: ti.f32,
+    nz: ti.i32, FLAG_GAS: ti.i32, fs_iface: ti.i32,
+):
+    """Deposit energy_J over the surface cells; Σ fill·ΔH·Δx³ = energy_J."""
+    inv2s2 = 1.0 / (2.0 * sigma * sigma)
+    w_total = norm_buf[None]
+    e_per_w = 0.0
+    if w_total > 1e-12:
+        e_per_w = energy_J / w_total
+    for i, j, k in H:
+        if e_per_w <= 0.0:
+            continue
+        s = _surface_share(phi, flags, i, j, k, nz, FLAG_GAS)
+        if s > 0.0:
+            di = ti.f32(i) - arc_i
+            dj = ti.f32(j) - arc_j
+            dE = e_per_w * ti.math.exp(-(di * di + dj * dj) * inv2s2) * s
+            fill = _fill_w(phi, flags, i, j, k, FLAG_GAS, fs_iface)
+            if fill > 1e-6:
+                H[i, j, k] += dE / (fill * dx3)
+
+
+def inject_surface_heat(H, flags, phi, norm_buf, arc_i, arc_j, sigma, energy_J, dx3,
+                        FLAG_GAS, fs_iface, *, grid):
+    """Surface Gaussian arc heat; total energy exactly ``energy_J`` (ordered sum)."""
+    from .reduce import ordered_sum_scratch, copy_total_to_f32
+    nz = int(grid.nz)
+    inject_surface_heat_weights(flags, phi, grid.reduce_scratch, arc_i, arc_j, sigma, nz, FLAG_GAS)
+    ordered_sum_scratch(grid, to_host=False)
+    copy_total_to_f32(grid.reduce_total, norm_buf)
+    inject_surface_heat_apply(H, flags, phi, norm_buf, arc_i, arc_j, sigma, energy_J, dx3,
+                              nz, FLAG_GAS, fs_iface)

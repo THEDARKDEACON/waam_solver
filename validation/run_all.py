@@ -64,6 +64,7 @@ def core_tests() -> list[tuple[str, str]]:
         ("sparse_grid", "waam_twin.validation.test_sparse_grid"),
         ("blowup_guard", "waam_twin.validation.test_blowup_guard"),
         ("calib_sweep", "waam_twin.validation.test_calib_sweep"),
+        ("arc_input", "waam_twin.validation.test_arc_input"),
         ("export_full_vtk", "waam_twin.validation.test_export_full_vtk"),
         ("export_bundle", "waam_twin.validation.test_export_bundle"),
         ("probe_recorder", "waam_twin.validation.test_probe_recorder"),

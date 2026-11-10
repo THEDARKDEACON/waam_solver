@@ -527,7 +527,14 @@ def coupled_step(
                 twin._last_droplet_time = sim_time
                 drop_mass = deposition.droplet_mass_for_interval_kg(twin, drop_dt)
                 drop_r = deposition.droplet_radius_cells_from_mass_kg(twin, drop_mass)
-                drop_vol = drop_mass / twin.mat.rho
+                drop_vol_wire = drop_mass / twin.mat.rho
+                # Whole cells: each droplet's last cell overshoots by up to one
+                # cell (~+5–10 % metal for 4 mg droplets at 0.4 mm, mesh
+                # dependent). Carry the surplus / shortfall into the next
+                # droplet so the running total follows the wire feed to
+                # within one cell instead of drifting.
+                carry = float(getattr(twin, "_deposit_carry_m3", 0.0))
+                drop_vol = min(2.0 * drop_vol_wire, max(0.0, drop_vol_wire - carry))
                 T_drop = droplet_entry_temperature_K(twin)
                 kernels.inject_tracers(
                     g.porosity_pos, g.porosity_active, g.tracer_head,
@@ -605,6 +612,7 @@ def coupled_step(
                             f"mass_balance_ratio in telemetry."
                         )
                 twin._deposited_volume_m3 += placed_real
+                twin._deposit_carry_m3 = carry + placed_real - drop_vol_wire
                 twin._n_droplets_fired += 1
                 deposited_this_step = True
                 _invalidate_surface_k(twin)
@@ -768,7 +776,6 @@ def coupled_step(
         )
         n_f = _force_clamp_warn_count(twin)
         if n_f > 0:
-            from .. import logging_util as log
             a_phys = float(getattr(twin, "force_limit_m_s2", 0.0) or 0.0)
             extra = f", a_phys={a_phys:g} m/s²" if a_phys > 0.0 else ""
             log.warning(

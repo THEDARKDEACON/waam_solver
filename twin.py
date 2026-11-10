@@ -288,6 +288,7 @@ class WAAMTwin:
         self.eta_stick = self.mat.eta_stick
         self.recoil_pressure_pa = recoil_pressure_pa
         self.welding_current_A = welding_current_A
+        self.welding_current_rms_A: float | None = None  # pulsed: rms for I² loads
         self.sigma_liquid_Sm = sigma_liquid_Sm
         self.sigma_solid_Sm = sigma_solid_Sm
         # Gas is grounded through this leakage conductivity. ~1 S/m keeps metal
@@ -442,7 +443,7 @@ class WAAMTwin:
         log.info(f"[WAAMTwin] VRAM estimate: {g.estimated_vram_mb():.1f} MB")
         log.info(f"[WAAMTwin] α_lu={self.alpha_lu:.6f}  τ_T={g.tau_T:.4f}")
         log.info(
-            f"[WAAMTwin] Collision: {'SRT' if use_srt else 'TRT (two-rate, Λ=1/4)'}"
+            f"[WAAMTwin] Collision: {'SRT' if use_srt else 'TRT (two-rate, ' + ('magic Λ=1/4' if self.omega_bulk <= 0 else f'τ_odd={1.0 / self.omega_bulk:g}') + ')'}"
         )
 
     def _configure_dual_alloy(self, plate_material: str | MaterialProps | None) -> None:
@@ -928,6 +929,7 @@ class WAAMTwin:
         self._torch_dir_xyz = (1.0, 0.0, 0.0)
         self._blown_up_step = None
         self._nonfinite_cells = 0
+        self._deposit_carry_m3 = 0.0
         self._warned_zero_wire_feed = False
         self._warned_overflow = False
         self._lorentz_warm = False

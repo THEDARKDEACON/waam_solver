@@ -34,6 +34,7 @@ from .grid_init import (
     advect_tracers,
 )
 from .thermal import (
+    inject_surface_heat,
     inject_arc_heat,
     inject_arc_heat_weights,
     inject_arc_heat_apply,
