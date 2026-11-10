@@ -40,6 +40,7 @@ class MaterialProps:
     rho_e_ohm_m: float = 1.5e-7
     eta_stick: float = 0.85
     sulphur_ppm: float = 30.0
+    oxygen_ppm: float = 0.0
     status: str = "placeholder"
     source: str = ""
     notes: str = ""
@@ -153,6 +154,7 @@ def _load_yaml_file(path: pathlib.Path) -> MaterialProps:
     props.rho_e_ohm_m = rho_e
     props.eta_stick = eta_stick
     props.sulphur_ppm = sulphur_ppm
+    props.oxygen_ppm = float((data.get("surfactant", {}) or {}).get("oxygen_ppm", 0.0))
     props.tables = tables_from_yaml(data.get("tables"))
     from .physics.surfactant import apply_surfactant_model
 

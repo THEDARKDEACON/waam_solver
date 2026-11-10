@@ -76,6 +76,7 @@ def _write_override_job(
     *,
     dx_mm: float | None,
     sulphur_ppm: float | None,
+    oxygen_ppm: float | None = None,
     dt_scale: float | None = None,
     wire_feed_m_min: float | None = None,
     u_design_m_s: float | None = None,
@@ -101,13 +102,19 @@ def _write_override_job(
     if wire_feed_m_min is not None:
         proc = job.setdefault("process", {})
         proc["wire_feed_m_min"] = float(wire_feed_m_min)
-    if sulphur_ppm is not None:
+    if sulphur_ppm is not None or oxygen_ppm is not None:
         src = pathlib.Path(str(job.get("material", "")))
         if not src.is_absolute():
             src = PROJECT_ROOT / src
         mat = yaml.safe_load(src.read_text(encoding="utf-8"))
-        mat.setdefault("surfactant", {})["sulphur_ppm"] = float(sulphur_ppm)
-        mat_path = _STEADY / f"_mat_s{sulphur_ppm:g}.yaml"
+        surf = mat.setdefault("surfactant", {})
+        if sulphur_ppm is not None:
+            surf["sulphur_ppm"] = float(sulphur_ppm)
+        if oxygen_ppm is not None:
+            surf["oxygen_ppm"] = float(oxygen_ppm)
+        mat_path = _STEADY / (
+            f"_mat_s{surf.get('sulphur_ppm', 'x')}_o{surf.get('oxygen_ppm', 0)}.yaml"
+        )
         mat_path.write_text(yaml.safe_dump(mat, sort_keys=False), encoding="utf-8")
         job["material"] = str(mat_path.relative_to(PROJECT_ROOT)).replace("\\", "/")
     out = _STEADY / "_job_override.yaml"
@@ -173,6 +180,7 @@ def _knobs(twin, n_steps: int) -> dict[str, Any]:
         "marangoni_scale": float(twin.marangoni_scale),
         "contact_angle_deg": float(twin.contact_angle_deg),
         "sulphur_ppm": float(getattr(twin.mat, "sulphur_ppm", 0.0)),
+        "oxygen_ppm": float(getattr(twin.mat, "oxygen_ppm", 0.0)),
         "welding_position": str(getattr(twin, "welding_position", "flat")),
         "droplet_impact_speed_m_s": float(droplet_impact_velocity_m_s(twin)),
         "heat_anchor": str(getattr(twin, "heat_anchor", "surface")),
@@ -363,6 +371,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--marangoni", type=float, default=None)
     ap.add_argument("--contact", type=float, default=None)
     ap.add_argument("--sulphur", type=float, default=None)
+    ap.add_argument("--oxygen", type=float, default=None,
+                    help="dissolved O [ppm] (Sahoo Fe-S-O); from the shielding gas")
     ap.add_argument("--arc-sigma", type=float, default=None,
                     help="Arc sigma in mm. Deposition footprint and Lorentz spread, not Goldak heat.")
     ap.add_argument("--dx", type=float, default=None, help="dx in mm")
@@ -412,6 +422,7 @@ def main(argv: list[str] | None = None) -> int:
     if (
         args.dx is not None
         or args.sulphur is not None
+        or args.oxygen is not None
         or args.dt_scale is not None
         or args.wire_feed_m_min is not None
         or args.u_design is not None
@@ -422,6 +433,7 @@ def main(argv: list[str] | None = None) -> int:
             job_path,
             dx_mm=args.dx,
             sulphur_ppm=args.sulphur,
+            oxygen_ppm=args.oxygen,
             dt_scale=args.dt_scale,
             wire_feed_m_min=args.wire_feed_m_min,
             u_design_m_s=args.u_design,

@@ -86,6 +86,27 @@ class SahooDebRoyParams:
 
 FE_S_SAHOO = SahooDebRoyParams()
 
+# Fe–O: Sahoo, DebRoy & McNallan (1988), Table II — Γ_s 2.03e-8 kmol/m²,
+# k1 1.38e-2, ΔH⁰ −1.463e8 J/kmol. Oxygen comes from the shielding gas
+# (Ar–CO₂ / Ar–O₂), not the wire certificate, so it is a process input.
+FE_O_SAHOO = SahooDebRoyParams(Gamma_s=2.03e-5, k1=1.38e-2, delta_H0=-1.463e5)
+
+
+def _gamma_s_o(T: float, sulphur_ppm: float, oxygen_ppm: float, T_m: float) -> float:
+    """γ(T) with S and O competing for the same surface sites.
+
+    γ = γ_m − A(T − T_m) − R T Γ̄ ln(1 + K_S a_S + K_O a_O),
+    Γ̄ the coverage-weighted saturation excess (McNallan & DebRoy 1991 form;
+    reduces exactly to the single-solute Sahoo isotherm when either is 0).
+    """
+    pS, pO = FE_S_SAHOO, FE_O_SAHOO
+    T = max(float(T), 300.0)
+    kS = _adsorption_K(T, pS) * sulphur_ppm_to_activity(sulphur_ppm)
+    kO = _adsorption_K(T, pO) * sulphur_ppm_to_activity(oxygen_ppm)
+    tot = kS + kO
+    G = (pS.Gamma_s * kS + pO.Gamma_s * kO) / tot if tot > 0.0 else 0.0
+    return pS.gamma_m - pS.A * (T - T_m) - pS.R * T * G * math.log(1.0 + tot)
+
 
 def sulphur_ppm_to_activity(sulphur_ppm: float) -> float:
     """Dilute Fe–S: a_S ≈ wt% S = ppm / 10000."""
@@ -123,12 +144,23 @@ def dgamma_dT_sahoo(
     T: float,
     sulphur_ppm: float,
     params: SahooDebRoyParams | None = None,
+    oxygen_ppm: float = 0.0,
 ) -> float:
     """
     Analytic dγ/dT [N/(m·K)] for Sahoo/DebRoy (ΔH_mix ≈ 0).
 
         dγ/dT = −A − R Γ_s ln(1+K a_S) − [K a_S/(1+K a_S)] Γ_s ΔH⁰ / T
+
+    With ``oxygen_ppm`` > 0 the S+O competitive isotherm is differentiated
+    numerically (central difference, 0.5 K).
     """
+    if oxygen_ppm and oxygen_ppm > 0.0:
+        h = 0.5
+        Tm = FE_S_SAHOO.T_m
+        return (
+            _gamma_s_o(T + h, sulphur_ppm, oxygen_ppm, Tm)
+            - _gamma_s_o(T - h, sulphur_ppm, oxygen_ppm, Tm)
+        ) / (2.0 * h)
     p = params or FE_S_SAHOO
     T = max(float(T), 300.0)
     a_s = sulphur_ppm_to_activity(sulphur_ppm)
@@ -146,6 +178,7 @@ def build_sahoo_dgamma_table(
     T_max: float,
     n: int = 25,
     params: SahooDebRoyParams | None = None,
+    oxygen_ppm: float = 0.0,
 ) -> list[tuple[float, float]]:
     """Build (T, dγ/dT) knots for GPU material tables."""
     n = max(2, int(n))
@@ -154,23 +187,28 @@ def build_sahoo_dgamma_table(
     out: list[tuple[float, float]] = []
     for i in range(n):
         t = T_lo + (T_hi - T_lo) * i / (n - 1)
-        out.append((t, dgamma_dT_sahoo(t, sulphur_ppm, params)))
+        out.append((t, dgamma_dT_sahoo(t, sulphur_ppm, params, oxygen_ppm)))
     return out
 
 
 def apply_sahoo_to_material_props(props) -> None:
     """
-    Replace props.dgamma_dT / tables.dgamma_dT with Sahoo/DebRoy Fe–S values.
+    Replace props.dgamma_dT / tables.dgamma_dT with Sahoo/DebRoy Fe–S values
+    (Fe–S–O when ``props.oxygen_ppm`` > 0).
 
     Mutates ``props`` in place. Uses alloy T_liquidus as melt reference for γ.
     """
     T_liq = float(props.T_liquidus)
     T_hi = max(T_liq + 800.0, 2600.0)
-    table = build_sahoo_dgamma_table(props.sulphur_ppm, T_liq, T_hi, n=8)
+    o_ppm = float(getattr(props, "oxygen_ppm", 0.0) or 0.0)
+    table = build_sahoo_dgamma_table(props.sulphur_ppm, T_liq, T_hi, n=8, oxygen_ppm=o_ppm)
     props.tables.dgamma_dT = table
     # Representative scalar used when tables are disabled
-    props.dgamma_dT = dgamma_dT_sahoo(T_liq + 50.0, props.sulphur_ppm)
-    props.gamma_0 = gamma_sahoo(T_liq, props.sulphur_ppm, T_m=T_liq)
+    props.dgamma_dT = dgamma_dT_sahoo(T_liq + 50.0, props.sulphur_ppm, oxygen_ppm=o_ppm)
+    if o_ppm > 0.0:
+        props.gamma_0 = _gamma_s_o(T_liq, props.sulphur_ppm, o_ppm, T_liq)
+    else:
+        props.gamma_0 = gamma_sahoo(T_liq, props.sulphur_ppm, T_m=T_liq)
     props.T_ref_gamma = T_liq
 
 
