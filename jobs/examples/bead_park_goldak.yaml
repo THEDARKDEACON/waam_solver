@@ -3,10 +3,12 @@
 # =============================================================================
 # Park P-GMAW physics with an honest energy budget (energy_split: arc +
 # droplets = eta*mean(U*I); mean power V*I_mean + R(I_rms^2 - I_mean^2)) and a
-# Goldak volume source standing in for the arc/droplet digging the surface
-# model cannot yet resolve (see docs/PARK_PHYSICS_CHECK.md). Goldak b and c are
-# fitted on the flat bead only (jobs/calibration/sweep_park_goldak.yaml);
-# eta stays 0.82 (docs/CALIBRATION.md).
+# Goldak volume fixed to the torch (heat_anchor: torch), standing in for the
+# arc/droplet digging the surface model cannot yet resolve
+# (docs/PARK_PHYSICS_CHECK.md). Shape from the measured flat bead (b = W/2 = 3.0,
+# c = 2.6 mm); the effective arc efficiency is the only fitted value, on the
+# flat bead only (jobs/calibration/sweep_park_goldak.yaml). Park's voltage is
+# not tabulated, so eta_eff carries the uncertainty of eta*mean(U*I).
 # =============================================================================
 simulation:
   preset: standard
@@ -59,6 +61,7 @@ arc_physics:
   T_vapor_cap_K: 3200.0
   pressure_model: lin_eagar
   pressure_pa: 150.0
+  heat_anchor: torch
 advanced_physics:
   evap_cooling_scale: 1.0
   T_boiling_K: 3000.0
@@ -121,5 +124,5 @@ goldak:
   fr: 1.4
   a_front_mm: 2.0
   a_rear_mm: 3.8
-  b_mm: 2.8
+  b_mm: 3.0
   c_mm: 2.6
