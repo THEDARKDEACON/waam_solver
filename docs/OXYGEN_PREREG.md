@@ -46,3 +46,17 @@ test is re-run with the ceiling raised (u_design_m_s 1.0 → ceiling 1.6 m/s,
 dt halved) — numerical only. Control at the same ceiling without oxygen:
 D 0.55 (runs/steady/mech.jsonl, drop1). Same pass criteria; 100/250 ppm bounds
 at the same ceiling. The capped runs stay in the record (oxygen.jsonl).
+
+## Outcome (11 Nov 2026) — hypothesis FALSIFIED
+Ceiling 1.6 m/s (runs/steady/oxygen_u1.jsonl), Park flat, η 0.82, σ 2 mm:
+
+| O ppm | W | D | H_frozen | speed-cap steps |
+|---|---|---|---|---|
+| 0 (control) | 5.11 | 0.55 | 2.59 | 9 % |
+| 100 | 5.51 | 0.49 | 2.39 | 0.5 % |
+| 150 | 4.41 / 5.23 | 0.61 / 0.52 | 1.04 / 2.11 | 12 / 21 % |
+| 250 | 5.37 | 0.50 | 2.25 | 41 % |
+
+Depth does not respond to oxygen (or to the Marangoni direction it sets); the
+100 ppm run is clean of the cap. Oxygen is not the missing mechanism. The
+Fe–S–O model stays available (default 0) as a physical input.
