@@ -36,3 +36,13 @@ the gas, not from the result.
 Bruno shielded with Ar + 2 % O₂ (job header). Oxidation potential
 OP = %O₂ + ½ %CO₂: Park 2.5, Bruno 2.0. Dissolved oxygen is scaled by OP:
 Bruno 150 × 2.0 / 2.5 = **120 ppm**.
+
+## Amendment 1 (after the two nominal runs, before any further run)
+Nominal O 150 ppm gave D 0.48 / 0.51 mm, but both runs were speed-cap limited
+(mach_frac 0.16 / 0.21 vs 0.04 at O = 0) and lost metal from the section
+(area_ratio 0.44 / 0.75): the inward flow oxygen drives hits the 0.8 m/s
+numerical ceiling. A clamp-limited run reports the cap, not physics, so the
+test is re-run with the ceiling raised (u_design_m_s 1.0 → ceiling 1.6 m/s,
+dt halved) — numerical only. Control at the same ceiling without oxygen:
+D 0.55 (runs/steady/mech.jsonl, drop1). Same pass criteria; 100/250 ppm bounds
+at the same ceiling. The capped runs stay in the record (oxygen.jsonl).
