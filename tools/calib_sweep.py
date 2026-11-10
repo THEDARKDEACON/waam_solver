@@ -86,6 +86,7 @@ class Point:
     name: str
     job: str
     reference: dict[str, tuple[float, float]] = field(default_factory=dict)  # output -> (value, sigma)
+    time_s: float | None = None  # per-point weld time (slow travel needs longer to reach steady)
 
 
 @dataclass
@@ -136,7 +137,9 @@ def _point(d: dict, default_sigma_mm: float, default_sigma_rel: float) -> Point:
         if sig is None:
             sig = max(default_sigma_mm, default_sigma_rel * abs(val))
         ref[out] = (val, float(sig))
-    return Point(name=str(d.get("name") or job.stem), job=str(job), reference=ref)
+    t = d.get("time_s")
+    return Point(name=str(d.get("name") or job.stem), job=str(job), reference=ref,
+                 time_s=None if t is None else float(t))
 
 
 def load_spec(path: str | pathlib.Path) -> Spec:
@@ -207,7 +210,8 @@ def steady_bead_runner(point: Point, values: dict[str, float], spec: Spec) -> di
     tmp.mkdir(parents=True, exist_ok=True)
     rec_path = tmp / f"rec_{os.getpid()}_{time.time_ns()}.jsonl"
     cmd = [sys.executable, "-m", "waam_twin.tools.steady_bead", "--job", point.job,
-           "--time-s", str(spec.time_s), "--x0", str(spec.x0), "--x1", str(spec.x1),
+           "--time-s", str(point.time_s if point.time_s is not None else spec.time_s),
+           "--x0", str(spec.x0), "--x1", str(spec.x1),
            "--out", str(rec_path)]
     if spec.dx is not None:
         cmd += ["--dx", str(spec.dx)]

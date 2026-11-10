@@ -1,0 +1,49 @@
+# Calibration of the Park physics job (honest energy split, corrected pulsed
+# power, gravity direction) against Park et al. 2019 flat P-GMAW.
+# Run with tools/calib_sweep.py (plan → run → fit → validate).
+#
+# docs/CALIBRATION.md: physical parameters are never fitted. η stays 0.82,
+# dγ/dT stays on the material card (Sahoo, S 28 ppm — the S sensitivity at
+# 28/100/150 ppm moved D by < 0.1 mm). Only the Goldak shape is free:
+# half-width b (→ W) and depth c (→ D); H is a check, not fitted.
+#
+# The Goldak volume stands in for the arc/droplet digging that the surface
+# heat source cannot reproduce yet (docs/PARK_PHYSICS_CHECK.md).
+#
+# Held-out tests (never used in the fit), all measured:
+#   park_overhead       same process, gravity +z         W 5.7 D 1.9 H 2.5
+#   park_vertical_down  same process, gravity along travel W 6.9 D 0.8 H 1.8
+#   bruno_gmaw          other process (110 A steady, 6 mm/s, 6 mm plate)
+#                       bead W 4.33 H 2.14 (no depth)
+
+points:
+  - name: park_flat
+    job: jobs/examples/bead_park_goldak.yaml
+
+heldout:
+  - name: park_overhead
+    job: jobs/examples/bead_park_goldak_overhead.yaml
+  - name: park_vertical_down
+    job: jobs/examples/bead_park_goldak_vertical_down.yaml
+  - name: bruno_gmaw
+    job: jobs/examples/bead_bruno_goldak.yaml
+    time_s: 4.0             # 6 mm/s: torch 13-17 mm past the window at 4 s
+
+params:
+  b: [2.5, 5.0]             # Goldak half-width [mm]; split+goldak start 2.8 → W 5.2
+  c: [2.0, 5.0]             # Goldak depth [mm];      start 2.6 → D 1.2
+
+fixed: {eta: 0.82}
+
+n: 16
+seed: 7
+time_s: 2.5
+x0: 22.0
+x1: 26.0
+
+measurement_sigma:
+  abs_mm: 0.15
+  rel: 0.05
+model_discrepancy_rel: 0.05
+
+out: runs/calibration/sweep_park_goldak.jsonl
