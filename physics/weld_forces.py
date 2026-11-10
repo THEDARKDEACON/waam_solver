@@ -98,7 +98,11 @@ def droplet_impact_velocity_m_s(twin: "WAAMTwin", m_drop_kg: float | None = None
     if m_drop_kg is None:
         m_drop_kg = droplet_mass_kg(twin)
     v_feed = max(twin.wire_feed_m_s, 0.0)
-    v_grav = math.sqrt(max(0.0, 2.0 * g * drop_len))
+    # Free fall over one droplet length, along the torch axis (−z): only the
+    # component of gravity toward the plate helps (flat 1, vertical 0,
+    # overhead 0 — the pulse/pinch detaches and drives the droplet there).
+    g_axis = max(0.0, -float(getattr(twin, "gravity_dir", (0.0, 0.0, -1.0))[2]))
+    v_grav = math.sqrt(max(0.0, 2.0 * g * g_axis * drop_len))
     # Crude wire-tip pinch / electromagnetic assist term.
     dia_ref = max(twin.wire_diameter_m, 1e-6)
     pinch = 0.35 * math.sqrt(max(twin.welding_current_A, 0.0) / 200.0) * math.sqrt(1.2e-3 / dia_ref)

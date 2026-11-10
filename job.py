@@ -33,6 +33,42 @@ def parse_torch_path(job: dict[str, Any]) -> list[tuple[float, float, float]]:
     return out
 
 
+_WELDING_POSITIONS = ("flat", "overhead", "vertical_down", "vertical_up")
+
+
+def gravity_direction_for(position: str, travel_xy: tuple[float, float]) -> tuple[float, float, float]:
+    """Unit gravity vector in grid axes (+z = away from the plate face).
+
+    flat: the plate is below the bead (−z). overhead: the plate is above
+    the bead, so gravity pulls the pool away from it (+z). vertical_down: the
+    torch travels downward, gravity along the travel direction; vertical_up:
+    against it. ``travel_xy`` is the in-plane travel direction.
+    """
+    pos = str(position).strip().lower().replace("-", "_").replace(" ", "_")
+    if pos == "flat":
+        return (0.0, 0.0, -1.0)
+    if pos == "overhead":
+        return (0.0, 0.0, 1.0)
+    if pos in ("vertical_down", "vertical_up"):
+        tx, ty = float(travel_xy[0]), float(travel_xy[1])
+        n = (tx * tx + ty * ty) ** 0.5
+        if n <= 0.0:
+            raise ValueError(f"welding_position {position!r} needs a torch path with in-plane travel")
+        sgn = 1.0 if pos == "vertical_down" else -1.0
+        return (sgn * tx / n, sgn * ty / n, 0.0)
+    raise ValueError(f"welding_position must be one of {_WELDING_POSITIONS}, got {position!r}")
+
+
+def _job_travel_xy(job: dict[str, Any]) -> tuple[float, float]:
+    """Direction of the first torch-path segment that moves in-plane."""
+    pts = parse_torch_path(job)
+    for a, b in zip(pts, pts[1:]):
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        if dx * dx + dy * dy > 1e-12:
+            return (dx, dy)
+    return (0.0, 0.0)
+
+
 _JOB_SCHEMA_PATH = pathlib.Path(__file__).resolve().parent / "jobs" / "schema.json"
 
 
@@ -444,7 +480,7 @@ _KNOWN_SIM_KEYS = frozenset({
     "use_variable_tau", "use_srt", "u_mach_limit_lu", "force_limit_lu",
     "force_limit_m_s2", "C_darcy", "C_darcy_ref_dt_s",
     "auto_dt_ma", "u_design_m_s", "pool_metric", "thermal_dt", "lbm_gas_band",
-    "smagorinsky_cs",
+    "smagorinsky_cs", "welding_position", "gravity_direction",
 })
 
 _KNOWN_PROCESS_KEYS = frozenset({
@@ -761,6 +797,16 @@ def apply_job_to_twin(twin, job: dict[str, Any] | JobConfig) -> None:
         twin.enable_wetting = bool(sim["enable_wetting"])
     if "enable_hydrostatic_gravity" in sim:
         twin.enable_hydrostatic_gravity = bool(sim["enable_hydrostatic_gravity"])
+    if "gravity_direction" in sim:
+        v = [float(c) for c in sim["gravity_direction"]]
+        n = sum(c * c for c in v) ** 0.5
+        if len(v) != 3 or n <= 0.0:
+            raise ValueError("simulation.gravity_direction must be a non-zero [x, y, z]")
+        twin.gravity_dir = (v[0] / n, v[1] / n, v[2] / n)
+        twin.welding_position = "custom"
+    elif "welding_position" in sim:
+        twin.gravity_dir = gravity_direction_for(sim["welding_position"], _job_travel_xy(job))
+        twin.welding_position = str(sim["welding_position"])
     if "enable_bead_freeze" in sim:
         twin.enable_bead_freeze = bool(sim["enable_bead_freeze"])
     if "enable_trailing_solidify" in sim:

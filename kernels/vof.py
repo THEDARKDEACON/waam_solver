@@ -1269,10 +1269,13 @@ def solidify_trailing_pool_dual(
 @ti.kernel
 def add_buoyancy(
     T:    ti.template(),
+    Fx:   ti.template(),
+    Fy:   ti.template(),
     Fz:   ti.template(),
     f_l:  ti.template(),
     flags: ti.template(),
     g_lu:       ti.f32,   # Gravitational acceleration [lu/ts²]
+    gx: ti.f32, gy: ti.f32, gz: ti.f32,  # unit gravity direction (flat: 0, 0, −1)
     beta:       ti.f32,   # Thermal expansion coefficient [1/K]
     T_ref:      ti.f32,   # Reference temperature [K]
     rho_ref:    ti.f32,   # Reference density [lu]
@@ -1280,35 +1283,44 @@ def add_buoyancy(
     FLAG_GAS:   ti.i32,
 ):
     """
-    Boussinesq buoyancy: F_z = +ρ_lu·g·β·(T − T_ref) for liquid cells.
-    Positive z is upward: hotter-than-reference liquid is lighter and must be
-    pushed UP (the previous negative sign drove hot liquid down, inverting the
-    convection cell). rho_ref is the lattice reference density (≈1).
+    Boussinesq buoyancy: F = −ρ_lu·g·β·(T − T_ref)·ĝ for liquid cells.
+    Hotter-than-reference liquid is lighter and is pushed against gravity
+    (flat position ĝ = −z: upward). rho_ref is the lattice reference density (≈1).
     """
     for i, j, k in Fz:
         if flags[i, j, k] == FLAG_SOLID or flags[i, j, k] == FLAG_GAS:
             continue
         fl = f_l[i, j, k]
         if fl > 0.0:
-            Fz[i, j, k] += rho_ref * g_lu * beta * (T[i, j, k] - T_ref) * fl
+            a = -rho_ref * g_lu * beta * (T[i, j, k] - T_ref) * fl
+            Fx[i, j, k] += a * gx
+            Fy[i, j, k] += a * gy
+            Fz[i, j, k] += a * gz
 
 
 @ti.kernel
 def add_hydrostatic_gravity(
+    Fx: ti.template(),
+    Fy: ti.template(),
     Fz: ti.template(),
     f_l: ti.template(),
     flags: ti.template(),
     rho_ref: ti.f32,
     g_lu: ti.f32,
+    gx: ti.f32, gy: ti.f32, gz: ti.f32,  # unit gravity direction (flat: 0, 0, −1)
     FLAG_SOLID: ti.i32,
     FLAG_GAS: ti.i32,
 ):
-    """Hydrostatic gravity on liquid: F_z = -ρ g f_l (+z up)."""
+    """Weight of the liquid: F = ρ g f_l ĝ (flat ĝ = −z; overhead +z;
+    vertical-down along the travel direction)."""
     for i, j, k in Fz:
         if flags[i, j, k] == FLAG_SOLID or flags[i, j, k] == FLAG_GAS:
             continue
         fl = f_l[i, j, k]
         if fl > 0.0:
-            Fz[i, j, k] += -rho_ref * g_lu * fl
+            a = rho_ref * g_lu * fl
+            Fx[i, j, k] += a * gx
+            Fy[i, j, k] += a * gy
+            Fz[i, j, k] += a * gz
 
 

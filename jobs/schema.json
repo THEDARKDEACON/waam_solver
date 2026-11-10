@@ -179,6 +179,8 @@
           "exclusiveMinimum": 0,
           "description": "Optional multiplier on WAAMGrid.dt (default 1.0). \u03c4>0.5 and \u03b1_lu\u22641/6 guards still apply. Values <1 reduce thermal\u2013flow operator-splitting lag."
         },
+        "welding_position": {"enum": ["flat", "overhead", "vertical_down", "vertical_up"], "description": "Gravity direction relative to the plate: flat (-z), overhead (+z, plate above the bead), vertical_down/up (along/against the travel direction)."},
+        "gravity_direction": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3, "description": "Explicit gravity vector in grid axes (+z away from the plate face); overrides welding_position."},
         "smagorinsky_cs": {
           "type": "number",
           "minimum": 0,

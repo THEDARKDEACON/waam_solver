@@ -118,7 +118,7 @@ def sample_force_diagnostics(twin: "WAAMTwin") -> dict[str, float]:
     if twin.enable_hydrostatic_gravity:
         out["f_gravity_max"] = _measure(
             lambda: forces.add_hydrostatic_gravity(
-                g.Fz, g.f_l, g.flags, 1.0, twin.g_lu,
+                g.Fx, g.Fy, g.Fz, g.f_l, g.flags, 1.0, twin.g_lu, *twin.gravity_dir,
                 g.FLAG_SOLID, g.FLAG_GAS,
             )
         )
@@ -126,8 +126,8 @@ def sample_force_diagnostics(twin: "WAAMTwin") -> dict[str, float]:
     if getattr(twin, "enable_buoyancy", True):
         out["f_buoyancy_max"] = _measure(
             lambda: forces.add_buoyancy(
-                g.T, g.Fz, g.f_l, g.flags,
-                twin.g_lu, twin.beta_T, twin.mat.T_liquidus, 1.0,
+                g.T, g.Fx, g.Fy, g.Fz, g.f_l, g.flags,
+                twin.g_lu, *twin.gravity_dir, twin.beta_T, twin.mat.T_liquidus, 1.0,
                 g.FLAG_SOLID, g.FLAG_GAS,
             )
         )

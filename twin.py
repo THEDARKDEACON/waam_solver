@@ -269,6 +269,11 @@ class WAAMTwin:
         self.alloy_mix_rate = 0.25
         self.enable_wetting = enable_wetting
         self.enable_hydrostatic_gravity = enable_hydrostatic_gravity
+        # Unit gravity direction in grid axes (+z = away from the plate).
+        # Flat welding: (0, 0, −1). Set from simulation.welding_position /
+        # gravity_direction by job.py (overhead, vertical-down, …).
+        self.gravity_dir = (0.0, 0.0, -1.0)
+        self.welding_position = "flat"
         self.enable_bead_freeze = enable_bead_freeze
         self.enable_ctwd = enable_ctwd
         self.contact_angle_deg = (

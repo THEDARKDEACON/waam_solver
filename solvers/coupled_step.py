@@ -732,14 +732,14 @@ def coupled_step(
     # rho_ref = 1.0: lattice force densities under the ρ_lu ≈ 1 convention.
     if twin.enable_hydrostatic_gravity:
         forces.add_hydrostatic_gravity(
-            g.Fz, g.f_l, g.flags, 1.0, twin.g_lu,
+            g.Fx, g.Fy, g.Fz, g.f_l, g.flags, 1.0, twin.g_lu, *twin.gravity_dir,
             g.FLAG_SOLID, g.FLAG_GAS,
         )
 
     if getattr(twin, "enable_buoyancy", True):
         forces.add_buoyancy(
-            g.T, g.Fz, g.f_l, g.flags,
-            twin.g_lu, twin.beta_T,
+            g.T, g.Fx, g.Fy, g.Fz, g.f_l, g.flags,
+            twin.g_lu, *twin.gravity_dir, twin.beta_T,
             twin.mat.T_liquidus,
             1.0,
             g.FLAG_SOLID, g.FLAG_GAS,
