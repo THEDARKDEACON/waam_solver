@@ -79,6 +79,7 @@ def _write_override_job(
     wire_feed_m_min: float | None = None,
     u_design_m_s: float | None = None,
     sparse_grid: bool = False,
+    welding_position: str | None = None,
 ) -> pathlib.Path:
     """Copy the job (and, for sulphur, its material) under runs/steady/."""
     _STEADY.mkdir(parents=True, exist_ok=True)
@@ -94,6 +95,8 @@ def _write_override_job(
         sim["u_design_m_s"] = float(u_design_m_s)
     if sparse_grid:
         sim["sparse_grid"] = True
+    if welding_position is not None:
+        sim["welding_position"] = str(welding_position)
     if wire_feed_m_min is not None:
         proc = job.setdefault("process", {})
         proc["wire_feed_m_min"] = float(wire_feed_m_min)
@@ -165,6 +168,8 @@ def _knobs(twin, n_steps: int) -> dict[str, Any]:
         "marangoni_scale": float(twin.marangoni_scale),
         "contact_angle_deg": float(twin.contact_angle_deg),
         "sulphur_ppm": float(getattr(twin.mat, "sulphur_ppm", 0.0)),
+        "welding_position": str(getattr(twin, "welding_position", "flat")),
+        "gravity_dir": list(getattr(twin, "gravity_dir", (0.0, 0.0, -1.0))),
         "arc_sigma_mm": float(twin.arc_sigma_m) * 1000.0,
         "smagorinsky_cs": float(getattr(twin, "smagorinsky_cs", 0.0) or 0.0),
         "force_limit_m_s2": float(getattr(twin, "force_limit_m_s2", 0.0) or 0.0),
@@ -358,6 +363,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="simulation.u_design_m_s (speed ceiling with auto_dt_ma)")
     ap.add_argument("--sparse", action="store_true",
                     help="simulation.sparse_grid (GPU; set WAAM_DEVICE_MEMORY_GB for big meshes)")
+    ap.add_argument("--welding-position", default=None,
+                    choices=("flat", "overhead", "vertical_down", "vertical_up"),
+                    help="simulation.welding_position (gravity direction)")
     ap.add_argument("--lorentz-every-s", type=float, default=2.5e-4)
     ap.add_argument("--cs", type=float, default=None, help="Smagorinsky Cs override")
     ap.add_argument("--force-limit-m-s2", type=float, default=None,
@@ -397,6 +405,7 @@ def main(argv: list[str] | None = None) -> int:
         or args.wire_feed_m_min is not None
         or args.u_design is not None
         or args.sparse
+        or args.welding_position is not None
     ):
         job_path = _write_override_job(
             job_path,
@@ -406,6 +415,7 @@ def main(argv: list[str] | None = None) -> int:
             wire_feed_m_min=args.wire_feed_m_min,
             u_design_m_s=args.u_design,
             sparse_grid=args.sparse,
+            welding_position=args.welding_position,
         )
 
     out_path = pathlib.Path(args.out) if args.out else None
