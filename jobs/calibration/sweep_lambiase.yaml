@@ -1,0 +1,75 @@
+# Yanala/Andreucci/Lambiase 2026 single beads — calibrate on 4 corner beads,
+# predict 14 never-used beads. Pre-registered in docs/LAMBIASE_PREREG.md.
+points:
+- name: run02
+  job: jobs/examples/lambiase2026/run02.yaml
+  time_s: 5.9
+- name: run04
+  job: jobs/examples/lambiase2026/run04.yaml
+  time_s: 3.5
+- name: run10
+  job: jobs/examples/lambiase2026/run10.yaml
+  time_s: 5.9
+- name: run12
+  job: jobs/examples/lambiase2026/run12.yaml
+  time_s: 3.5
+heldout:
+- name: run03
+  job: jobs/examples/lambiase2026/run03.yaml
+  time_s: 4.4
+- name: run06
+  job: jobs/examples/lambiase2026/run06.yaml
+  time_s: 5.9
+- name: run07
+  job: jobs/examples/lambiase2026/run07.yaml
+  time_s: 4.4
+- name: run08
+  job: jobs/examples/lambiase2026/run08.yaml
+  time_s: 3.5
+- name: run11
+  job: jobs/examples/lambiase2026/run11.yaml
+  time_s: 4.4
+- name: run14
+  job: jobs/examples/lambiase2026/run14.yaml
+  time_s: 5.9
+- name: run15
+  job: jobs/examples/lambiase2026/run15.yaml
+  time_s: 4.4
+- name: run16
+  job: jobs/examples/lambiase2026/run16.yaml
+  time_s: 3.5
+- name: run18
+  job: jobs/examples/lambiase2026/run18.yaml
+  time_s: 5.9
+- name: run19
+  job: jobs/examples/lambiase2026/run19.yaml
+  time_s: 4.4
+- name: run20
+  job: jobs/examples/lambiase2026/run20.yaml
+  time_s: 3.5
+- name: run22
+  job: jobs/examples/lambiase2026/run22.yaml
+  time_s: 5.9
+- name: run23
+  job: jobs/examples/lambiase2026/run23.yaml
+  time_s: 4.4
+- name: run24
+  job: jobs/examples/lambiase2026/run24.yaml
+  time_s: 3.5
+params:
+  eta:
+  - 0.65
+  - 0.95
+  b:
+  - 2.0
+  - 4.0
+n: 5
+seed: 23
+time_s: 4.4
+x0: 24.0
+x1: 28.0
+measurement_sigma:
+  abs_mm: 0.2
+  rel: 0.07
+model_discrepancy_rel: 0.05
+out: runs/calibration/sweep_lambiase.jsonl
