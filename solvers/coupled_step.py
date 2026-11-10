@@ -135,6 +135,24 @@ def _resolve_arc_k(
     return k_surface
 
 
+def _torch_anchor_k(twin: "WAAMTwin", g, torch_z_m: float | None) -> float:
+    """Top metal cell index of the arc root fixed to the torch, not the pool.
+
+    z is the build height above the plate face (layer height on multilayer
+    paths; robot TCP minus CTWD when ≥ CTWD, as in _resolve_arc_k). Without a
+    path z it is the plate face: a bead-on-plate arc root at the bottom of the
+    crater the arc and droplets keep open.
+    """
+    z_bead_m = 0.0
+    if torch_z_m is not None:
+        ctwd = float(getattr(twin, "ctwd_m", 0.0) or 0.0)
+        z = float(torch_z_m)
+        z_bead_m = z - ctwd if (ctwd > 1e-9 and z + 1e-12 >= ctwd) else z
+        z_bead_m = max(float(getattr(twin, "substrate_z_m", 0.0)), z_bead_m)
+    k_face = twin.nz_solid + (z_bead_m - float(getattr(twin, "substrate_z_m", 0.0))) / g.dx
+    return max(float(twin.nz_solid) - 1.0, min(k_face - 1.0, float(g.nz) - 3.0))
+
+
 def _invalidate_surface_k(twin: "WAAMTwin") -> None:
     """Force a fresh surface-height read on the next step (surface changed)."""
     twin.__dict__.pop("_surface_k_lagged", None)
@@ -517,7 +535,14 @@ def coupled_step(
 
     deposited_this_step = False
     if is_welding:
-        _inject_arc(twin, g, arc_i, arc_j, arc_k)
+        # heat_anchor "torch": the heat source rides the torch (arc root at the
+        # plate face / layer height) while deposition, pressure and recoil
+        # follow the free surface. "surface" (default): everything on arc_k.
+        k_heat = arc_k
+        if str(getattr(twin, "heat_anchor", "surface")).lower() == "torch":
+            k_heat = _torch_anchor_k(twin, g, torch_z_m)
+        twin._last_heat_k = float(k_heat)
+        _inject_arc(twin, g, arc_i, arc_j, k_heat)
 
         sim_time = twin._step_n * g.dt
         if twin.droplet_freq > 0:

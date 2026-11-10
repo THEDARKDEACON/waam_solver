@@ -457,6 +457,7 @@
         "pulse_peak_A": {"type": "number", "minimum": 0, "description": "Pulsed GMAW peak current; with pulse_base_A, pulse_peak_ms and pulse_frequency_hz gives I_mean and I_rms (I_rms drives arc pressure, J x B and stick-out heating)."},
         "pulse_base_A": {"type": "number", "minimum": 0},
         "pulse_peak_ms": {"type": "number", "exclusiveMinimum": 0},
+        "droplet_impact_speed_m_s": {"type": "number", "exclusiveMinimum": 0, "description": "Measured droplet impact speed (e.g. high-speed video); replaces the feed/free-fall/pinch estimate."},
         "arc_slope_ohm": {"type": "number", "minimum": 0, "description": "Pulsed GMAW arc voltage slope R in U = U0 + R*I (default 0.05, IEC 60974-1 MIG/MAG load line); mean power = V*I_mean + R*(I_rms^2 - I_mean^2)."},
         "pulse_frequency_hz": {
           "type": "number"
@@ -488,6 +489,7 @@
         "surface_weighting": {
           "type": "boolean"
         },
+        "heat_anchor": {"enum": ["surface", "torch"], "description": "Where the arc heat source sits: surface = top metal under the torch; torch = fixed to the torch (plate face / layer height), the conventional Goldak frame."},
         "pressure_model": {
           "type": "string"
         },

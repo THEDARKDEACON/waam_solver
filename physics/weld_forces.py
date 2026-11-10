@@ -90,7 +90,14 @@ def arc_pressure_peak_pa(twin: "WAAMTwin") -> float:
 
 
 def droplet_impact_velocity_m_s(twin: "WAAMTwin", m_drop_kg: float | None = None) -> float:
-    """Impact speed from feed, gravity, and a simple pinch term."""
+    """Impact speed from feed, gravity, and a simple pinch term.
+
+    ``twin.droplet_impact_speed_m_s`` (job process.droplet_impact_speed_m_s,
+    e.g. from high-speed video) replaces the estimate when set.
+    """
+    measured = getattr(twin, "droplet_impact_speed_m_s", None)
+    if measured is not None and float(measured) > 0.0:
+        return float(measured)
     g = 9.81
     drop_len = 3e-3
     if twin.droplet_freq > 0 and twin.wire_feed_m_s > 0:

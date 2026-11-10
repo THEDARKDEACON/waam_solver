@@ -490,6 +490,7 @@ _KNOWN_PROCESS_KEYS = frozenset({
     "droplet_size_jitter", "impact_lead_angle_deg", "droplet_freq_hz",
     "pulse_frequency_hz", "power_factor", "duty_cycle", "arc_sigma_mm",
     "pulse_peak_A", "pulse_base_A", "pulse_peak_ms", "arc_slope_ohm",
+    "droplet_impact_speed_m_s",
 })
 
 _KNOWN_GOLDAK_KEYS = frozenset({
@@ -500,6 +501,7 @@ _KNOWN_GOLDAK_KEYS = frozenset({
 
 _KNOWN_ARC_PHYSICS_KEYS = frozenset({
     "sigma_mm", "penetration_mm", "T_vapor_cap_K", "surface_weighting",
+    "heat_anchor",
     "pressure_model", "pressure_pa", "pressure_sigma_mm",
 })
 
@@ -660,6 +662,8 @@ def apply_job_to_twin(twin, job: dict[str, Any] | JobConfig) -> None:
         twin.Q_w = electrical_arc_power_W(process)
     if "arc_efficiency" in process:
         twin.eta = float(process["arc_efficiency"])
+    if process.get("droplet_impact_speed_m_s") is not None:
+        twin.droplet_impact_speed_m_s = float(process["droplet_impact_speed_m_s"])
 
     adv = job.get("advanced_physics", {})
     if "gas_jet_velocity_m_s" in adv:
@@ -919,6 +923,11 @@ def apply_job_to_twin(twin, job: dict[str, Any] | JobConfig) -> None:
         twin.arc_pressure_model = str(arc_phys["pressure_model"]).strip().lower()
     if "pressure_pa" in arc_phys:
         twin.arc_pressure = float(arc_phys["pressure_pa"])
+    if "heat_anchor" in arc_phys:
+        anchor = str(arc_phys["heat_anchor"]).strip().lower()
+        if anchor not in ("surface", "torch"):
+            raise ValueError(f"arc_physics.heat_anchor must be surface or torch, got {anchor!r}")
+        twin.heat_anchor = anchor
     if "pressure_sigma_mm" in arc_phys and arc_phys["pressure_sigma_mm"] is not None:
         twin.pressure_sigma_m = float(arc_phys["pressure_sigma_mm"]) / 1000.0
 

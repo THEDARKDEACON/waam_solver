@@ -167,9 +167,25 @@ def _surface_height() -> None:
     print("[arc_input] surface height: top metal cell found for nz 64–256 (no warp race)")
 
 
+def _torch_anchor() -> None:
+    from waam_twin.solvers.coupled_step import _torch_anchor_k
+    twin = WAAMTwin(nx=8, ny=8, nz=40, dx=4e-4, max_tracers=4)
+    g = twin.grid
+    face = float(twin.nz_solid) - 1.0
+    assert _torch_anchor_k(twin, g, None) == face
+    assert _torch_anchor_k(twin, g, 0.0) == face
+    # Layer height 1.2 mm → three cells up.
+    assert abs(_torch_anchor_k(twin, g, 1.2e-3) - (face + 3.0)) < 1e-6
+    # Robot TCP (≥ CTWD): bead top = TCP − CTWD.
+    twin.ctwd_m = 15e-3
+    assert abs(_torch_anchor_k(twin, g, 15e-3 + 0.8e-3) - (face + 2.0)) < 1e-6
+    print("[arc_input] torch heat anchor: plate face, layer height and TCP − CTWD")
+
+
 def run() -> None:
     init_taichi()
     _surface_height()
+    _torch_anchor()
     _surface_source(fslbm=False)
     _surface_source(fslbm=True)
     _energy_split()

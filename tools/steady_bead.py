@@ -33,6 +33,7 @@ from waam_twin.measure.steady_section import steady_cross_section
 from waam_twin.paths import PROJECT_ROOT
 from waam_twin.runtime import reset_taichi
 from waam_twin.torch_path import TorchPathDriver
+from waam_twin.physics.weld_forces import droplet_impact_velocity_m_s
 
 _STEADY = PROJECT_ROOT / "runs" / "steady"
 
@@ -140,6 +141,10 @@ def _apply_twin_overrides(twin, args: argparse.Namespace) -> None:
         # tracer spread. Arc pressure stays on pressure_sigma_mm.
         twin.arc_sigma_m = float(args.arc_sigma) / 1000.0
         twin.sigma_cells = twin.arc_sigma_m / twin.grid.dx
+    if getattr(args, "heat_anchor", None) is not None:
+        twin.heat_anchor = str(args.heat_anchor)
+    if getattr(args, "droplet_speed", None) is not None:
+        twin.droplet_impact_speed_m_s = float(args.droplet_speed)
     if args.cs is not None:
         twin.smagorinsky_cs = float(args.cs)
     if args.force_limit_m_s2 is not None:
@@ -169,6 +174,8 @@ def _knobs(twin, n_steps: int) -> dict[str, Any]:
         "contact_angle_deg": float(twin.contact_angle_deg),
         "sulphur_ppm": float(getattr(twin.mat, "sulphur_ppm", 0.0)),
         "welding_position": str(getattr(twin, "welding_position", "flat")),
+        "droplet_impact_speed_m_s": float(droplet_impact_velocity_m_s(twin)),
+        "heat_anchor": str(getattr(twin, "heat_anchor", "surface")),
         "gravity_dir": list(getattr(twin, "gravity_dir", (0.0, 0.0, -1.0))),
         "arc_sigma_mm": float(twin.arc_sigma_m) * 1000.0,
         "smagorinsky_cs": float(getattr(twin, "smagorinsky_cs", 0.0) or 0.0),
@@ -366,6 +373,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--welding-position", default=None,
                     choices=("flat", "overhead", "vertical_down", "vertical_up"),
                     help="simulation.welding_position (gravity direction)")
+    ap.add_argument("--heat-anchor", default=None, choices=("surface", "torch"),
+                    help="twin.heat_anchor (arc heat on the free surface or fixed to the torch)")
+    ap.add_argument("--droplet-speed", type=float, default=None,
+                    help="Droplet impact speed [m/s] (twin.droplet_impact_speed_m_s)")
     ap.add_argument("--lorentz-every-s", type=float, default=2.5e-4)
     ap.add_argument("--cs", type=float, default=None, help="Smagorinsky Cs override")
     ap.add_argument("--force-limit-m-s2", type=float, default=None,

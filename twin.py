@@ -274,6 +274,9 @@ class WAAMTwin:
         # gravity_direction by job.py (overhead, vertical-down, …).
         self.gravity_dir = (0.0, 0.0, -1.0)
         self.welding_position = "flat"
+        # Heat-source anchor: "surface" (top metal under the torch) or "torch"
+        # (fixed to the torch: plate face / layer height). arc_physics.heat_anchor.
+        self.heat_anchor = "surface"
         self.enable_bead_freeze = enable_bead_freeze
         self.enable_ctwd = enable_ctwd
         self.contact_angle_deg = (
