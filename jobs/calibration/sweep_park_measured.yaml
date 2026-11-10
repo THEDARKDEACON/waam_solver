@@ -1,0 +1,40 @@
+# Park 2019 calibration with the MEASURED electrical input (Fig. 3b/4b/8b
+# digitised; docs/validation/data/park2019_waveforms/) — pre-registered in
+# docs/PARK_MEASURED_PREREG.md before any run.
+#
+# Same model as sweep_park_goldak.yaml (honest energy split, Goldak volume
+# fixed to the torch, shape from the flat bead b 3.0 / c 2.6 mm). One fitted
+# value, the arc efficiency eta, now with a physical prior: the measured
+# mean(U*I) removes the voltage guess that eta_eff used to absorb.
+
+points:
+  - name: park_flat
+    job: jobs/examples/bead_park_measured.yaml
+
+heldout:
+  - name: park_overhead
+    job: jobs/examples/bead_park_measured_overhead.yaml
+    time_s: 3.5             # hanging pool: let the window freeze (frozen frac 0.6 at 2.5 s before)
+  - name: park_vertical_down
+    job: jobs/examples/bead_park_measured_vertical_down.yaml
+  - name: bruno_gmaw
+    job: jobs/examples/bead_bruno_goldak.yaml
+    time_s: 4.0
+
+params:
+  # Calorimetric GMAW / P-GMAW arc efficiency 0.75-0.88 (DuPont & Marder 1995;
+  # pulsed up to ~0.9); prior widened to 0.70-0.95 so the data can disagree.
+  eta: [0.70, 0.95]
+
+n: 6
+seed: 11
+time_s: 2.5
+x0: 22.0
+x1: 26.0
+
+measurement_sigma:
+  abs_mm: 0.15
+  rel: 0.05
+model_discrepancy_rel: 0.05
+
+out: runs/calibration/sweep_park_measured.jsonl

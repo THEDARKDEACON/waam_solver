@@ -425,7 +425,17 @@ def electrical_arc_power_W(process: dict[str, Any], *, required: bool = False) -
     R is ``arc_slope_ohm`` (default 0.05 Ω, the slope of the IEC 60974-1
     conventional MIG/MAG load line U = 14 + 0.05·I). For Park's 345/35 A train
     at 22 V that adds ~0.7 kW to the 2.0 kW of V·I_mean (+36 %).
+
+    ``mean_power_W`` (a measured mean of U·I, e.g. from a digitised
+    waveform) replaces all of the above when set.
     """
+    measured = process.get("mean_power_W")
+    if measured is not None:
+        return (
+            float(measured)
+            * float(process.get("power_factor", 1.0))
+            * float(process.get("duty_cycle", 1.0))
+        )
     current = process.get("current_A")
     extra_W = 0.0
     if current is None and all(
@@ -490,7 +500,7 @@ _KNOWN_PROCESS_KEYS = frozenset({
     "droplet_size_jitter", "impact_lead_angle_deg", "droplet_freq_hz",
     "pulse_frequency_hz", "power_factor", "duty_cycle", "arc_sigma_mm",
     "pulse_peak_A", "pulse_base_A", "pulse_peak_ms", "arc_slope_ohm",
-    "droplet_impact_speed_m_s",
+    "droplet_impact_speed_m_s", "mean_power_W", "current_rms_A",
 })
 
 _KNOWN_GOLDAK_KEYS = frozenset({
@@ -656,9 +666,13 @@ def apply_job_to_twin(twin, job: dict[str, Any] | JobConfig) -> None:
         twin.welding_current_rms_A = i_rms
         if current_A is None:
             twin.welding_current_A = i_mean
+    # A measured rms current (digitised waveform) replaces the rectangular-
+    # train estimate: real pulses have ramps and a post-pulse shoulder.
+    if process.get("current_rms_A") is not None:
+        twin.welding_current_rms_A = float(process["current_rms_A"])
 
     # Keep Lin–Eagar (I) and Goldak heating (Q_w) consistent after process edits.
-    if any(k in process for k in ("current_A", "voltage_V", "power_factor", "duty_cycle", "arc_slope_ohm")):
+    if any(k in process for k in ("current_A", "voltage_V", "power_factor", "duty_cycle", "arc_slope_ohm", "mean_power_W")):
         twin.Q_w = electrical_arc_power_W(process)
     if "arc_efficiency" in process:
         twin.eta = float(process["arc_efficiency"])

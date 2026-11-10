@@ -454,6 +454,8 @@
         "droplet_freq_hz": {
           "type": "number"
         },
+        "mean_power_W": {"type": "number", "minimum": 0, "description": "Measured mean electrical power mean(U*I) [W] (e.g. digitised waveform); replaces V*I and the pulse-train estimate. Heat input = arc_efficiency * mean_power_W."},
+        "current_rms_A": {"type": "number", "minimum": 0, "description": "Measured rms current [A]; replaces the rectangular pulse-train rms for arc pressure, J x B and stick-out heating."},
         "pulse_peak_A": {"type": "number", "minimum": 0, "description": "Pulsed GMAW peak current; with pulse_base_A, pulse_peak_ms and pulse_frequency_hz gives I_mean and I_rms (I_rms drives arc pressure, J x B and stick-out heating)."},
         "pulse_base_A": {"type": "number", "minimum": 0},
         "pulse_peak_ms": {"type": "number", "exclusiveMinimum": 0},
