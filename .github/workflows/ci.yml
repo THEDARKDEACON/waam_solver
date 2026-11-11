@@ -2,9 +2,8 @@ name: waam_twin CI
 
 on:
   push:
-    branches: [main, master, develop]
+    branches: ["**"]
   pull_request:
-    branches: [main, master, develop]
 
 jobs:
   core-cpu:
@@ -52,4 +51,4 @@ jobs:
         run: |
           export PYTHONPATH="$(dirname "$GITHUB_WORKSPACE")"
           # Lightweight host-side tests that do not need a full GPU twin
-          pytest validation/test_measure_geometry.py validation/test_ledger_host.py validation/test_units.py -q || true
+          pytest validation/test_measure_geometry.py validation/test_ledger_host.py validation/test_units.py -q
