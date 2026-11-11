@@ -47,6 +47,7 @@ runs/steady/*.jsonl
 !runs/steady/oxygen.jsonl
 !runs/steady/oxygen_u1.jsonl
 !runs/steady/mech.jsonl
+!runs/steady/mesh_*.jsonl
 # Calibration sweeps cited by docs/*PREREG*.md and PARK_VALIDATION.md (evidence)
 !runs/calibration/
 runs/calibration/_tmp/

@@ -100,3 +100,43 @@ exclude every run, so it is replaced, before any M1 record exists, by:
 **a run counts if `mach_frac_window` ≤ 2 %** (isolated spikes, against 9–38 % of
 steps in the old studies); the fraction is reported for every run, and the analysis
 is also shown with and without runs above 1 %.
+
+## Stage M1 result (11 Nov 2026, 14:01) — not fully converged
+Records `runs/steady/mesh_M1.jsonl`. 3 of 12 runs broke the 2 % window rule, with
+7.7–12.6 % of window steps at the ceiling (the other nine are ≤ 0.9 %). These are
+intermittent episodes, not isolated spikes, and two of them fall at dx 0.3, so each
+bead has one counted run there.
+
+Pre-registered analysis (runs with > 2 % excluded; the ≤ 1 % analysis is identical):
+
+| bead | output | dx 0.5 | 0.4 | 0.3 | Δ 0.4→0.3 | verdict |
+|---|---|---|---|---|---|---|
+| run04 | W | 4.57 | 4.63 | 4.45 | −4.0 % | converged |
+| run04 | D | 0.67 | 0.75 | 0.61 | −18.7 % | **not converged** |
+| run04 | H_frozen | 2.96 | 3.03 | 3.20 | +5.5 % | converged |
+| run04 | W_bead | 4.72 | 4.76 | 4.54 | −4.6 % | converged |
+| run12 | W | 5.27 | 5.06 | 4.87 | −3.7 % | converged |
+| run12 | D | 1.57 | 1.43 | 1.45 | +1.4 % | converged |
+| run12 | H_frozen | 3.23 | 3.10 | 3.20 | +3.4 % | converged |
+| run12 | W_bead | 5.39 | 5.24 | 4.93 | −5.9 % | converged |
+
+Deposited area ratio stays within 1.0–1.1 at dx ≤ 0.4 for both beads (no excess). Most
+sequences are divergent or oscillatory, so the Celik GCI values and the extrapolated
+values are not meaningful; the convergence verdict rests on the pre-registered
+Δ-band rule.
+
+Sensitivity (all 12 runs counted): run04 D becomes −9.7 %, inside 2 × the repeat SD
+(the two dx 0.3 repeats give D 0.61 and 0.74, so this depth scatter is the real noise at
+that grid); run12 W_bead becomes −6.2 % and fails. So under either analysis exactly
+one of the eight output–bead pairs fails, and in each case it fails at the edge of
+the band.
+
+**Systematic trend, within the band:** width falls on every refinement step for
+run12 and from 0.4 to 0.3 for run04 (−4 to −6 %), and the width–power response
+(run12 − run04 in W_bead) shrinks with refinement: +0.67 / +0.47 / +0.39 mm at
+dx 0.5 / 0.4 / 0.3 (measured +0.5 mm). The fixed-dx calibration therefore does
+not transfer to a finer grid without refitting; the closest match to the measured
+width–power slope is at dx 0.4.
+
+Verdict per the pre-registration: **M1 is not converged** (1 of 8 pairs fails in both
+analyses), but only marginally. M2 and M3 are judged against these numbers.
