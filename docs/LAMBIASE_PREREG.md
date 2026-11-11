@@ -42,3 +42,22 @@ Reference scatter in the data (SOD 8 vs 12 pairs, same P and v): H 1 %,
 contact length 12 %, penetration 7 %, width 7 % mean relative difference.
 
 The result is reported whatever it is; nothing is re-tuned on held-out beads.
+
+## Amendment 1 (11 Nov 2026, 05:45 — after calibration, before any held-out result was read)
+Checking Table 4 against the paper's definitions shows that **contact length exceeds
+bead width in 23 of 24 rows** (CL/width 1.23–1.67; only run 13 has CL < width),
+although the paper defines contact length as "the width of the bead–substrate
+interface measured at the substrate plane", which cannot exceed the bead width.
+The transcription was re-checked against the table image and is correct. The rest of
+the table is consistent with wire-mass conservation: the reinforcement area
+A·(1−dilution) matches the wire supply π/4·d²·Sw/v to within ~10 % on every row.
+Which column is the true interface width cannot be settled from the paper.
+
+Consequences, fixed now:
+* The pre-registered criteria stay as written and are reported as the primary result.
+* One secondary check is added: model bead width `W_bead_mm` (unfitted; read from
+  the `RESULT` lines in `runs/calibration/sweep_lambiase.log`) against the
+  "width" column. Pass: MAE ≤ 15 % on the 14 held-out beads. Reported alongside the
+  primary result, not in place of it.
+* A contact-length failure will be reported together with this inconsistency, and
+  no claim will be built on the contact-length comparison either way.
