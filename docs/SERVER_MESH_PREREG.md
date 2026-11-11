@@ -48,3 +48,31 @@ Card 0 only; a batch starts only when the card shows < 1 GB used and < 10 %
 utilisation; low CPU priority; time limits; only own files under ~/waam_twin_runs.
 
 Results reported whatever they are.
+
+## S1 result (12 Nov 2026, 01:40) — platforms EQUIVALENT
+Records `runs/steady/server/server_S1.jsonl` (6 runs, all counted; window cap hits 0).
+
+| grid | output | server (n 3) | laptop C (n 3) | diff | verdict |
+|---|---|---|---|---|---|
+| 0.4 | D | 0.725 ± 0.099 | 0.771 ± 0.042 | −6.0 % | within 2 SE |
+| 0.4 | W | 4.660 ± 0.060 | 4.667 ± 0.098 | −0.1 % | equivalent |
+| 0.4 | W_bead | 4.812 ± 0.084 | 4.788 ± 0.084 | +0.5 % | equivalent |
+| 0.4 | H_frozen | 3.204 ± 0.151 | 3.090 ± 0.167 | +3.7 % | equivalent |
+| 0.3 | D | 0.600 ± 0.056 | 0.651 ± 0.046 | −7.9 % | within 2 SE |
+| 0.3 | W | 4.392 ± 0.056 | 4.430 ± 0.027 | −0.8 % | equivalent |
+| 0.3 | W_bead | 4.443 ± 0.033 | 4.514 ± 0.033 | −1.6 % | equivalent |
+| 0.3 | H_frozen | 3.131 ± 0.080 | 3.135 ± 0.122 | −0.1 % | equivalent |
+
+All 8 equivalent: server and laptop results may be reported side by side.
+Depth runs ~7 % lower on the server at both grids (within noise); the server's own
+0.4 → 0.3 depth change is −17 %, as on the laptop (−16 %).
+
+## S2 timing (not a test)
+| run | wall per run | ms/step | card-0 memory (peak, all runs) |
+|---|---|---|---|
+| dx 0.3 alone | 752 s (laptop ≈ 2200 s, 2.9× faster) | 2.6 | 0.9 GB |
+| dx 0.3, 2 sharing | 1011–1066 s | 3.5–3.7 | 1.8 GB (1.4× throughput) |
+| dx 0.4, 3 sharing | 661–697 s | 3.0–3.2 | 1.7 GB |
+| dx 0.5 alone (smoke) | 444 s (laptop 362 s) | 2.5 | — |
+Small grids are launch-bound (the laptop's faster cores win at dx 0.5); from dx 0.3 the
+server wins, and sharing the card adds throughput.
