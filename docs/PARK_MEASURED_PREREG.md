@@ -41,3 +41,22 @@ own measured waveform); sweep `jobs/calibration/sweep_park_measured.yaml`.
 
 No parameter is changed after seeing these results; any further change needs
 beads not yet used.
+
+## Outcome (11 Nov 2026, 03:00) — runs/calibration/sweep_park_measured.*
+1. **Physical consistency: PASS.** η posterior median 0.87, 90 % [0.77, 0.94];
+   best fit 0.89 (was η_eff 1.00 with the assumed 2.73 kW input).
+2. **Calibration fit: PASS.** Flat W 5.92 (−3 %), D 1.71 (−5 %), H 2.07 (−6 %);
+   surrogate leave-one-out W/D error 0.24/0.14 mm (was 0.46/0.21).
+3. **Held-out re-tests** (best fit; band = 4 posterior draws):
+
+| bead | W | D | H |
+|---|---|---|---|
+| overhead | 4.90 vs 5.7 (−14 %) ✓ | 1.98 vs 1.9 (+4 %) ✓ | 1.18 vs 2.5 (−53 %), band [1.18, 3.36] — unsteady, not resolved |
+| vertical down | 6.13 vs 6.9 (−11 %) ✓ | 1.86 vs 0.8 (**+132 %**) ✗ | 1.95 vs 1.8 (+8 %) ✓ |
+| Bruno | 5.65 vs 4.33 (**+31 %**) ✗ | — | 2.34 vs 2.14 (+9 %) ✓ |
+
+6 of 8 measured held-out outputs pass (4 of 8 before); the two failures are
+the ones predicted in advance — vertical-down depth (torch-fixed heat volume
+cannot show the pool running ahead) and Bruno width (Goldak b from Park's
+bead does not transfer to another process). Overhead height remains unsteady
+(frozen height varies 1.2–3.4 mm between draws).
