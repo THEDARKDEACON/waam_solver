@@ -220,6 +220,11 @@
           "exclusiveMinimum": 0,
           "description": "Design peak physical velocity [m/s] for auto_dt_ma (default 0.5)."
         },
+        "tau_min": {
+          "type": "number",
+          "exclusiveMinimum": 0.5,
+          "description": "Relaxation-time floor for auto_dt_ma (default 0.5005 TRT, 0.505 SRT)."
+        },
         "pool_metric": {
           "type": "string",
           "enum": [

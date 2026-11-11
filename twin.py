@@ -163,6 +163,7 @@ class WAAMTwin:
         u_mach_limit_lu: float = 0.08,
         force_limit_lu: float = 0.05,
         force_limit_m_s2: float = 0.0,
+        tau_min: float | None = None,
     ):
         # ── Basic physical-plausibility validation ────────────────────────
         if arc_power_W < 0:
@@ -254,7 +255,9 @@ class WAAMTwin:
             u_mach_limit_lu=self.u_mach_limit_lu,
             u_design_m_s=self.u_design_m_s,
             # SRT needs a higher floor; MRT is the production path near 0.5005.
-            tau_min=0.505 if use_srt else 0.5005,
+            # job simulation.tau_min overrides (mesh study: a lower TRT floor
+            # lets the same speed ceiling hold on every grid).
+            tau_min=float(tau_min) if tau_min is not None else (0.505 if use_srt else 0.5005),
             sparse=bool(sparse_grid),
         )
         # Sparse grid: blocks of 8³ cells exist only near metal (physics/sparse_grid.py).
@@ -796,6 +799,9 @@ class WAAMTwin:
         v = _sim_or_adv("u_design_m_s")
         if v is not None:
             ctor_kw["u_design_m_s"] = float(v)
+        v = _sim_or_adv("tau_min")
+        if v is not None:
+            ctor_kw["tau_min"] = float(v)
         v = _sim_or_adv("u_mach_limit_lu")
         if v is not None:
             ctor_kw["u_mach_limit_lu"] = float(v)

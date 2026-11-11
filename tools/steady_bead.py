@@ -80,6 +80,7 @@ def _write_override_job(
     dt_scale: float | None = None,
     wire_feed_m_min: float | None = None,
     u_design_m_s: float | None = None,
+    tau_min: float | None = None,
     sparse_grid: bool = False,
     welding_position: str | None = None,
 ) -> pathlib.Path:
@@ -95,6 +96,8 @@ def _write_override_job(
         # Speed ceiling = u_mach_limit_lu·dx/dt with auto_dt_ma; the same value
         # on every mesh keeps a mesh study's only variable the resolution.
         sim["u_design_m_s"] = float(u_design_m_s)
+    if tau_min is not None:
+        sim["tau_min"] = float(tau_min)
     if sparse_grid:
         sim["sparse_grid"] = True
     if welding_position is not None:
@@ -215,6 +218,8 @@ def run_once(args: argparse.Namespace, job_path: pathlib.Path) -> dict[str, Any]
     twin = WAAMTwin.from_job(job_path)
     _apply_twin_overrides(twin, args)
     twin.reset()
+    from waam_twin.measure.area_budget import area_budget, snapshot
+    snap0 = snapshot(twin)
     g = twin.grid
     ceiling = 0.08 * float(g.dx) / float(g.dt)
     print(
@@ -259,11 +264,13 @@ def run_once(args: argparse.Namespace, job_path: pathlib.Path) -> dict[str, Any]
         twin, float(args.x0), float(args.x1), section_job.get("reference") or {},
         area_expected_mm2=_expected_area_mm2(job),
     )
+    budget = area_budget(twin, snap0, float(args.x0), float(args.x1))
     record = {
         "git": _git_hash(),
         "job": str(args.job),
         **_knobs(twin, n_steps),
         **section,
+        **budget,
         "mach_steps": int(getattr(twin, "_mach_clamp_steps", 0)),
         "mach_frac": int(getattr(twin, "_mach_clamp_steps", 0)) / n_steps,
         "force_clamp_frac": int(getattr(twin, "_force_clamp_steps", 0)) / n_steps,
@@ -288,6 +295,12 @@ def run_once(args: argparse.Namespace, job_path: pathlib.Path) -> dict[str, Any]
             flush=True,
         )
     _print_result(record)
+    print(
+        f"BUDGET above={record['area_above_mm2']:.2f} below_change={record['area_below_change_mm2']:+.2f} "
+        f"net={record['area_net_mm2']:.2f} iface={record['area_iface_mm2']:.2f} mm2  "
+        f"booked/fed={record['booked_over_fed']:.3f} gain/booked={record['gain_over_booked']:.3f}",
+        flush=True,
+    )
     return record
 
 
@@ -378,6 +391,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--dx", type=float, default=None, help="dx in mm")
     ap.add_argument("--u-design", type=float, default=None,
                     help="simulation.u_design_m_s (speed ceiling with auto_dt_ma)")
+    ap.add_argument("--tau-min", type=float, default=None,
+                    help="simulation.tau_min (TRT relaxation floor; default 0.5005)")
     ap.add_argument("--sparse", action="store_true",
                     help="simulation.sparse_grid (GPU; set WAAM_DEVICE_MEMORY_GB for big meshes)")
     ap.add_argument("--welding-position", default=None,
@@ -426,6 +441,7 @@ def main(argv: list[str] | None = None) -> int:
         or args.dt_scale is not None
         or args.wire_feed_m_min is not None
         or args.u_design is not None
+        or args.tau_min is not None
         or args.sparse
         or args.welding_position is not None
     ):
@@ -437,6 +453,7 @@ def main(argv: list[str] | None = None) -> int:
             dt_scale=args.dt_scale,
             wire_feed_m_min=args.wire_feed_m_min,
             u_design_m_s=args.u_design,
+            tau_min=args.tau_min,
             sparse_grid=args.sparse,
             welding_position=args.welding_position,
         )

@@ -489,7 +489,7 @@ _KNOWN_SIM_KEYS = frozenset({
     "dt_scale", "warn_on_force_clamp", "alloy_mix_rate",
     "use_variable_tau", "use_srt", "u_mach_limit_lu", "force_limit_lu",
     "force_limit_m_s2", "C_darcy", "C_darcy_ref_dt_s",
-    "auto_dt_ma", "u_design_m_s", "pool_metric", "thermal_dt", "lbm_gas_band",
+    "auto_dt_ma", "u_design_m_s", "tau_min", "pool_metric", "thermal_dt", "lbm_gas_band",
     "smagorinsky_cs", "welding_position", "gravity_direction",
 })
 
