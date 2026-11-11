@@ -81,6 +81,7 @@ def _write_override_job(
     wire_feed_m_min: float | None = None,
     u_design_m_s: float | None = None,
     tau_min: float | None = None,
+    viscosity_scale: float | None = None,
     sparse_grid: bool = False,
     welding_position: str | None = None,
 ) -> pathlib.Path:
@@ -98,6 +99,8 @@ def _write_override_job(
         sim["u_design_m_s"] = float(u_design_m_s)
     if tau_min is not None:
         sim["tau_min"] = float(tau_min)
+    if viscosity_scale is not None:
+        job.setdefault("advanced_physics", {})["viscosity_scale"] = float(viscosity_scale)
     if sparse_grid:
         sim["sparse_grid"] = True
     if welding_position is not None:
@@ -194,6 +197,7 @@ def _knobs(twin, n_steps: int) -> dict[str, Any]:
         "smagorinsky_cs": float(getattr(twin, "smagorinsky_cs", 0.0) or 0.0),
         "contact_slip_band_mm": float(getattr(twin, "contact_slip_band_mm", 0.0) or 0.0),
         "tau_min": float(getattr(twin.grid, "tau_min", 0.0) or 0.0),
+        "viscosity_scale": float(getattr(twin, "viscosity_scale", 1.0)),
         "force_limit_m_s2": float(getattr(twin, "force_limit_m_s2", 0.0) or 0.0),
         "force_limit_lu": float(getattr(twin, "force_limit_lu", 0.0) or 0.0),
         "C_darcy": float(getattr(twin, "C_darcy", 0.0) or 0.0),
@@ -399,6 +403,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="simulation.contact_slip_band_mm (physical contact-line slip band)")
     ap.add_argument("--tau-min", type=float, default=None,
                     help="simulation.tau_min (TRT relaxation floor; default 0.5005)")
+    ap.add_argument("--visc-scale", type=float, default=None,
+                    help="advanced_physics.viscosity_scale (diagnostic μ multiplier, stage V10)")
     ap.add_argument("--sparse", action="store_true",
                     help="simulation.sparse_grid (GPU; set WAAM_DEVICE_MEMORY_GB for big meshes)")
     ap.add_argument("--welding-position", default=None,
@@ -448,6 +454,7 @@ def main(argv: list[str] | None = None) -> int:
         or args.wire_feed_m_min is not None
         or args.u_design is not None
         or args.tau_min is not None
+        or args.visc_scale is not None
         or args.sparse
         or args.welding_position is not None
     ):
@@ -460,6 +467,7 @@ def main(argv: list[str] | None = None) -> int:
             wire_feed_m_min=args.wire_feed_m_min,
             u_design_m_s=args.u_design,
             tau_min=args.tau_min,
+            viscosity_scale=args.visc_scale,
             sparse_grid=args.sparse,
             welding_position=args.welding_position,
         )

@@ -54,6 +54,18 @@ from .solvers.coupled_step import coupled_step
 RHO_LATTICE = 1.0
 
 
+def _scale_viscosity(mat: MaterialProps, scale: float) -> MaterialProps:
+    """Copy of mat with μ and the μ(T) knots multiplied by scale (1.0 → mat itself)."""
+    if scale == 1.0:
+        return mat
+    import copy
+    out = copy.deepcopy(mat)
+    out.mu = float(mat.mu) * scale
+    if out.tables.mu:
+        out.tables.mu = [(t, v * scale) for (t, v) in mat.tables.mu]
+    return out
+
+
 def _same_thermal_alloy(a: MaterialProps, b: MaterialProps) -> bool:
     """True when plate and wire share the thermal constants the dual path would split."""
     return (
@@ -164,6 +176,7 @@ class WAAMTwin:
         force_limit_lu: float = 0.05,
         force_limit_m_s2: float = 0.0,
         tau_min: float | None = None,
+        viscosity_scale: float = 1.0,
     ):
         # ── Basic physical-plausibility validation ────────────────────────
         if arc_power_W < 0:
@@ -181,6 +194,13 @@ class WAAMTwin:
             self.mat = material
         else:
             self.mat = load_material(material, high_sulphur)
+        if not viscosity_scale > 0:
+            raise ValueError(f"viscosity_scale must be > 0, got {viscosity_scale}")
+        # Diagnostic multiplier on liquid viscosity (mesh study V10). Applied to the
+        # loaded material before the grid and GPU tables exist, so the scalar τ, the
+        # plate τ and the μ(T) table all follow. 1.0 leaves the material untouched.
+        self.viscosity_scale = float(viscosity_scale)
+        self.mat = _scale_viscosity(self.mat, self.viscosity_scale)
 
         if max_tracers is None:
             max_tracers = 50_000
@@ -478,6 +498,7 @@ class WAAMTwin:
             pmat = plate_material
         else:
             pmat = load_material(plate_material)
+        pmat = _scale_viscosity(pmat, getattr(self, "viscosity_scale", 1.0))
         if _same_thermal_alloy(self.mat, pmat):
             log.info(
                 f"[WAAMTwin] plate.material {pmat.name} matches wire {self.mat.name} "
@@ -804,6 +825,9 @@ class WAAMTwin:
         v = _sim_or_adv("tau_min")
         if v is not None:
             ctor_kw["tau_min"] = float(v)
+        v = _sim_or_adv("viscosity_scale")
+        if v is not None:
+            ctor_kw["viscosity_scale"] = float(v)
         v = _sim_or_adv("u_mach_limit_lu")
         if v is not None:
             ctor_kw["u_mach_limit_lu"] = float(v)

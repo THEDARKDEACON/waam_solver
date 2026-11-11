@@ -573,6 +573,11 @@
           "minimum": 0,
           "description": "TRT odd-mode relaxation time tau_odd (omega_o = 1/bulk_tau), constant- and variable-tau collision alike. Default 1.0. 0 selects the magic Lambda = 1/4 (tau_odd ~300 at liquid-metal tau ~0.5008; unstable under mushy-zone drag at 150-200 A)."
         },
+        "viscosity_scale": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Diagnostic multiplier on liquid dynamic viscosity (scalar mu and the mu(T) table, wire and plate). Default 1.0. Mesh-study stage V10 only; not a calibrated closure."
+        },
         "marangoni_scale": {
           "type": "number",
           "description": "Multiplier on material d\u03b3/dT (default 1.0). Prefer material surfactant model over this knob."

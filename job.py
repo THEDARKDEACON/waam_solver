@@ -524,7 +524,7 @@ _KNOWN_ADVANCED_PHYSICS_KEYS = frozenset({
     "recoil_accommodation", "evap_cooling_scale",
     "bulk_tau", "marangoni_scale", "C_darcy", "C_darcy_ref_dt_s",
     "u_mach_limit_lu", "force_limit_lu", "force_limit_m_s2",
-    "use_variable_tau", "use_srt",
+    "use_variable_tau", "use_srt", "viscosity_scale",
 })
 
 _KNOWN_DEPOSITION_KEYS = frozenset({
