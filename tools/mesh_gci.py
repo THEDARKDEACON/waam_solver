@@ -21,6 +21,7 @@ from waam_twin.paths import PROJECT_ROOT
 
 OUTPUTS = ("W_mm", "D_mm", "H_frozen_mm", "W_bead_mm", "area_ratio")
 CONV_PCT = 6.0  # pre-registered: |change 0.4 -> 0.3| <= 6 %, or <= 2 pooled SD
+MACH_MAX = 0.02  # amendment 2: speed-cap hits allowed in the window (isolated spikes)
 
 
 def _celik(phi1: float, phi2: float, phi3: float, r21: float, r32: float) -> dict:
@@ -60,7 +61,7 @@ def main(paths: list[str]) -> None:
             r = json.loads(line)
             job = pathlib.Path(r["job"]).stem.split("_mat")[0]
             dx = round(float(r["dx_mm"]), 3)
-            bad = (r.get("mach_frac_window") or 0) > 0 or not all(
+            bad = (r.get("mach_frac_window") or 0) > MACH_MAX or not all(
                 math.isfinite(float(r.get(k, float("nan")))) for k in OUTPUTS[:3])
             if bad:
                 excluded.append((job, dx, r.get("mach_frac_window")))

@@ -82,3 +82,21 @@ Also fixed in 5506cec (no effect on results): the droplet impact pressure return
 ½mv²/area (N/m, ≈ 1e-3 Pa) and was applied on top of the droplet momentum already
 carried by the deposited cells; it now returns ½ρv² [Pa] and applies only when that
 momentum is off.
+
+## Stage A result (11 Nov 2026, 10:23) — area excess NOT reproduced
+run04, dx 0.25 mm, ceiling 2 m/s (`runs/steady/mesh_A.jsonl`, run worktree):
+area 10.18 mm² vs 10.77 expected (ratio 0.95); deposition booked 0.996 of the
+wire fed, domain gained 0.997 of what was booked (mass conserved). Along the bead
+the steady part (x 22–50 mm) carries 10.0–11.1 mm² (mean ≈ expected); a start-up
+hump of 12.4 mm² sits at x 14–18 mm and the window x 24–28 is on a slight dip.
+None of the diagnosis rules applies: under a uniform speed ceiling there is no
+fine-mesh area excess. (The audit's 1.3 came from runs before the race fix
+and/or the start-up hump.) W 4.20, D 0.49, H_frozen 3.11 mm.
+
+## Amendment 2 (10:24 — after stage A, before any M1 result exists)
+Stage A hit the 2 m/s ceiling on 1.2 % of window steps although the sampled peak
+speed was 0.75 m/s: isolated one-step spikes. The "zero hits" rule would likely
+exclude every run, so it is replaced, before any M1 record exists, by:
+**a run counts if `mach_frac_window` ≤ 2 %** (isolated spikes, against 9–38 % of
+steps in the old studies); the fraction is reported for every run, and the analysis
+is also shown with and without runs above 1 %.
