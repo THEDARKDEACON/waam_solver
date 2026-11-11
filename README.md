@@ -97,6 +97,7 @@ is `process.mean_power_W` (measured mean of U·I) or U·I; the solver deposits
 
 ## Documentation
 
+- [docs/VALIDATION_WRITEUP.md](docs/VALIDATION_WRITEUP.md) — calibration and validation summary
 - [docs/REFERENCE.md](docs/REFERENCE.md) — job keys, viewer controls, environment variables, presets, telemetry
 - [docs/HPC.md](docs/HPC.md) — Docker / SLURM production runs
 - [docs/CALIBRATION.md](docs/CALIBRATION.md) — what is fitted and what is fixed
