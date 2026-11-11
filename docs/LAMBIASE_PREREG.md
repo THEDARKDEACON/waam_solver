@@ -61,3 +61,51 @@ Consequences, fixed now:
   primary result, not in place of it.
 * A contact-length failure will be reported together with this inconsistency, and
   no claim will be built on the contact-length comparison either way.
+
+## Outcome (11 Nov 2026, 07:15) — PARTIAL PASS: 5 of 7 pre-registered checks pass
+Calibration (runs 2, 4, 10, 12): η median 0.82, 90 % [0.80, 0.84] (constrained);
+b not constrained (median 2.5 mm). Best fit η 0.819, b 2.42.
+Records: `runs/calibration/sweep_lambiase.{jsonl,log,report.json}`;
+metrics by `tools/eval_lambiase.py` (committed before the results were read).
+
+| run | P kW | v mm/min | SOD | H meas / pred | contact / W_fus | p / D | width / W_bead |
+|---|---|---|---|---|---|---|---|
+| 03 | 2.9 | 600 | 8 | 3.9 / 3.68 | 6.5 / 5.00 | 1.10 / 1.01 | 4.5 / 5.02 |
+| 06 | 3.3 | 450 | 8 | 3.5 / 4.02 | 8.0 / 5.98 | 1.17 / 1.93 | 6.1 / 6.11 |
+| 07 | 3.3 | 600 | 8 | 3.1 / 3.44 | 7.8 / 5.78 | 1.67 / 1.61 | 5.4 / 5.56 |
+| 08 | 3.3 | 750 | 8 | 3.0 / 3.20 | 6.3 / 5.01 | 1.29 / 1.33 | 4.3 / 4.98 |
+| 11 | 3.5 | 600 | 8 | 3.0 / 3.57 | 8.0 / 5.44 | 1.62 / 1.73 | 5.5 / 5.56 |
+| 14 | 2.9 | 450 | 12 | 4.7 / 4.33 | 5.7 / 5.85 | 1.18 / 1.36 | 4.5 / 5.96 |
+| 15 | 2.9 | 600 | 12 | 4.0 / 3.61 | 6.0 / 5.33 | 0.88 / 0.90 | 4.0 / 5.24 |
+| 16 | 2.9 | 750 | 12 | 3.8 / 3.21 | 5.5 / 4.93 | 0.95 / 0.60 | 3.7 / 4.98 |
+| 18 | 3.3 | 450 | 12 | 3.5 / 4.21 | 8.0 / 6.10 | 1.17 / 1.86 | 5.8 / 6.25 |
+| 19 | 3.3 | 600 | 12 | 3.2 / 3.65 | 7.5 / 5.17 | 1.72 / 1.63 | 5.0 / 5.27 |
+| 20 | 3.3 | 750 | 12 | 3.0 / 3.38 | 7.0 / 4.80 | 1.29 / 1.35 | 4.2 / 4.91 |
+| 22 | 3.5 | 450 | 12 | 3.5 / 2.86 | 7.0 / 6.32 | 1.36 / 2.20 | 5.7 / 6.47 |
+| 23 | 3.5 | 600 | 12 | 3.0 / 3.12 | 7.0 / 5.31 | 1.55 / 1.88 | 4.8 / 5.49 |
+| 24 | 3.5 | 750 | 12 | 2.8 / 2.96 | 5.8 / 4.76 | 1.20 / 1.49 | 4.3 / 4.80 |
+
+| Criterion | Result | Limit | Verdict |
+|---|---|---|---|
+| H MAE | 11.8 % (bias +3.6 %) | 10 % | **FAIL (narrow)** |
+| contact length MAE | 20.6 % (bias −20.3 %) | 15 % | **FAIL** (see Amendment 1) |
+| penetration MAE | 22.8 % (bias +15 %) | 25 % | PASS |
+| sign dH/dv | −0.0022 vs −0.0022 mm per mm/min | sign | PASS |
+| sign d(contact)/dv | −0.0034 vs −0.0040 | sign | PASS |
+| sign d(contact)/dP | +2.05 vs +0.32 mm/kW | sign | PASS (magnitude 6× low) |
+| η in 0.70–0.90 | 0.82 | — | PASS |
+| *Amd 1: W_bead vs width MAE* | *14.2 % (bias +14.2 %)* | *15 %* | *PASS (narrow)* |
+
+Reading:
+* The model predicts the direction of every effect and the magnitude of height,
+  penetration and bead width to ~12–23 % on 14 beads it never saw, with a
+  physically plausible efficiency (0.82) — in contrast to Park (η_eff 1.0).
+* Height misses its limit by 1.8 points; the errors are mostly ±10–20 % without a
+  single systematic sign (bias +3.6 %), consistent with run-to-run scatter
+  (run 22 H 2.86 vs its neighbours ~3.5) at the speed cap (mach fraction up to 0.37).
+* Width responds to power far too weakly (≈ 0.3–0.5 mm/kW vs 1.6–2.1 measured):
+  the wetting/spreading of a hotter pool on the plate is under-resolved, which is
+  also the likeliest source of the −20 % contact-length bias (if that column is a
+  width at all — Amendment 1).
+* Nothing here was re-tuned. Next independent step: repeats per bead (scatter) and
+  a model change for power-driven spreading, re-tested on new data.
