@@ -44,6 +44,16 @@ runs/steady/_*
 runs/steady/*.jsonl
 !runs/steady/dx030_darcy10.jsonl
 !runs/steady/dx030_undamped.jsonl
+!runs/steady/oxygen.jsonl
+!runs/steady/oxygen_u1.jsonl
+!runs/steady/mech.jsonl
+# Calibration sweeps cited by docs/*PREREG*.md and PARK_VALIDATION.md (evidence)
+!runs/calibration/
+runs/calibration/_tmp/
+!runs/calibration/*.log
+# Tools resolve relative --out against the repo root; a 'waam_twin/...' prefix
+# lands here by mistake
+/waam_twin/
 logs/*
 !logs/.gitkeep
 jobs/notebook_session/
@@ -127,6 +137,7 @@ docs/research-notes/
 .cursor/
 .ipynb_checkpoints/
 *.swp
+.*.swp
 *.swo
 *~
 .DS_Store

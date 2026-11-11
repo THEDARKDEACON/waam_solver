@@ -1,0 +1,88 @@
+{
+  "spec": "/home/gareth-joel/Downloads/WAAM/waam_twin/jobs/calibration/sweep_park_goldak.yaml",
+  "n_design_runs": 6,
+  "n_failed": 0,
+  "n_clamp_limited": 6,
+  "surrogate_loo": {
+    "park_flat:W_mm": {
+      "rmse": 0.4606760741539888,
+      "max_abs": 0.7626150322229392,
+      "rel_rmse_pct": 8.166553925716615,
+      "spread": 0.3594597375817953
+    },
+    "park_flat:D_mm": {
+      "rmse": 0.20525392522299105,
+      "max_abs": 0.34973389153176027,
+      "rel_rmse_pct": 12.519218091478063,
+      "spread": 0.15782184414208358
+    },
+    "park_flat:H_frozen_mm": {
+      "rmse": 0.352185454701545,
+      "max_abs": 0.7766037032524766,
+      "rel_rmse_pct": 18.352515480074963,
+      "spread": 0.2226772450560627
+    }
+  },
+  "sensitivity": {
+    "park_flat:W_mm": {
+      "eta": {
+        "S1": 0.6141071697571125,
+        "ST": 1.0026449248431522
+      }
+    },
+    "park_flat:D_mm": {
+      "eta": {
+        "S1": 0.7820898405940763,
+        "ST": 1.0097738567897412
+      }
+    },
+    "park_flat:H_frozen_mm": {
+      "eta": {
+        "S1": 0.7481869264546029,
+        "ST": 1.021512537462825
+      }
+    }
+  },
+  "posterior": {
+    "used_outputs": [
+      "park_flat:W_mm",
+      "park_flat:D_mm",
+      "park_flat:H_frozen_mm"
+    ],
+    "ess": 119403.07045827583,
+    "params": {
+      "eta": {
+        "mean": 1.0283143871144058,
+        "median": 1.0203990056982692,
+        "q05": 0.9560205664997757,
+        "q95": 1.1198160415415794,
+        "prior": [
+          0.9,
+          1.2
+        ],
+        "interval_frac_of_prior": 0.5459849168060125,
+        "constrained": false
+      }
+    },
+    "map": {
+      "eta": 1.0003287732258224
+    },
+    "fit_at_map": {
+      "park_flat:W_mm": {
+        "measured": 6.1,
+        "sigma": 0.305,
+        "predicted": 5.633386772544336
+      },
+      "park_flat:D_mm": {
+        "measured": 1.8,
+        "sigma": 0.15,
+        "predicted": 1.6643692192543504
+      },
+      "park_flat:H_frozen_mm": {
+        "measured": 2.2,
+        "sigma": 0.15,
+        "predicted": 2.319807413599814
+      }
+    }
+  }
+}

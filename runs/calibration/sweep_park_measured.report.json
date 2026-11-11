@@ -1,0 +1,88 @@
+{
+  "spec": "/home/gareth-joel/Downloads/WAAM/waam_twin/jobs/calibration/sweep_park_measured.yaml",
+  "n_design_runs": 6,
+  "n_failed": 0,
+  "n_clamp_limited": 6,
+  "surrogate_loo": {
+    "park_flat:W_mm": {
+      "rmse": 0.23464312020032344,
+      "max_abs": 0.3765769487019339,
+      "rel_rmse_pct": 4.157747933612818,
+      "spread": 0.27669805632403827
+    },
+    "park_flat:D_mm": {
+      "rmse": 0.13674637642173074,
+      "max_abs": 0.29922670498971726,
+      "rel_rmse_pct": 8.304605300348413,
+      "spread": 0.11449439330785245
+    },
+    "park_flat:H_frozen_mm": {
+      "rmse": 0.35701251126981665,
+      "max_abs": 0.544473019731734,
+      "rel_rmse_pct": 17.44100931428956,
+      "spread": 0.31824682642002294
+    }
+  },
+  "sensitivity": {
+    "park_flat:W_mm": {
+      "eta": {
+        "S1": 1.3332705215660134,
+        "ST": 1.0197959131859877
+      }
+    },
+    "park_flat:D_mm": {
+      "eta": {
+        "S1": 0.8887969803133602,
+        "ST": 1.0181367822158376
+      }
+    },
+    "park_flat:H_frozen_mm": {
+      "eta": {
+        "S1": 0.9986869711375089,
+        "ST": 1.0092974298234634
+      }
+    }
+  },
+  "posterior": {
+    "used_outputs": [
+      "park_flat:W_mm",
+      "park_flat:D_mm",
+      "park_flat:H_frozen_mm"
+    ],
+    "ess": 127238.50928833077,
+    "params": {
+      "eta": {
+        "mean": 0.8632456705372762,
+        "median": 0.869415794768221,
+        "q05": 0.774223234914811,
+        "q95": 0.9438769331975618,
+        "prior": [
+          0.7,
+          0.95
+        ],
+        "interval_frac_of_prior": 0.6786147931310031,
+        "constrained": false
+      }
+    },
+    "map": {
+      "eta": 0.8947316224230969
+    },
+    "fit_at_map": {
+      "park_flat:W_mm": {
+        "measured": 6.1,
+        "sigma": 0.305,
+        "predicted": 5.921197020506408
+      },
+      "park_flat:D_mm": {
+        "measured": 1.8,
+        "sigma": 0.15,
+        "predicted": 1.7079017777656547
+      },
+      "park_flat:H_frozen_mm": {
+        "measured": 2.2,
+        "sigma": 0.15,
+        "predicted": 2.065354902123353
+      }
+    }
+  }
+}
