@@ -172,3 +172,55 @@ Append an `## Outcome` section to this file, whatever the result:
 6. Excluded runs and why; anything that departed from this spec.
 
 Then stop and wait for the user's decision on adoption.
+
+## Outcome (12 Nov 2026, 02:24)
+Records `runs/steady/mesh_V10.jsonl` (×10, C_s 0; laptop, worktree a0dbf03) and
+`runs/steady/mesh_V10C.jsonl` (control; plus the counted M1 records at dx 0.4/0.3).
+
+**1. Checks.** (1) scale 1.0 hash-identical to no flag: pass. (2) 78/78 core CPU tests:
+pass. (3) dx 0.5 smoke: dt 20.00 µs, τ 0.5022, no NaN, no cap hits (GPU, 0.3 s): pass.
+(4) per-cell τ − 0.5 median ratio 10.000: pass.
+
+**2. Results, run04** (mean ± SD, n):
+
+| | dx 0.5 | dx 0.4 | dx 0.3 | Δ 0.4→0.3 |
+|---|---|---|---|---|
+| V10 D | 0.626 ± 0.060 (2) | 0.593 ± 0.112 (5) | 0.523 ± 0.073 (5) | −11.7 % |
+| V10 W | 4.63 ± 0.09 | 4.75 ± 0.03 | 4.59 ± 0.21 | −3.3 % |
+| V10 W_bead | 4.72 ± 0.00 | 4.87 ± 0.10 | 4.67 ± 0.25 | −4.2 % |
+| V10 H_frozen | 2.78 ± 0.11 | 2.84 ± 0.08 | 2.97 ± 0.05 | +4.7 % |
+| C D | — | 0.771 ± 0.042 (3) | 0.651 ± 0.046 (3) | −15.6 % |
+| C W | — | 4.67 ± 0.10 | 4.43 ± 0.03 | −5.1 % |
+| C W_bead | — | 4.79 ± 0.08 | 4.51 ± 0.03 | −5.7 % |
+| C H_frozen | — | 3.09 ± 0.17 | 3.14 ± 0.12 | +1.5 % |
+| M1 D (all runs) | 0.672 | 0.747 | 0.674 | −9.7 % |
+| M2 D | 0.632 | 0.718 | 0.344 | −52.1 % |
+
+**3. Verdicts.**
+* V10 primary (depth): at n = 3, Δ −10.2 %, |diff| 0.058 < 2·SE 0.164 → inconclusive;
+  2 repeats added at each grid (n = 5), rule applied once more: Δ −11.7 %,
+  |diff| 0.069 < 2·SE 0.119 → **inconclusive** (final).
+* Control C: Δ −15.6 %, |diff| 0.120 > 2·SE 0.073 → **not converged**.
+* Attribution (section 4): V10 inconclusive after five repeats → **no attribution**.
+* Secondary, V10 (6 % band): W −3.3 %, W_bead −4.2 %, H_frozen +4.7 % — all within.
+* V10 depth repeats are **bimodal**: at dx 0.4, 0.71/0.72/0.71 vs 0.51/0.49/0.53; at
+  dx 0.3, 0.60/0.60 vs 0.46/0.48/0.48. The two clusters differ by ~0.2 mm on both
+  grids; the grid-to-grid shift within each cluster is ~0.1 mm (−15 %/−9 %). The run-to-
+  run state, not the grid, dominates depth scatter under ×10.
+
+**4. Predictions.** Depth converges: not shown (inconclusive). Width still narrows
+4–6 %: partly held (W −3.3 %, W_bead −4.2 %; the n = 3 value −1.5 % was not robust).
+H_frozen scatter at dx 0.4 below 0.19 mm: held (0.08). Speed-cap hits vanish: held
+(window ≤ 0.03 %, max 6 steps per run).
+
+**5. Realism cost at dx 0.4** (Table 4, run04: H 3.8, width 3.9, p 1.07 mm):
+H_frozen 2.84 (−25 %) vs M1 3.03 (−20 %); W_bead 4.87 (+25 %) vs M1 4.76 (+22 %);
+D 0.59 (−45 %) vs M1 0.75 (−30 %). ×10 makes every dimension worse.
+
+**6. Departures.** None from sections 3–4; the V10 runs and the control ran on the
+laptop. Stage 2 (run12) not run: the primary verdict was not "converged".
+
+Conclusion: a fixed physical viscosity does not resolve the depth question; it
+removes speed-cap episodes, roughly halves the width narrowing at n = 3 (not robust
+at n = 5), costs realism, and exposes a bimodal depth state. Not adopted (and adoption
+is the user's decision in any case).
