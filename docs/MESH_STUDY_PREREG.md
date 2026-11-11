@@ -140,3 +140,22 @@ width–power slope is at dx 0.4.
 
 Verdict per the pre-registration: **M1 is not converged** (1 of 8 pairs fails in both
 analyses), but only marginally. M2 and M3 are judged against these numbers.
+
+## Stage M2 result (11 Nov 2026, 17:45) — Smagorinsky off REJECTED
+Records `runs/steady/mesh_M2.jsonl`. C_s = 0, otherwise as M1.
+
+* **Stability fails.** 4 of 12 runs exceed the 2 % window rule, all on run12 (the 3.5 kW
+  bead): 2.6 % at dx 0.5, 3.9 % at 0.4, 10.1 % and 5.6 % at 0.3. Window cap hits rise
+  on refinement, the opposite of what a resolved flow would do. Pre-registered rule:
+  with the exclusions run12 is left with no counted run at dx 0.3, so it cannot be
+  assessed.
+* **Changes on refinement are larger than M1** (run04, every run counted):
+  W −6.0 %, D −52 % (0.72 → 0.34 mm), W_bead −7.6 % (M1: −4.0, −18.7, −4.6).
+  With all runs counted, run12 is also worse: W −7.0 %, D −18 %, H_frozen +9.3 %,
+  W_bead −8.0 %.
+* Width–power response (all runs): +0.67 / +0.64 / +0.57 mm, flatter across grids
+  than M1, but this comes with the instability and the depth collapse above.
+
+Decision per the pre-registered rule: **C_s stays at 0.17.** At these grids the eddy
+viscosity is needed for stability in the hotter pool; the instability is reported as
+a resolution limit. M3 is therefore judged on top of C_s 0.17 (as defined).
