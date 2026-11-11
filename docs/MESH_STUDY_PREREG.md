@@ -159,3 +159,35 @@ Records `runs/steady/mesh_M2.jsonl`. C_s = 0, otherwise as M1.
 Decision per the pre-registered rule: **C_s stays at 0.17.** At these grids the eddy
 viscosity is needed for stability in the hotter pool; the instability is reported as
 a resolution limit. M3 is therefore judged on top of C_s 0.17 (as defined).
+
+## Stage M3 result (11 Nov 2026, 20:45) — contact-line band REJECTED
+Records `runs/steady/mesh_M3.jsonl` (ℓ = 0.4 mm at dx 0.5 and 0.3; the dx 0.4 point
+is M1's, as amended). Wall time +6 % against M1 at the same grid.
+
+* **Stable:** all 8 runs count (window cap hits ≤ 0.7 %), against 3 of 12 excluded in
+  M1. The band removes the intermittent speed-cap episodes.
+* **Changes 0.4 → 0.3** (pre-registered analysis; M1 in brackets):
+
+| bead | W | D | H_frozen | W_bead |
+|---|---|---|---|---|
+| run04 | −4.7 % (−4.0) | **−19.7 %** (−18.7) | +0.9 % (+5.5) | −5.5 % (−4.6) |
+| run12 | **−8.2 %** (−3.7) | +0.3 % (+1.4) | +1.5 % (+3.4) | **−9.4 %** (−5.9) |
+
+  Width changes are larger than M1 for both beads, and three pairs fall outside the
+  band (run04 D; run12 W and W_bead). Counting the excluded M1 dx 0.4 run changes
+  nothing (run12 W −7.2 %, W_bead −8.1 %).
+* Width–power response: +0.78 / +0.47 / +0.25 mm at dx 0.5 / 0.4 / 0.3 (measured
+  +0.5); it now spreads more steeply across grids than in M1.
+
+Decision per Amendment 1: **the band is not adopted; the one-cell rule stays.**
+Fixing the slip width in mm removed the cap episodes but not the narrowing: the
+width's grid dependence is not set by the slip width at the contact line.
+
+## Mesh study conclusion
+Neither closure was adopted (M2 unstable, M3 larger width changes), and the M1 model
+is not converged (run04 depth −19 % from 0.4 to 0.3 mm, width −4 to −6 % per step).
+Per the plan: **no converged range; the model stays a fixed-grid model at dx 0.4 mm**
+and is reported as such with these numbers. No recalibration. The calibrated dx 0.4
+grid is also where the width–power response matches the measured one best (+0.47 vs
++0.5 mm). Diagnostic V10 (`docs/SPEC_FIXED_VISCOSITY_MESH_DIAGNOSTIC.md`) tests whether
+depth's dependence comes from the resolution-dependent flow; it adopts nothing.
