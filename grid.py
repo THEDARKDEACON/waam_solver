@@ -467,8 +467,10 @@ class WAAMGrid:
         self.fs_donor_cnt = self._vol(ti.i32)
         # Per-cell ledger staging for ordered energy_acc[3] booking (fslbm).
         self.fs_ledger = self._vol(ti.f32)
+        # Distance to the contact line (cells), for the physical slip band.
+        self.fs_cl_dist = self._vol(ti.f32)
         self._has_fslbm = True
-        self._n_optional_volume += 5
+        self._n_optional_volume += 6
 
     def ensure_export_buffers(self) -> None:
         if self._has_export:

@@ -140,8 +140,17 @@ def fs_stream(
     enable_wetting: ti.i32,
     theta_rad: ti.f32,
     contact_slip: ti.i32,
+    cl_dist: ti.template(),
+    slip_band_cells: ti.f32,
 ):
     """Pull stream with gas reconstruction and interface mass/energy exchange.
+
+    ``slip_band_cells`` > 0 replaces the one-cell slip pair by a band of fixed
+    physical width ℓ = slip_band_cells·dx around the contact line: a diagonal
+    wall link between two wall-adjacent liquid cells reflects with weight
+    s = clamp(L − min(d_c, d_p), 0, 1) (specular) and 1 − s (bounce-back), d the
+    distance in cells to the nearest interface cell (``fs_contact_line_distance``).
+    L = 1 reproduces the one-cell rule exactly. Pair-symmetric, so mass-exact.
 
     ``contact_slip``: diagonal wall links between two wall-adjacent liquid
     cells, at least one of them IFACE, reflect specularly instead of
@@ -231,15 +240,20 @@ def fs_stream(
                                 + sz * ti.static(_MIR_Z[q])
                             )
                             fp = flags[pi_, pj, pk]
-                            if fp != FLAG_SOLID and fp != FLAG_GAS and (
-                                is_if or fp == FLAG_IFACE
-                            ):
+                            w_slip = 0.0
+                            if fp != FLAG_SOLID and fp != FLAG_GAS:
+                                if slip_band_cells > 0.0:
+                                    d_min = ti.min(cl_dist[i, j, k], cl_dist[pi_, pj, pk])
+                                    w_slip = ti.max(0.0, ti.min(1.0, slip_band_cells - d_min))
+                                elif is_if or fp == FLAG_IFACE:
+                                    w_slip = 1.0
+                            if w_slip > 0.0:
                                 f_in = f_post[qm, pi_, pj, pk]
-                                val = f_in
+                                val = f_out + w_slip * (f_in - f_out)
                                 s = 1.0
                                 if is_if and fp == FLAG_IFACE:
                                     s = 0.5 * (eps_c + phi[pi_, pj, pk])
-                                flux = s * (f_in - f_out)
+                                flux = s * w_slip * (f_in - f_out)
                                 if is_if:
                                     dm += flux
                                 h_up = H_c
@@ -282,6 +296,54 @@ def fs_stream(
         mass[i, j, k] = m
         mark[i, j, k] = mk
         energy[i, j, k] = ti.max(0.0, ti.min(1.0, eps_c)) * H_c + dE
+
+
+@ti.kernel
+def fs_contact_line_distance(
+    flags: ti.template(),
+    cl_dist: ti.template(),
+    radius: ti.i32,
+    FLAG_SOLID: ti.i32,
+    FLAG_GAS: ti.i32,
+    FLAG_IFACE: ti.i32,
+    nx: ti.i32,
+    ny: ti.i32,
+    nz: ti.i32,
+):
+    """Distance [cells] from each wall-adjacent liquid cell to the nearest
+    interface cell within ``radius``; 1e6 elsewhere (no slip weight)."""
+    for i, j, k in flags:
+        d_best = 1.0e6
+        fl = flags[i, j, k]
+        if fl != FLAG_SOLID and fl != FLAG_GAS:
+            wall = 0
+            if i > 0 and flags[i - 1, j, k] == FLAG_SOLID:
+                wall = 1
+            if i < nx - 1 and flags[i + 1, j, k] == FLAG_SOLID:
+                wall = 1
+            if j > 0 and flags[i, j - 1, k] == FLAG_SOLID:
+                wall = 1
+            if j < ny - 1 and flags[i, j + 1, k] == FLAG_SOLID:
+                wall = 1
+            if k > 0 and flags[i, j, k - 1] == FLAG_SOLID:
+                wall = 1
+            if k < nz - 1 and flags[i, j, k + 1] == FLAG_SOLID:
+                wall = 1
+            if wall != 0:
+                if fl == FLAG_IFACE:
+                    d_best = 0.0
+                else:
+                    for a in range(-radius, radius + 1):
+                        for b in range(-radius, radius + 1):
+                            for c in range(-radius, radius + 1):
+                                ii = i + a
+                                jj = j + b
+                                kk = k + c
+                                if _inside(ii, jj, kk, nx, ny, nz):
+                                    if flags[ii, jj, kk] == FLAG_IFACE:
+                                        d = ti.sqrt(ti.cast(a * a + b * b + c * c, ti.f32))
+                                        d_best = ti.min(d_best, d)
+        cl_dist[i, j, k] = d_best
 
 
 @ti.kernel

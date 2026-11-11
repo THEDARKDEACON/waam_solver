@@ -220,6 +220,11 @@
           "exclusiveMinimum": 0,
           "description": "Design peak physical velocity [m/s] for auto_dt_ma (default 0.5)."
         },
+        "contact_slip_band_mm": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Physical width [mm] of the free-surface contact-line slip band (0 = legacy one-cell pair)."
+        },
         "tau_min": {
           "type": "number",
           "exclusiveMinimum": 0.5,

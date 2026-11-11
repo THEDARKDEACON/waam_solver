@@ -245,7 +245,7 @@ def init_taichi(backend: str | None = None) -> PlatformProfile:
             except Exception:
                 continue
         if arch is None:
-            ti.init(arch=ti.cpu, log_level=ti.WARN)
+            ti.init(arch=ti.cpu, log_level=ti.WARN, **_init_memory_kwargs())
             backend_used = "cpu"
 
     _taichi_initialized = True
@@ -277,10 +277,16 @@ def _init_memory_kwargs() -> dict:
     Dense fields do not use this pool; a sparse grid (simulation.sparse_grid)
     allocates its active blocks from it and stops cleanly before it fills.
     """
+    kw: dict = {}
     v = os.environ.get("WAAM_DEVICE_MEMORY_GB")
     if v:
-        return {"device_memory_GB": float(v)}
-    return {}
+        kw["device_memory_GB"] = float(v)
+    # WAAM_CPU_THREADS=1 makes CPU runs deterministic (no float-atomic ordering),
+    # for bit-exact A/B checks.
+    n = os.environ.get("WAAM_CPU_THREADS")
+    if n:
+        kw["cpu_max_num_threads"] = int(n)
+    return kw
 
 
 def reset_taichi() -> None:

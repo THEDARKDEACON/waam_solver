@@ -158,6 +158,7 @@ from .fslbm import (
     fs_prepare,
     fs_stream,
     fs_mark_neighbors,
+    fs_contact_line_distance,
     fs_init_new_iface,
     fs_promote_new_iface,
     fs_distribute_excess,

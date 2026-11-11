@@ -157,6 +157,8 @@ def _apply_twin_overrides(twin, args: argparse.Namespace) -> None:
         twin.droplet_impact_speed_m_s = float(args.droplet_speed)
     if args.cs is not None:
         twin.smagorinsky_cs = float(args.cs)
+    if args.slip_band is not None:
+        twin.contact_slip_band_mm = float(args.slip_band)
     if args.force_limit_m_s2 is not None:
         twin.force_limit_m_s2 = float(args.force_limit_m_s2)
     if args.force_limit_lu is not None:
@@ -190,6 +192,8 @@ def _knobs(twin, n_steps: int) -> dict[str, Any]:
         "gravity_dir": list(getattr(twin, "gravity_dir", (0.0, 0.0, -1.0))),
         "arc_sigma_mm": float(twin.arc_sigma_m) * 1000.0,
         "smagorinsky_cs": float(getattr(twin, "smagorinsky_cs", 0.0) or 0.0),
+        "contact_slip_band_mm": float(getattr(twin, "contact_slip_band_mm", 0.0) or 0.0),
+        "tau_min": float(getattr(twin.grid, "tau_min", 0.0) or 0.0),
         "force_limit_m_s2": float(getattr(twin, "force_limit_m_s2", 0.0) or 0.0),
         "force_limit_lu": float(getattr(twin, "force_limit_lu", 0.0) or 0.0),
         "C_darcy": float(getattr(twin, "C_darcy", 0.0) or 0.0),
@@ -391,6 +395,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--dx", type=float, default=None, help="dx in mm")
     ap.add_argument("--u-design", type=float, default=None,
                     help="simulation.u_design_m_s (speed ceiling with auto_dt_ma)")
+    ap.add_argument("--slip-band", type=float, default=None,
+                    help="simulation.contact_slip_band_mm (physical contact-line slip band)")
     ap.add_argument("--tau-min", type=float, default=None,
                     help="simulation.tau_min (TRT relaxation floor; default 0.5005)")
     ap.add_argument("--sparse", action="store_true",

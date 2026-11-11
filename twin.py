@@ -196,6 +196,8 @@ class WAAMTwin:
         self.use_free_surface_lbm = False
         # FSLBM: specular slip on wall links at the contact line (unpins it).
         self.fs_contact_slip = True
+        # Physical width [mm] of the contact-line slip band (0 = one cell).
+        self.contact_slip_band_mm = 0.0
         # Re-read the arc-column surface height every N steps (GPU sync); 1 = every step.
         self.surface_query_every = 8
         # Phase 4: only enable once droplet enthalpy is booked via real

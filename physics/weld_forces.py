@@ -150,15 +150,19 @@ def droplet_velocity_lu(twin: "WAAMTwin", m_drop_kg: float | None = None) -> tup
 
 
 def droplet_impact_pressure_pa(twin: "WAAMTwin", m_drop_kg: float | None = None, drop_r_m: float | None = None) -> float:
-    """Kinetic pressure scale ½ρv² from droplet mass and contact area."""
+    """Stagnation pressure ½ρ_d v² [Pa] of an impacting droplet.
+
+    Used only when droplet momentum is NOT deposited with the droplet cells
+    (``enable_deposition_momentum`` off); otherwise it would count the same
+    momentum twice. (Until Nov 2026 this returned ½mv²/area — N/m, not Pa —
+    ≈ 1e-3 "Pa", so it never contributed; see docs/VALIDATION_WRITEUP.md.)
+    ``drop_r_m`` is kept for call compatibility.
+    """
     m = droplet_mass_kg(twin) if m_drop_kg is None else m_drop_kg
     if m <= 0:
         return 0.0
     v = droplet_impact_velocity_m_s(twin, m)
-    r = drop_r_m if drop_r_m is not None else max(twin.grid.dx * 1.5, twin.wire_diameter_m * 0.5)
-    area = math.pi * r * r
-    ke = 0.5 * m * v * v
-    return ke / max(area, 1e-12)
+    return 0.5 * float(twin.mat.rho) * v * v
 
 
 def gas_shear_tau_pa(twin: "WAAMTwin") -> float:
@@ -231,18 +235,19 @@ def apply_droplet_impact(
     drop_r: float,
     drop_mass_kg: float | None = None,
 ) -> None:
-    if not twin.enable_deposition_momentum:
-        return
-    vx, vy, vz = droplet_velocity_lu(twin, drop_mass_kg)
     kwf = _kwf()
-    kwf.feed_wire_momentum_impact(
-        g.f_src, g.rho,
-        g.ux, g.uy, g.uz, g.flags, g.f_l,
-        arc_i, arc_j, arc_k, drop_r,
-        vx, vy, vz,
-        g.FLAG_GAS, g.nx, g.ny, g.nz,
-    )
-    if twin.enable_droplet_impact_pressure:
+    if twin.enable_deposition_momentum:
+        # The droplet's momentum arrives with its cells; an extra impact
+        # pressure on top would count it twice.
+        vx, vy, vz = droplet_velocity_lu(twin, drop_mass_kg)
+        kwf.feed_wire_momentum_impact(
+            g.f_src, g.rho,
+            g.ux, g.uy, g.uz, g.flags, g.f_l,
+            arc_i, arc_j, arc_k, drop_r,
+            vx, vy, vz,
+            g.FLAG_GAS, g.nx, g.ny, g.nz,
+        )
+    elif twin.enable_droplet_impact_pressure:
         alloy_id, rho_w, rho_p = alloy_rho_args(twin)
         kwf.apply_droplet_impact_pressure(
             g.Fz, g.flags, g.phi, g.f_l,

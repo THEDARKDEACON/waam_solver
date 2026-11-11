@@ -418,12 +418,22 @@ def _free_surface_stream(twin: "WAAMTwin", g: "WAAMGrid") -> None:
     nx, ny, nz = g.nx, g.ny, g.nz
     gamma = float(twin.gamma_lu) if twin.enable_csf_tension else 0.0
     kernels.fs_prepare(g.flags, g.FLAG_FLUID, g.FLAG_GAS, g.FLAG_IFACE, nx, ny, nz)
+    # Contact-line slip band of fixed physical width (0 = legacy one-cell pair).
+    band_mm = float(getattr(twin, "contact_slip_band_mm", 0.0) or 0.0)
+    band_cells = band_mm * 1e-3 / float(g.dx) if band_mm > 0.0 else 0.0
+    if band_cells > 0.0:
+        import math as _m
+        kernels.fs_contact_line_distance(
+            g.flags, g.fs_cl_dist, int(_m.ceil(band_cells)),
+            g.FLAG_SOLID, g.FLAG_GAS, g.FLAG_IFACE, nx, ny, nz,
+        )
     kernels.fs_stream(
         g.f_dst, g.f_src, g.rho, g.ux, g.uy, g.uz, g.phi, g.flags,
         g.fs_mass, g.fs_mark, g.H, g.fs_energy, gamma, FS_KAPPA_MAX,
         g.FLAG_SOLID, g.FLAG_GAS, g.FLAG_IFACE, nx, ny, nz,
         int(bool(twin.enable_wetting)), float(twin.theta_rad),
         int(bool(getattr(twin, "fs_contact_slip", True))),
+        g.fs_cl_dist, float(band_cells),
     )
     kernels.fs_mark_neighbors(g.flags, g.fs_mark, g.FLAG_GAS, nx, ny, nz)
     kernels.fs_init_new_iface(
