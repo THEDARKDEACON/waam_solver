@@ -60,3 +60,25 @@ implemented; its A/B test and criteria will be added here before any run.
   the GCI numbers.
 
 Results are reported whatever they are.
+
+## Amendment 1 — Stage M3 defined (11 Nov 2026, before any M3 run; M1/M2 running)
+Contact-line model, commit 5506cec: `simulation.contact_slip_band_mm` gives the
+contact-line slip region a fixed physical width ℓ instead of one cell. With ℓ = dx it
+is bit-identical to the old rule (single-thread CPU hash check). ℓ is a
+regularisation, not a measured slip length (real slip lengths are nanometres); fixing
+it in mm is what removes the grid dependence of the spreading rate.
+
+* M3 = M1 settings + `--slip-band 0.4` (ℓ = 0.4 mm, the width the calibrated
+  dx 0.4 mm model already has), at dx 0.5 and 0.3 × {run04, run12} × 2 repeats.
+  At dx 0.4 M3 is the same model as M1, so the M1 dx 0.4 records are reused.
+* Adopt the band (ℓ = 0.4 mm default for bead jobs) if every M3 run is stable and
+  the 0.4 → 0.3 changes in W, D, H_frozen, W_bead are no larger than in M1 (or all
+  within the converged band); otherwise keep the one-cell rule and report.
+* Combined with the M2 decision: the adopted closures form the model that is
+  recalibrated; if both are adopted, a final confirmation set (both on, dx 0.4 and
+  0.3, both beads, 2 repeats) is run before recalibration.
+
+Also fixed in 5506cec (no effect on results): the droplet impact pressure returned
+½mv²/area (N/m, ≈ 1e-3 Pa) and was applied on top of the droplet momentum already
+carried by the deposited cells; it now returns ½ρv² [Pa] and applies only when that
+momentum is off.
