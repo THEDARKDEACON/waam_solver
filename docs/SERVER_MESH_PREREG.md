@@ -76,3 +76,21 @@ Depth runs ~7 % lower on the server at both grids (within noise); the server's o
 | dx 0.5 alone (smoke) | 444 s (laptop 362 s) | 2.5 | — |
 Small grids are launch-bound (the laptop's faster cores win at dx 0.5); from dx 0.3 the
 server wins, and sharing the card adds throughput.
+
+## S3 interim (12 Nov 2026, 03:45) — dx 0.2 done, dx 0.15 running
+Not the outcome: the rule is applied on the two finest grids once dx 0.15 reports.
+Records `runs/steady/server/server_S3.jsonl` (3 runs at dx 0.2, all counted; window
+cap hits ≤ 0.7 %; area ratio 0.98–1.02; 7 000 s each with 3 sharing, 6.6 GB peak).
+
+| output | dx 0.4 | dx 0.3 | dx 0.2 | 0.3 → 0.2 | within 6 % or 2·SE |
+|---|---|---|---|---|---|
+| D | 0.725 ± 0.099 | 0.600 ± 0.056 | 0.530 ± 0.016 | −11.7 % (|d| 0.070, 2·SE 0.067) | no |
+| W | 4.660 ± 0.060 | 4.392 ± 0.056 | 4.429 ± 0.060 | +0.8 % | yes |
+| W_bead | 4.812 ± 0.084 | 4.443 ± 0.033 | 4.486 ± 0.074 | +1.0 % | yes |
+| H_frozen | 3.204 ± 0.151 | 3.131 ± 0.080 | 3.155 ± 0.004 | +0.8 % | yes |
+
+Width, bead width and frozen height have flattened (small oscillation, within noise).
+Depth still falls monotonically: Celik on 0.4/0.3/0.2 gives apparent order 2.7,
+extrapolated D 0.495 mm, GCI_fine 8.2 % — inside the V10 10 % band but not the 6 % rule.
+The repeat scatter in D shrinks with refinement (SD 0.099 → 0.056 → 0.016), so the
+bimodal depth seen at dx 0.4 is a coarse-grid effect.
